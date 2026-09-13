@@ -104,13 +104,13 @@ jobs:
             -d 'libc6 (>= 2.35)' -d libgcc-s1 -d libstdc++6 \
             -d libfontconfig1 -d fontconfig -d libfreetype6 -d fonts-noto-cjk \
             -d libx11-6 -d libx11-xcb1 -d libxcb1 -d libxext6 \
-            -d libxi6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 \
+            -d libxi6 -d libxtst6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.deb" .
           fpm -s dir -t rpm -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a x86_64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
             -d glibc -d libgcc -d libstdc++ -d fontconfig -d freetype -d google-noto-sans-cjk-fonts \
-            -d libX11 -d libXcursor -d libXi -d libXrandr -d libXext -d mesa-libGL -d libICE -d libSM \
+            -d libX11 -d libXcursor -d libXi -d libXtst -d libXrandr -d libXext -d mesa-libGL -d libICE -d libSM \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" .
       - name: Validate DEB dependencies and CJK fallback with APT
         shell: bash
@@ -121,7 +121,7 @@ jobs:
           echo "Declared dependencies:"
           dpkg-deb -f "release/$DEB" Depends
           docker run --rm -v "$PWD/release:/packages:ro" ubuntu:24.04 bash -lc \
-            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
+            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libxtst6 | grep -q 'install ok installed' && ldconfig -p | grep -q 'libXtst.so.6' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
       - name: Smoke test packaged DEB UI
         shell: bash
         run: |
@@ -163,19 +163,12 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Process lifecycle hardening
-          - Fixes failure paths that could leave a Java process running after Nexo reported a launch failure
-          - If start reporting, stdout/stderr consumption or the debug heartbeat worker fails, Nexo now terminates the entire Java process tree immediately
-          - Nexo waits for Java to be reaped and observes remaining workers before disposing shared logging resources
-          - Prevents redirected output pipes from filling while the launcher waits forever for a process whose output consumer has already failed
-          - Adds a Unix fake-Java regression fixture covering start-report, stdout-consumer and heartbeat failures, process cleanup, service reuse and normal stdout/stderr capture
-
-          ### Launch debug and stuck-start diagnostics
-          - Persistent per-instance launch trace from preparation through Java process exit
-          - Records launch phases, Java executable, working directory, heap, main class, native path, classpath entry count and platform architecture without dumping authentication tokens
-          - Java-process heartbeat every 10 seconds with PID, process lifetime, output-silence time and working-set memory when available
-          - Distinguishes Starting from Running so the progress bar no longer appears permanently stuck after Java has started
-          - Open logs action is available directly from the game-session overlay
+          ### Stability hotfixes
+          - Bounds stalled response bodies and falls back from an idle mirror to the official Minecraft source
+          - Preserves explicit user cancellation instead of silently retrying it
+          - Validates cached Nexo-managed Java before reuse and reacquires damaged runtimes
+          - Preserves launch failure, stop and exit results instead of immediately overwriting them with Ready
+          - Adds the Linux libXtst runtime dependency needed by Java 8 / LWJGL 2 launch paths
 
           ### Compatibility carried forward
           - Automatic SHA-256-verified Eclipse Temurin acquisition when the required Java major is missing
@@ -183,11 +176,12 @@ jobs:
           - Minecraft 1.5.2 pre-1.6 resource mapping plus LaunchWrapper and LWJGL 2 compatibility
           - Official/BMCLAPI downloads with official fallback and hash verification
           - Server Hub favorites with modern Quick Play and legacy direct-connect launch paths
+          - Persistent launch tracing and Java process heartbeat diagnostics
 
           ### Font and Linux compatibility
           - Bundles Avalonia Inter for a reliable baseline UI font
-          - Debian/Mint packages require Noto CJK and full fontconfig support
-          - Release CI installs the final DEB in a clean Ubuntu 24.04 container, validates Noto CJK resolution and launches the packaged UI under Xvfb
+          - Debian/Mint packages require Noto CJK, full fontconfig support and libXtst
+          - Release CI installs the final DEB in a clean Ubuntu 24.04 container, validates libXtst and Noto CJK resolution, and launches the packaged UI under Xvfb
           - Windows and Linux packages remain self-contained for the .NET runtime
 
           ### Current limitations
@@ -213,24 +207,70 @@ jobs:
             done
           }
 
-          RELEASE_ID="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq ".[] | select(.tag_name == \"${TAG}\") | .id" | head -n1 || true)"
+          find_release_id() {
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${TAG}\") | .id" 2>/dev/null | head -n1 || true
+          }
+
+          release_is_public() {
+            local id="$1"
+            local attempt state
+            for attempt in 1 2 3 4 5; do
+              state="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${id}" \
+                --jq '[.tag_name, (.draft|tostring), (.prerelease|tostring)] | @tsv' 2>/dev/null || true)"
+              if [ "$state" = "${TAG}\tfalse\ttrue" ]; then
+                return 0
+              fi
+              sleep $((attempt * 2))
+            done
+            return 1
+          }
+
+          assets_are_present() {
+            local id="$1"
+            local names expected
+            names="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${id}/assets?per_page=100" \
+              --jq '.[].name' 2>/dev/null || true)"
+            for expected in release-assets/*; do
+              basename "$expected"
+            done | while read -r expected; do
+              echo "$names" | grep -Fxq "$expected" || exit 1
+            done
+          }
+
+          RELEASE_ID="$(find_release_id)"
           NOTES="$(cat RELEASE_NOTES.md)"
 
           if [ -n "$RELEASE_ID" ]; then
-            # Recover drafts left behind by a transient create/edit API failure.
-            retry gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            if ! retry gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
               -f tag_name="$TAG" \
               -f target_commitish="$GITHUB_SHA" \
               -f name="UN_Nexo ${TAG}" \
               -f body="$NOTES" \
               -F prerelease=true \
-              -F draft=false >/dev/null
-            retry gh release upload "$TAG" release-assets/* --clobber
+              -F draft=false >/dev/null; then
+              if ! release_is_public "$RELEASE_ID"; then
+                exit 1
+              fi
+              echo "Release API response failed, but GitHub confirms the release is public."
+            fi
+
+            if ! retry gh release upload "$TAG" release-assets/* --clobber; then
+              if ! assets_are_present "$RELEASE_ID"; then
+                exit 1
+              fi
+              echo "Upload response failed, but every expected asset is present."
+            fi
           else
-            retry gh release create "$TAG" release-assets/* \
+            if ! retry gh release create "$TAG" release-assets/* \
               --target "$GITHUB_SHA" \
               --title "UN_Nexo ${TAG}" \
               --notes-file RELEASE_NOTES.md \
-              --prerelease
+              --prerelease; then
+              RELEASE_ID="$(find_release_id)"
+              if [ -z "$RELEASE_ID" ] || ! release_is_public "$RELEASE_ID" || ! assets_are_present "$RELEASE_ID"; then
+                exit 1
+              fi
+              echo "Create response failed, but GitHub confirms the public release and all assets."
+            fi
           fi
