@@ -163,18 +163,19 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Launch debug and stuck-start diagnostics
-          - Adds a persistent launch trace from preparation through Java process exit
-          - Records launch phases, Java executable, working directory, heap, main class, native path, classpath entry count and platform architecture without dumping authentication tokens
-          - Adds a Java-process heartbeat every 10 seconds with PID, process lifetime, output-silence time and working-set memory when available
-          - Records process-start failures and the time to the first Minecraft stdout or stderr line
-          - Stores launch-trace files beside the selected instance's normal launcher logs
-          - Adds an Open logs action directly to the game-session overlay
+          ### Process lifecycle hardening
+          - Fixes failure paths that could leave a Java process running after Nexo reported a launch failure
+          - If start reporting, stdout/stderr consumption or the debug heartbeat worker fails, Nexo now terminates the entire Java process tree immediately
+          - Nexo waits for Java to be reaped and observes remaining workers before disposing shared logging resources
+          - Prevents redirected output pipes from filling while the launcher waits forever for a process whose output consumer has already failed
+          - Adds a Unix fake-Java regression fixture covering start-report, stdout-consumer and heartbeat failures, process cleanup, service reuse and normal stdout/stderr capture
 
-          ### Starting versus running state
-          - The indeterminate progress bar is now shown only while the game is actually starting
-          - Once Java starts, the overlay switches to live process-health information instead of looking permanently stuck on Launching
-          - Existing stdout, stderr, exit-code and Stop game handling remain available
+          ### Launch debug and stuck-start diagnostics
+          - Persistent per-instance launch trace from preparation through Java process exit
+          - Records launch phases, Java executable, working directory, heap, main class, native path, classpath entry count and platform architecture without dumping authentication tokens
+          - Java-process heartbeat every 10 seconds with PID, process lifetime, output-silence time and working-set memory when available
+          - Distinguishes Starting from Running so the progress bar no longer appears permanently stuck after Java has started
+          - Open logs action is available directly from the game-session overlay
 
           ### Compatibility carried forward
           - Automatic SHA-256-verified Eclipse Temurin acquisition when the required Java major is missing
