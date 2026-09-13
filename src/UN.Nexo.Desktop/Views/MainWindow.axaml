@@ -3,16 +3,23 @@
         x:Class="UN.Nexo.Desktop.Views.MainWindow"
         Title="UN_Nexo"
         Width="1180" Height="720"
-        MinWidth="900" MinHeight="600"
+        MinWidth="920" MinHeight="620"
         WindowStartupLocation="CenterScreen"
         Background="#0B0F14">
   <Window.Styles>
     <Style Selector="Button.nav">
       <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="Padding" Value="14,10" />
+      <Setter Property="Padding" Value="14,11" />
       <Setter Property="Margin" Value="0,3" />
       <Setter Property="Background" Value="Transparent" />
-      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="CornerRadius" Value="9" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="18,11" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="Border.card">
       <Setter Property="Background" Value="#121923" />
@@ -26,7 +33,7 @@
     </Style>
   </Window.Styles>
 
-  <Grid ColumnDefinitions="250,*">
+  <Grid ColumnDefinitions="238,*">
     <Border Grid.Column="0" Background="#0E141C" BorderBrush="#1D2732" BorderThickness="0,0,1,0" Padding="18">
       <Grid RowDefinitions="Auto,28,*,Auto">
         <StackPanel>
@@ -35,76 +42,157 @@
         </StackPanel>
 
         <StackPanel Grid.Row="2">
-          <Button Classes="nav" Content="⌂   Home" />
-          <Button Classes="nav" Content="▣   Instances" IsEnabled="False" />
-          <Button Classes="nav" Content="↓   Downloads" IsEnabled="False" />
-          <Button Classes="nav" Content="⚙   Settings" IsEnabled="False" />
+          <Button Classes="nav" Content="Home" Command="{Binding ShowHomeCommand}" />
+          <Button Classes="nav" Content="Instances" Command="{Binding ShowInstancesCommand}" />
+          <Button Classes="nav" Content="Downloads" IsEnabled="False" />
+          <Button Classes="nav" Content="Settings" IsEnabled="False" />
         </StackPanel>
 
         <Border Grid.Row="3" Background="#111923" CornerRadius="10" Padding="12">
           <StackPanel>
-            <TextBlock Text="v0.1.0-dev" FontWeight="SemiBold" />
+            <TextBlock Text="v0.2.0-dev" FontWeight="SemiBold" />
             <TextBlock Text="{Binding LauncherStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
       </Grid>
     </Border>
 
-    <ScrollViewer Grid.Column="1">
-      <StackPanel Margin="34" Spacing="18" MaxWidth="960" HorizontalAlignment="Stretch">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel>
-            <TextBlock Text="Welcome to Nexo." FontSize="32" FontWeight="SemiBold" />
-            <TextBlock Text="Nexo is checking the machine before the first launch." Classes="muted" Margin="0,6,0,0" />
-          </StackPanel>
-          <Button Grid.Column="1" Content="Refresh environment" Command="{Binding RefreshEnvironmentCommand}" Padding="16,10" VerticalAlignment="Center" />
-        </Grid>
-
-        <Border Classes="card">
+    <Grid Grid.Column="1">
+      <ScrollViewer IsVisible="{Binding IsHomeVisible}">
+        <StackPanel Margin="34" Spacing="18" MaxWidth="980" HorizontalAlignment="Stretch">
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel>
-              <TextBlock Text="Minecraft" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding MinecraftDirectory}" Classes="muted" TextTrimming="CharacterEllipsis" Margin="0,6,0,0" />
+              <TextBlock Text="Ready when you are." FontSize="32" FontWeight="SemiBold" />
+              <TextBlock Text="Pick an instance, keep the environment healthy, then play." Classes="muted" Margin="0,6,0,0" />
             </StackPanel>
-            <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12">
-              <StackPanel>
-                <TextBlock Text="Latest release" Classes="muted" FontSize="12" />
-                <TextBlock Text="{Binding LatestRelease}" FontSize="22" FontWeight="SemiBold" />
+            <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshEnvironmentCommand}" Padding="16,10" VerticalAlignment="Center" />
+          </Grid>
+
+          <Border Classes="card" Background="#151D2A">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="24">
+              <StackPanel Spacing="6">
+                <TextBlock Text="CURRENT INSTANCE" Classes="muted" FontSize="11" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=No instance selected}" FontSize="25" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Create an instance to get started}" Classes="muted" />
               </StackPanel>
-              <StackPanel Grid.Column="1">
-                <TextBlock Text="Latest snapshot" Classes="muted" FontSize="12" />
-                <TextBlock Text="{Binding LatestSnapshot}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Right" />
+              <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
+                <Button Classes="primary" Content="Play" IsEnabled="False" MinWidth="150" />
+                <TextBlock Text="Microsoft sign-in required" Classes="muted" FontSize="11" HorizontalAlignment="Center" />
               </StackPanel>
             </Grid>
+          </Border>
+
+          <Grid ColumnDefinitions="1.25*,*" ColumnSpacing="18">
+            <Border Classes="card">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel>
+                  <TextBlock Text="Minecraft catalog" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="Official version metadata" Classes="muted" Margin="0,4,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                  <TextBlock Text="Latest release" Classes="muted" FontSize="11" />
+                  <TextBlock Text="{Binding LatestRelease}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                  <TextBlock Text="Snapshot" Classes="muted" FontSize="11" HorizontalAlignment="Right" Margin="0,7,0,0" />
+                  <TextBlock Text="{Binding LatestSnapshot}" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="1" Classes="card">
+              <StackPanel>
+                <TextBlock Text="Environment" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding JavaSummary}" Margin="0,9,0,0" />
+                <TextBlock Text="{Binding JavaDetail}" Classes="muted" TextWrapping="Wrap" FontSize="12" Margin="0,5,0,0" />
+              </StackPanel>
+            </Border>
           </Grid>
-        </Border>
 
-        <Grid ColumnDefinitions="*,*" ColumnSpacing="18">
           <Border Classes="card">
-            <StackPanel>
-              <TextBlock Text="Java runtime" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding JavaSummary}" Margin="0,10,0,0" />
-              <TextBlock Text="{Binding JavaDetail}" Classes="muted" TextWrapping="Wrap" Margin="0,6,0,0" />
-            </StackPanel>
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel>
+                <TextBlock Text="Instances" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding InstanceSummary}" Margin="0,6,0,0" />
+                <TextBlock Text="{Binding InstanceRoot}" Classes="muted" TextTrimming="CharacterEllipsis" FontSize="12" Margin="0,4,0,0" />
+              </StackPanel>
+              <Button Grid.Column="1" Content="Manage instances" Command="{Binding ShowInstancesCommand}" Padding="15,9" VerticalAlignment="Center" />
+            </Grid>
           </Border>
+        </StackPanel>
+      </ScrollViewer>
 
-          <Border Grid.Column="1" Classes="card">
-            <StackPanel>
-              <TextBlock Text="Instances" FontSize="18" FontWeight="SemiBold" />
-              <TextBlock Text="{Binding InstanceSummary}" Margin="0,10,0,0" />
-              <TextBlock Text="{Binding InstanceRoot}" Classes="muted" TextWrapping="Wrap" Margin="0,6,0,0" />
-            </StackPanel>
-          </Border>
+      <Grid IsVisible="{Binding IsInstancesVisible}" Margin="30" RowDefinitions="Auto,*" RowSpacing="18">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="Instances" FontSize="32" FontWeight="SemiBold" />
+            <TextBlock Text="Each instance keeps its own game files and version metadata." Classes="muted" Margin="0,5,0,0" />
+          </StackPanel>
+          <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
         </Grid>
 
-        <Border Classes="card">
-          <StackPanel>
-            <TextBlock Text="Development milestone" FontSize="18" FontWeight="SemiBold" />
-            <TextBlock Text="Environment detection is live. Next: version installation, asset/library downloads, Microsoft authentication and the launch pipeline." Classes="muted" TextWrapping="Wrap" Margin="0,8,0,0" />
-            <ProgressBar Minimum="0" Maximum="100" Value="22" Height="7" Margin="0,16,0,0" />
-          </StackPanel>
-        </Border>
-      </StackPanel>
-    </ScrollViewer>
+        <Grid Grid.Row="1" ColumnDefinitions="300,*" ColumnSpacing="18">
+          <Border Classes="card" Padding="14">
+            <Grid RowDefinitions="Auto,12,*,12,Auto">
+              <TextBlock Text="Your instances" FontSize="17" FontWeight="SemiBold" />
+              <ListBox Grid.Row="2" ItemsSource="{Binding Instances}" SelectedItem="{Binding SelectedInstance}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="7,6">
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding VersionId}" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBlock Grid.Row="4" Text="Select an instance to prepare or inspect it." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+
+          <ScrollViewer Grid.Column="1">
+            <StackPanel Spacing="18">
+              <Border Classes="card">
+                <StackPanel Spacing="12">
+                  <StackPanel>
+                    <TextBlock Text="Create instance" FontSize="19" FontWeight="SemiBold" />
+                    <TextBlock Text="Start with Vanilla. Mod loaders will be added on top of the same instance model." Classes="muted" FontSize="12" Margin="0,4,0,0" />
+                  </StackPanel>
+                  <Grid ColumnDefinitions="1.1*,1.2*,Auto" ColumnSpacing="10">
+                    <TextBox Watermark="Instance name" Text="{Binding NewInstanceName}" />
+                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableVersions}" SelectedItem="{Binding SelectedVersion}" MaxDropDownHeight="360">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                          <Grid ColumnDefinitions="*,Auto" Width="260">
+                            <TextBlock Text="{Binding Id}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Type}" Classes="muted" FontSize="11" />
+                          </Grid>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <Button Grid.Column="2" Classes="primary" Content="Create" Command="{Binding CreateInstanceCommand}" />
+                  </Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="12">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel>
+                      <TextBlock Text="Selected instance" Classes="muted" FontSize="11" />
+                      <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=Nothing selected}" FontSize="22" FontWeight="SemiBold" Margin="0,3,0,0" />
+                      <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Choose an instance on the left}" Classes="muted" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Prepare Vanilla files" Command="{Binding PrepareSelectedInstanceCommand}" Padding="16,10" VerticalAlignment="Center" />
+                  </Grid>
+                  <ProgressBar Minimum="0" Maximum="100" Value="{Binding InstallProgressValue}" Height="7" />
+                  <TextBlock Text="{Binding InstallProgressText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  <Border Background="#0E141C" CornerRadius="9" Padding="12">
+                    <TextBlock Text="Preparing downloads the client, libraries, assets and native libraries into this instance. Play stays disabled until account authentication and the launch pipeline are implemented." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  </Border>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Grid>
+    </Grid>
   </Grid>
 </Window>

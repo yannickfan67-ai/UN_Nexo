@@ -37,6 +37,12 @@ public sealed class NexoPathService
 
     public string GetInstancesRoot() => Path.Combine(GetDataRoot(), "instances");
 
+    public string GetInstanceDirectory(string instanceId)
+        => Path.Combine(GetInstancesRoot(), instanceId);
+
+    public string GetInstanceGameDirectory(string instanceId)
+        => Path.Combine(GetInstanceDirectory(instanceId), "game");
+
     public void EnsureDirectories()
     {
         Directory.CreateDirectory(GetDataRoot());

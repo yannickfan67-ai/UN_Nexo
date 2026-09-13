@@ -15,15 +15,16 @@ public sealed partial class MainWindow : Window
         var paths = new NexoPathService();
         var httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(8)
+            Timeout = TimeSpan.FromMinutes(10)
         };
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.1.0-dev");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.2.0-dev");
 
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(),
             paths,
             new MinecraftVersionManifestService(httpClient),
-            new InstanceStoreService(paths));
+            new InstanceStoreService(paths),
+            new MinecraftVanillaInstallService(httpClient, paths));
 
         DataContext = _viewModel;
         Opened += OnOpened;
