@@ -48,9 +48,12 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         var java = installations
             .Where(item => item.Is64Bit && File.Exists(item.JavaPath))
             .OrderBy(item => JavaMajor(item.Version) == requiredJava ? 0 : 1)
-            .FirstOrDefault(item => JavaMajor(item.Version) == requiredJava)
-            ?? throw new InvalidOperationException(
-                $"{instance.VersionId} needs 64-bit Java {requiredJava}. Install it, then Refresh.");
+            .FirstOrDefault(item => JavaMajor(item.Version) == requiredJava);
+        if (java is null)
+        {
+            java = await new JavaRuntimeProvisionService(paths)
+                .EnsureJavaAsync(requiredJava, cancellationToken: cancellationToken);
+        }
 
         var librariesRoot = Within(gameRoot, "libraries");
         var nativesRoot = Within(gameRoot, Path.Combine("natives", instance.VersionId));
