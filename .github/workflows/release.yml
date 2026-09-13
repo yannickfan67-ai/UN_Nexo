@@ -1,0 +1,175 @@
+name: release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish Windows x64 single-file build
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          New-Item -ItemType Directory -Force release | Out-Null
+          dotnet publish src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -o publish/win-x64
+          Copy-Item publish/win-x64/UN_Nexo.exe "release/UN_Nexo-$version-win-x64.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release/*
+          if-no-files-found: error
+
+  build-linux-packages:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish Linux x64 single-file build
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet publish src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj \
+            -c Release \
+            -r linux-x64 \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -o publish/linux-x64
+      - name: Install package tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev build-essential rpm
+          sudo gem install --no-document fpm
+      - name: Build DEB and RPM packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          BASE_VERSION="${VERSION%%-*}"
+          ITERATION="${VERSION#*-}"
+          if [ "$ITERATION" = "$VERSION" ]; then ITERATION="1"; fi
+
+          mkdir -p package-root/usr/lib/un-nexo
+          mkdir -p package-root/usr/bin
+          mkdir -p package-root/usr/share/applications
+          mkdir -p release
+
+          install -m 0755 publish/linux-x64/UN_Nexo package-root/usr/lib/un-nexo/UN_Nexo
+
+          cat > package-root/usr/bin/un-nexo <<'EOF'
+          #!/bin/sh
+          exec /usr/lib/un-nexo/UN_Nexo "$@"
+          EOF
+          chmod 0755 package-root/usr/bin/un-nexo
+
+          cat > package-root/usr/share/applications/un-nexo.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=UN_Nexo
+          Comment=Modern Minecraft launcher
+          Exec=un-nexo
+          Terminal=false
+          Categories=Game;Utility;
+          StartupNotify=true
+          EOF
+
+          fpm -s dir -t deb \
+            -n un-nexo \
+            -v "$BASE_VERSION" \
+            --iteration "$ITERATION" \
+            -a amd64 \
+            --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
+            --url "https://github.com/yannickfan67-ai/UN_Nexo" \
+            --maintainer "UN_Nexo project" \
+            -C package-root \
+            -p "release/UN_Nexo-${VERSION}-linux-x64.deb" \
+            .
+
+          fpm -s dir -t rpm \
+            -n un-nexo \
+            -v "$BASE_VERSION" \
+            --iteration "$ITERATION" \
+            -a x86_64 \
+            --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
+            --url "https://github.com/yannickfan67-ai/UN_Nexo" \
+            --maintainer "UN_Nexo project" \
+            -C package-root \
+            -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" \
+            .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: release/*
+          if-no-files-found: error
+
+  publish-release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
+    needs: [build-windows, build-linux-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Create or update GitHub pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          TAG="v${VERSION}"
+
+          cat > RELEASE_NOTES.md <<EOF
+          ## UN_Nexo ${VERSION}
+
+          First packaged development release of UN_Nexo.
+
+          ### Included
+          - Windows x64 self-contained single-file executable
+          - Debian/Ubuntu/Linux Mint x64 package (.deb)
+          - RPM x64 package (.rpm)
+          - Instance creation and selection UI
+          - Minecraft release catalog
+          - Vanilla client/libraries/assets/native preparation pipeline
+          - Java discovery and cross-platform launcher data paths
+
+          ### Current limitations
+          - Microsoft/Xbox/Minecraft account authentication is not implemented yet
+          - The final game launch pipeline is still under development, so Play remains intentionally disabled
+          - Fabric, Forge and NeoForge installers are not included yet
+
+          This is a pre-release intended for testing the launcher UI, environment detection and Vanilla instance preparation.
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+            gh release edit "$TAG" --title "UN_Nexo ${TAG}" --notes-file RELEASE_NOTES.md --prerelease
+          else
+            gh release create "$TAG" release-assets/* \
+              --target "$GITHUB_SHA" \
+              --title "UN_Nexo ${TAG}" \
+              --notes-file RELEASE_NOTES.md \
+              --prerelease
+          fi
