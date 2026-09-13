@@ -6,7 +6,7 @@ public sealed record MinecraftServerTarget(string Host, int Port)
 {
     public const int DefaultPort = 25565;
 
-    public string Authority => Host.Contains(':', StringComparison.Ordinal)
+    public string Authority => Host.Contains(':')
         ? $"[{Host}]:{Port}"
         : $"{Host}:{Port}";
 
@@ -22,7 +22,7 @@ public sealed record MinecraftServerTarget(string Host, int Port)
         string host;
         var port = DefaultPort;
 
-        if (text.StartsWith('[', StringComparison.Ordinal))
+        if (text.StartsWith("[", StringComparison.Ordinal))
         {
             var closing = text.IndexOf(']');
             if (closing <= 1)
@@ -32,7 +32,7 @@ public sealed record MinecraftServerTarget(string Host, int Port)
             var remainder = text[(closing + 1)..];
             if (remainder.Length > 0)
             {
-                if (!remainder.StartsWith(':', StringComparison.Ordinal)
+                if (!remainder.StartsWith(":", StringComparison.Ordinal)
                     || !TryParsePort(remainder[1..], out port))
                     throw new FormatException("Invalid server port.");
             }
