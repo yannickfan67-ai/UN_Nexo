@@ -9,14 +9,16 @@ namespace UN.Nexo.Desktop.Views;
 public sealed partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _viewModel;
+    private readonly NexoPathService _paths;
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
+    private RuntimeSettingsWindow? _runtimeSettingsWindow;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        var paths = new NexoPathService();
+        _paths = new NexoPathService();
         var downloadSources = new DownloadSourceService();
         var httpClient = new HttpClient
         {
@@ -31,16 +33,16 @@ public sealed partial class MainWindow : Window
 
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(),
-            paths,
+            _paths,
             new MinecraftVersionManifestService(httpClient, downloadSources),
-            new InstanceStoreService(paths),
-            new MinecraftVanillaInstallService(httpClient, paths, downloadSources),
-            new AccountStoreService(paths),
-            new LauncherSettingsService(paths),
+            new InstanceStoreService(_paths),
+            new MinecraftVanillaInstallService(httpClient, _paths, downloadSources),
+            new AccountStoreService(_paths),
+            new LauncherSettingsService(_paths),
             downloadSources);
 
         DataContext = _viewModel;
-        AddServerNavigation();
+        AddUtilityNavigation();
         AddSessionOverlay();
         Opened += OnOpened;
     }
@@ -68,20 +70,34 @@ public sealed partial class MainWindow : Window
             label.Text = $"v{launcherVersion}";
     }
 
-    private void AddServerNavigation()
+    private void AddUtilityNavigation()
     {
         var nav = this.GetLogicalDescendants()
             .OfType<StackPanel>()
             .FirstOrDefault(panel =>
                 panel.Children.OfType<Button>().Any(button => Equals(button.Content, "Home"))
                 && panel.Children.OfType<Button>().Any(button => Equals(button.Content, "Instances")));
-        if (nav is null || nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Servers")))
+        if (nav is null)
             return;
 
-        var servers = new Button { Content = "Servers" };
-        servers.Classes.Add("nav");
-        servers.Click += (_, _) => OpenServerHub();
-        nav.Children.Insert(Math.Min(3, nav.Children.Count), servers);
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Servers")))
+        {
+            var servers = new Button { Content = "Servers" };
+            servers.Classes.Add("nav");
+            servers.Click += (_, _) => OpenServerHub();
+            nav.Children.Insert(Math.Min(3, nav.Children.Count), servers);
+        }
+
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Runtime")))
+        {
+            var runtime = new Button { Content = "Runtime" };
+            runtime.Classes.Add("nav");
+            runtime.Click += (_, _) => OpenRuntimeSettings();
+            var downloadsIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Downloads")).index;
+            nav.Children.Insert(downloadsIndex > 0 ? downloadsIndex : Math.Min(4, nav.Children.Count), runtime);
+        }
     }
 
     private void AddSessionOverlay()
@@ -107,6 +123,19 @@ public sealed partial class MainWindow : Window
         _serverHub = new ServerHubWindow(_viewModel);
         _serverHub.Closed += (_, _) => _serverHub = null;
         _serverHub.Show(this);
+    }
+
+    private void OpenRuntimeSettings()
+    {
+        if (_runtimeSettingsWindow is not null)
+        {
+            _runtimeSettingsWindow.Activate();
+            return;
+        }
+
+        _runtimeSettingsWindow = new RuntimeSettingsWindow(_viewModel, _paths);
+        _runtimeSettingsWindow.Closed += (_, _) => _runtimeSettingsWindow = null;
+        _runtimeSettingsWindow.Show(this);
     }
 
     private async void OnOpened(object? sender, EventArgs e)

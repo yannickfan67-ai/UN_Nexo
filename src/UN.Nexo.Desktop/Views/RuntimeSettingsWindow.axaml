@@ -1,0 +1,90 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.RuntimeSettingsWindow"
+        Title="Nexo Runtime &amp; Diagnostics"
+        Width="820" Height="640"
+        MinWidth="700" MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#8E9AAA" /></Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="24" RowDefinitions="Auto,16,*">
+    <StackPanel>
+      <TextBlock Text="Runtime &amp; Diagnostics" FontSize="30" FontWeight="SemiBold" />
+      <TextBlock Text="Control game memory safely and inspect the Java/runtime environment." Classes="muted" Margin="0,5,0,0" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2">
+      <StackPanel Spacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Game memory" FontSize="19" FontWeight="SemiBold" />
+            <TextBlock x:Name="MemoryRecommendation" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="180,*" ColumnSpacing="12">
+              <NumericUpDown x:Name="MemoryBox" Minimum="0" Maximum="65536" Increment="512" FormatString="0" />
+              <TextBlock Grid.Column="1" Text="MB · set 0 for Auto" VerticalAlignment="Center" Classes="muted" />
+            </Grid>
+            <TextBlock Text="Nexo replaces the built-in -Xmx value at launch. Auto is conservative so the desktop still has room." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Extra JVM arguments" FontSize="19" FontWeight="SemiBold" />
+            <TextBox x:Name="JvmArgumentsBox" PlaceholderText="Example: -XX:+UseG1GC -Dfile.encoding=UTF-8" AcceptsReturn="True" Height="76" TextWrapping="Wrap" />
+            <TextBlock Text="Arguments are passed through ProcessStartInfo.ArgumentList, not a shell. Nexo blocks classpath/-jar overrides and manages -Xmx itself." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel>
+                <TextBlock Text="Current instance" FontSize="19" FontWeight="SemiBold" />
+                <TextBlock x:Name="InstanceSummary" Classes="muted" Margin="0,4,0,0" />
+                <TextBlock x:Name="JavaRequirement" Classes="muted" FontSize="12" Margin="0,3,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Spacing="8">
+                <Button Content="Open game folder" Click="OnOpenGameFolderClicked" />
+                <Button Content="Open launcher logs" Click="OnOpenLogsClicked" />
+              </StackPanel>
+            </Grid>
+            <TextBlock Text="Detected Java" FontWeight="SemiBold" Margin="0,8,0,0" />
+            <ListBox x:Name="JavaList" MaxHeight="150" Background="Transparent" BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel Margin="6,4">
+                    <TextBlock Text="{Binding Version}" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding JavaPath}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </Border>
+
+        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+          <TextBlock x:Name="StatusText" Text="Loading runtime settings…" Classes="muted" VerticalAlignment="Center" TextWrapping="Wrap" />
+          <Button Grid.Column="1" Content="Use Auto memory" Click="OnUseAutoClicked" />
+          <Button Grid.Column="2" Classes="primary" Content="Save runtime settings" Click="OnSaveClicked" />
+        </Grid>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>

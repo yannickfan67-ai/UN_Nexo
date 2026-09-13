@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Core.Launching;
 
@@ -6,7 +7,18 @@ public sealed record MinecraftExitResult(int ExitCode, string LogPath);
 
 public sealed class MinecraftProcessService
 {
+    private readonly LauncherRuntimeSettingsService _runtimeSettings;
     private int _running;
+
+    public MinecraftProcessService()
+        : this(new LauncherRuntimeSettingsService(new NexoPathService()))
+    {
+    }
+
+    public MinecraftProcessService(LauncherRuntimeSettingsService runtimeSettings)
+    {
+        _runtimeSettings = runtimeSettings;
+    }
 
     public async Task<MinecraftExitResult> RunAsync(
         MinecraftLaunchPlan plan,
@@ -19,9 +31,15 @@ public sealed class MinecraftProcessService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(plan.LogDirectory);
+            var runtime = await _runtimeSettings.LoadAsync(cancellationToken);
+            var effectivePlan = plan with
+            {
+                Arguments = RuntimeLaunchOptions.Apply(plan.Arguments, runtime)
+            };
+
+            Directory.CreateDirectory(effectivePlan.LogDirectory);
             var logPath = Path.Combine(
-                plan.LogDirectory,
+                effectivePlan.LogDirectory,
                 $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.log");
 
             await using var log = new StreamWriter(
@@ -31,8 +49,9 @@ public sealed class MinecraftProcessService
             };
 
             using var logLock = new SemaphoreSlim(1, 1);
-            using var process = new Process { StartInfo = plan.CreateStartInfo() };
+            using var process = new Process { StartInfo = effectivePlan.CreateStartInfo() };
             output?.Report($"Log: {logPath}");
+            output?.Report($"Runtime: {effectivePlan.Arguments.FirstOrDefault(argument => argument.StartsWith("-Xmx", StringComparison.OrdinalIgnoreCase)) ?? "default memory"}");
 
             if (!process.Start())
                 throw new InvalidOperationException("Java could not be started.");
