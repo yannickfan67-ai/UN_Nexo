@@ -102,17 +102,17 @@ jobs:
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
             -d 'libc6 (>= 2.35)' -d libgcc-s1 -d libstdc++6 \
-            -d libfontconfig1 -d libfreetype6 \
+            -d libfontconfig1 -d libfreetype6 -d fonts-noto-cjk \
             -d libx11-6 -d libx11-xcb1 -d libxcb1 -d libxext6 \
             -d libxi6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.deb" .
           fpm -s dir -t rpm -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a x86_64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
-            -d glibc -d libgcc -d libstdc++ -d fontconfig -d freetype \
+            -d glibc -d libgcc -d libstdc++ -d fontconfig -d freetype -d google-noto-sans-cjk-fonts \
             -d libX11 -d libXcursor -d libXi -d libXrandr -d libXext -d mesa-libGL -d libICE -d libSM \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" .
-      - name: Validate DEB dependencies with APT
+      - name: Validate DEB dependencies and CJK fallback with APT
         shell: bash
         run: |
           set -euo pipefail
@@ -121,7 +121,7 @@ jobs:
           echo "Declared dependencies:"
           dpkg-deb -f "release/$DEB" Depends
           docker run --rm -v "$PWD/release:/packages:ro" ubuntu:24.04 bash -lc \
-            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed'"
+            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
       - name: Smoke test packaged DEB UI
         shell: bash
         run: |
@@ -163,35 +163,35 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Visual and startup polish
-          - Adds a lightweight Nexo splash while accounts, Java and the version catalog initialize
-          - Fades the main window in after initialization instead of exposing a half-loaded dashboard
-          - Adds a compact game-session status overlay while Minecraft is launching or running
-          - Startup visuals intentionally avoid blur, video, WebView and other heavy GPU effects
-          - Splash and HTTP user-agent version strings now come from the built application version
+          ### Server Hub and multiplayer launch
+          - Adds a first-class Servers entry with persistent local server favorites
+          - Validates host, custom port and bracketed IPv6 addresses before launch
+          - Uses Minecraft Quick Play multiplayer arguments when the installed version advertises support
+          - Falls back to legacy server/port launch arguments for older Minecraft versions such as 1.8.9
+          - Keeps local profiles explicit: authenticated online-mode servers still require future Microsoft sign-in support
 
-          ### Included from the 0.4 launch milestone
-          - Prepared Vanilla instances can launch with a local/offline profile
+          ### Font and Linux compatibility
+          - Bundles Avalonia Inter so Nexo does not depend on the host having a usable default Latin UI font
+          - Debian/Mint packages require Noto CJK fonts for Chinese/Japanese/Korean fallback coverage
+          - RPM packages declare the matching Noto CJK font family dependency
+          - Release CI verifies the final DEB can resolve Noto Sans CJK and launches the packaged UI under Xvfb
+          - Launcher, window and Minecraft metadata version strings now follow the built application version
+
+          ### Included launcher capabilities
+          - Prepared Vanilla instances can launch with a local profile
           - Automatic Minecraft-required Java-major selection
           - Modern and legacy launch metadata, including 1.21.4 and 1.8.9-style arguments
           - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
           - Official/BMCLAPI downloads with official fallback and SHA-1 verification
 
-          ### Packaging checks
-          - Core launch/download regression checks run before release publication
-          - Linux DEB/RPM include required native launcher dependencies
-          - The DEB is installed with APT in a clean Ubuntu 24.04 container
-          - The packaged DEB is launched under Xvfb before publishing
-          - Windows and Linux packages remain self-contained for the .NET runtime
-
           ### Current limitations
           - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
-          - Local/offline profiles are not authenticated Microsoft accounts and cannot join online-mode servers
+          - Friend-to-friend room-code/P2P networking is not included yet; Terracotta/EasyTier/Scaffolding interoperability is the planned direction
           - Fabric, Forge and NeoForge installers are not included yet
           - HTTP Range resume and mod/resource-pack/shader management are not implemented yet
           - Real Linux Mint/Cinnamon game-menu validation is still an on-device acceptance check
 
-          This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
+          This is a development pre-release. Local profiles do not replace Minecraft ownership or authenticated online play.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
