@@ -18,6 +18,8 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly LauncherSettingsService _settings;
     private readonly DownloadSourceService _downloadSources;
     private readonly MinecraftLaunchPlanBuilder _launchBuilder;
+    private readonly MinecraftRuntimeInspector _runtimeInspector;
+    private readonly JavaRuntimeProvisionService _runtimeProvisioner;
     private readonly MinecraftProcessService _gameProcess = new();
     private CancellationTokenSource? _gameCancellation;
     private readonly Queue<string> _gameLogLines = new();
@@ -54,14 +56,12 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string microsoftAuthStatus = "Microsoft sign-in needs an approved UN_Nexo application registration before Minecraft Services will accept the client ID.";
 
     [ObservableProperty] private bool isGameRunning;
-    [ObservableProperty] private string gameStatus = "Select a prepared instance and an offline profile.";
+    [ObservableProperty] private string gameStatus = "Select an instance and an offline profile.";
     [ObservableProperty] private string gameLog = string.Empty;
 
     public bool CanPlay => !IsBusy && !IsInstallBusy && !IsGameRunning
         && SelectedInstance is not null
-        && SelectedAccount?.IsOffline == true
-        && JavaInstallations.Count > 0
-        && File.Exists(Path.Combine(_paths.GetInstanceDirectory(SelectedInstance.Id), "install-state.json"));
+        && SelectedAccount?.IsOffline == true;
 
     private void UpdatePlayAvailability()
     {
@@ -71,13 +71,20 @@ public partial class MainWindowViewModel : ObservableObject
         if (IsGameRunning)
             return;
 
-        GameStatus = IsInstallBusy ? "Wait for file preparation to finish."
-            : IsBusy ? "Scanning environment…"
-            : SelectedInstance is null ? "Create or select an instance in Instances."
-            : SelectedAccount?.IsOffline != true ? "Select an offline profile in Accounts."
-            : JavaInstallations.Count == 0 ? "No Java found. Install it, then Refresh."
-            : !CanPlay ? "Run Prepare Vanilla files in Instances first."
-            : "Ready for offline play.";
+        if (IsInstallBusy)
+            GameStatus = "Wait for file preparation to finish.";
+        else if (IsBusy)
+            GameStatus = "Scanning environment…";
+        else if (SelectedInstance is null)
+            GameStatus = "Create or select an instance in Instances.";
+        else if (SelectedAccount?.IsOffline != true)
+            GameStatus = "Select an offline profile in Accounts.";
+        else if (!File.Exists(Path.Combine(_paths.GetInstanceDirectory(SelectedInstance.Id), "install-state.json")))
+            GameStatus = "Ready · required Minecraft files will download automatically.";
+        else if (JavaInstallations.Count == 0)
+            GameStatus = "Ready · required Java will download automatically.";
+        else
+            GameStatus = "Ready for offline play.";
     }
 
     partial void OnIsBusyChanged(bool value) => UpdatePlayAvailability();
@@ -102,6 +109,8 @@ public partial class MainWindowViewModel : ObservableObject
         DownloadSourceService downloadSources)
     {
         _launchBuilder = new MinecraftLaunchPlanBuilder(paths);
+        _runtimeInspector = new MinecraftRuntimeInspector(paths);
+        _runtimeProvisioner = new JavaRuntimeProvisionService(paths);
         _javaDiscovery = javaDiscovery;
         _paths = paths;
         _manifest = manifest;
@@ -244,7 +253,7 @@ public partial class MainWindowViewModel : ObservableObject
 
             JavaSummary = java.Count == 0 ? "No Java found" : $"{java.Count} Java installation{(java.Count == 1 ? string.Empty : "s")}";
             JavaDetail = java.Count == 0
-                ? "No Java runtime detected. Install the Java version required by your instance."
+                ? "No Java runtime detected. Nexo will download the version required by the selected instance when you press Play."
                 : $"Detected: Java {java[0].Version} · {(java[0].Is64Bit ? "64-bit" : "architecture unknown")}\n{java[0].JavaPath}";
 
             InstanceSummary = $"{instances.Count} instance{(instances.Count == 1 ? string.Empty : "s")}";
@@ -316,7 +325,7 @@ public partial class MainWindowViewModel : ObservableObject
 
             InstallProgressValue = value.Percent;
             InstallProgressText = value.Total > 0
-                ? $"{value.Stage} · {value.Completed}/{value.Total}{(string.IsNullOrWhiteSpace(value.CurrentItem) ? string.Empty : $" · {value.CurrentItem}")}" 
+                ? $"{value.Stage} · {value.Completed}/{value.Total}{(string.IsNullOrWhiteSpace(value.CurrentItem) ? string.Empty : $" · {value.CurrentItem}")}"
                 : value.Stage;
         });
 
@@ -344,6 +353,82 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    private async Task EnsureLaunchReadyAsync(GameInstance instance, CancellationToken cancellationToken)
+    {
+        var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
+        if (!File.Exists(statePath))
+        {
+            var version = AvailableVersions.FirstOrDefault(item => item.Id == instance.VersionId);
+            if (version is null)
+            {
+                var catalog = await TryGetCatalogAsync();
+                version = catalog?.Versions.FirstOrDefault(item => item.Id == instance.VersionId);
+            }
+            if (version is null)
+                throw new InvalidOperationException(
+                    $"Minecraft {instance.VersionId} metadata is unavailable. Refresh the catalog and try again.");
+
+            IsInstallBusy = true;
+            InstallProgressValue = 0;
+            InstallProgressText = $"Auto preparing {instance.VersionId}…";
+            try
+            {
+                var progress = new Progress<InstallProgress>(value =>
+                {
+                    if (IsSelectedInstance(instance))
+                    {
+                        InstallProgressValue = value.Percent;
+                        InstallProgressText = value.Total > 0
+                            ? $"{value.Stage} · {value.Completed}/{value.Total}"
+                            : value.Stage;
+                    }
+                    GameStatus = value.Total > 0
+                        ? $"Downloading {instance.VersionId} · {value.Stage} · {value.Completed}/{value.Total}"
+                        : $"Downloading {instance.VersionId} · {value.Stage}";
+                    LauncherStatus = GameStatus;
+                });
+                await _installer.InstallAsync(instance, version, progress, cancellationToken);
+                if (IsSelectedInstance(instance))
+                {
+                    InstallProgressValue = 100;
+                    InstallProgressText = $"Vanilla files prepared · {_downloadSources.DisplayName}";
+                }
+            }
+            finally
+            {
+                IsInstallBusy = false;
+            }
+        }
+
+        var requiredJava = await _runtimeInspector.GetRequiredJavaMajorAsync(instance, cancellationToken) ?? 8;
+        var matchingJava = JavaInstallations.FirstOrDefault(item =>
+            item.Is64Bit
+            && File.Exists(item.JavaPath)
+            && MinecraftLaunchPlanBuilder.JavaMajor(item.Version) == requiredJava);
+        if (matchingJava is null)
+        {
+            GameStatus = $"Java {requiredJava} is missing · downloading a managed runtime…";
+            LauncherStatus = GameStatus;
+            var progress = new Progress<string>(message =>
+            {
+                GameStatus = message;
+                LauncherStatus = message;
+            });
+            var installed = await _runtimeProvisioner.EnsureJavaAsync(
+                requiredJava,
+                progress,
+                cancellationToken);
+            if (!JavaInstallations.Any(item =>
+                    string.Equals(item.JavaPath, installed.JavaPath, StringComparison.OrdinalIgnoreCase)))
+                JavaInstallations.Add(installed);
+            JavaSummary = $"{JavaInstallations.Count} Java installation{(JavaInstallations.Count == 1 ? string.Empty : "s")}";
+            JavaDetail = $"Managed Java {installed.Version} · 64-bit\n{installed.JavaPath}";
+        }
+
+        GameStatus = $"Starting {instance.Name}…";
+        LauncherStatus = GameStatus;
+    }
+
     [RelayCommand(CanExecute = nameof(CanPlay))]
     private async Task PlayAsync()
     {
@@ -362,6 +447,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
+            await EnsureLaunchReadyAsync(instance, cancellation.Token);
             var plan = await _launchBuilder.BuildAsync(
                 instance, account, JavaInstallations.ToArray(), cancellation.Token);
             GameStatus = $"Running {instance.Name} · Offline profile {account.DisplayName}";
