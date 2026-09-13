@@ -15,6 +15,7 @@ internal static class Program
     {
         var tests = new (string Name, Func<Task> Run)[]
         {
+            ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
             ("Java major parsing", TestJavaMajorAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
@@ -42,6 +43,98 @@ internal static class Program
 
         Console.WriteLine($"Regression checks: {tests.Length - failures}/{tests.Length} passed");
         return failures == 0 ? 0 : 1;
+    }
+
+    private sealed class InlineProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
+
+    private static async Task TestProcessFailureCleanupAsync()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("SKIP process fixture requires a Unix shell");
+            return;
+        }
+
+        var temp = Path.Combine(Path.GetTempPath(), "nexo-process-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temp);
+        var oldInterval = LaunchDiagnostics.HeartbeatInterval;
+        var oldEnabled = LaunchDiagnostics.Enabled;
+        try
+        {
+            LaunchDiagnostics.Enabled = true;
+            LaunchDiagnostics.HeartbeatInterval = TimeSpan.FromMilliseconds(20);
+            var service = new MinecraftProcessService(
+                new LauncherRuntimeSettingsService(new NexoPathService(temp)));
+            var executable = Path.Combine(temp, "fake-java");
+            var plan = new MinecraftLaunchPlan(executable, temp, [], Path.Combine(temp, "logs"));
+
+            foreach (var failure in new[] { "started", "stdout", "heartbeat" })
+            {
+                await File.WriteAllTextAsync(executable, failure == "stdout"
+                    ? "#!/bin/sh\nwhile :; do echo output; done\n"
+                    : "#!/bin/sh\nwhile :; do sleep 1; done\n");
+                if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                var pid = 0;
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var progress = new InlineProgress(message =>
+                {
+                    if (message.StartsWith("Started game process ", StringComparison.Ordinal))
+                    {
+                        pid = int.Parse(message["Started game process ".Length..]);
+                        if (failure == "started") throw new IOException("injected consumer failure");
+                    }
+                    if ((failure == "stdout" && message.StartsWith("[stdout]", StringComparison.Ordinal))
+                        || (failure == "heartbeat" && message.StartsWith("[debug] PID ", StringComparison.Ordinal)))
+                        throw new IOException("injected consumer failure");
+                });
+                try
+                {
+                    try
+                    {
+                        await service.RunAsync(plan, progress, timeout.Token);
+                        throw new Exception("Expected the consumer failure to propagate");
+                    }
+                    catch (IOException ex) when (ex.Message == "injected consumer failure") { }
+                    Equal(false, timeout.IsCancellationRequested, failure + " must terminate without timeout cancellation");
+                    Equal(true, pid > 0, "fixture must start a child process");
+                    try
+                    {
+                        using var child = System.Diagnostics.Process.GetProcessById(pid);
+                        Equal(true, child.HasExited, failure + " must not leave Java running");
+                    }
+                    catch (ArgumentException) { /* Reaped process no longer exists. */ }
+                }
+                finally
+                {
+                    if (pid > 0)
+                    {
+                        try
+                        {
+                            using var child = System.Diagnostics.Process.GetProcessById(pid);
+                            if (!child.HasExited) child.Kill(entireProcessTree: true);
+                        }
+                        catch (ArgumentException) { }
+                    }
+                }
+            }
+
+            // Reuse the same service after all failures; its running guard must reset.
+            await File.WriteAllTextAsync(executable, "#!/bin/sh\necho normal-output\necho normal-error >&2\nexit 7\n");
+            var result = await service.RunAsync(plan);
+            Equal(7, result.ExitCode, "normal exit code");
+            var log = await File.ReadAllTextAsync(result.LogPath);
+            ContainsText(log, "[stdout] normal-output", "stdout retained");
+            ContainsText(log, "[stderr] normal-error", "stderr retained");
+        }
+        finally
+        {
+            LaunchDiagnostics.HeartbeatInterval = oldInterval;
+            LaunchDiagnostics.Enabled = oldEnabled;
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
     }
 
     private static Task TestJavaMajorAsync()
