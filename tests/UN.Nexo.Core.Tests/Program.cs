@@ -1,5 +1,8 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
@@ -13,11 +16,13 @@ internal static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Java major parsing", TestJavaMajorAsync),
+            ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
             ("Modern 1.21.4 launch plan and Quick Play", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
-            ("Legacy 1.8.9 launch plan and direct connect", () => TestLaunchPlanAsync("1.8.9", 8, modern: false))
+            ("Legacy 1.8.9 launch plan and direct connect", () => TestLaunchPlanAsync("1.8.9", 8, modern: false)),
+            ("Legacy 1.5.2 launch plan and virtual assets", TestMinecraft152LaunchPlanAsync)
         };
 
         var failures = 0;
@@ -42,9 +47,52 @@ internal static class Program
     private static Task TestJavaMajorAsync()
     {
         Equal(8, MinecraftLaunchPlanBuilder.JavaMajor("1.8.0_442"), "Java 8 parsing");
+        Equal(8, MinecraftLaunchPlanBuilder.JavaMajor("8.0.442+6"), "Managed Java 8 parsing");
         Equal(17, MinecraftLaunchPlanBuilder.JavaMajor("17.0.13"), "Java 17 parsing");
         Equal(21, MinecraftLaunchPlanBuilder.JavaMajor("21.0.8+9"), "Java 21 parsing");
         return Task.CompletedTask;
+    }
+
+    private static async Task TestManagedJavaRuntimeAsync()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "UN Nexo managed Java", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var archiveBytes = CreateFakeJavaArchive();
+            var checksum = Convert.ToHexString(SHA256.HashData(archiveBytes)).ToLowerInvariant();
+            var handler = new ManagedJavaHandler(archiveBytes, checksum);
+            using var client = new HttpClient(handler);
+            var paths = new NexoPathService(temp);
+            var service = new JavaRuntimeProvisionService(client, paths);
+
+            var installation = await service.EnsureJavaAsync(8);
+            Equal(8, MinecraftLaunchPlanBuilder.JavaMajor(installation.Version), "managed Java major");
+            Equal(true, installation.Is64Bit, "managed Java architecture");
+            Equal(true, File.Exists(installation.JavaPath), "managed Java executable should exist");
+            ContainsText(installation.Source, "Temurin", "managed Java source label");
+            Equal(2, handler.RequestCount, "first provision should resolve metadata and download one archive");
+
+            var reused = await service.EnsureJavaAsync(8);
+            Equal(installation.JavaPath, reused.JavaPath, "managed runtime should be reused");
+            Equal(2, handler.RequestCount, "reusing a managed runtime should not access the network");
+        }
+        finally
+        {
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static byte[] CreateFakeJavaArchive()
+    {
+        using var memory = new MemoryStream();
+        using (var archive = new ZipArchive(memory, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var executableName = OperatingSystem.IsWindows() ? "java.exe" : "java";
+            var entry = archive.CreateEntry($"jdk8/bin/{executableName}");
+            using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
+            writer.Write("fake managed java");
+        }
+        return memory.ToArray();
     }
 
     private static Task TestRuntimeLaunchOptionsAsync()
@@ -221,6 +269,89 @@ internal static class Program
         }
     }
 
+    private static async Task TestMinecraft152LaunchPlanAsync()
+    {
+        const string version = "1.5.2";
+        var temp = Path.Combine(Path.GetTempPath(), "UN Nexo 1.5.2 regression", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new NexoPathService(temp);
+            var instance = new GameInstance("mc-152", "Minecraft 1.5.2", version, "vanilla", DateTimeOffset.UtcNow);
+            var account = new LauncherAccount("local-152", "offline", "LegacyTester", Guid.NewGuid().ToString(), DateTimeOffset.UtcNow);
+            var instanceRoot = paths.GetInstanceDirectory(instance.Id);
+            var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
+            var versionRoot = Path.Combine(gameRoot, "versions", version);
+            var assetsRoot = Path.Combine(gameRoot, "assets");
+            var librariesRoot = Path.Combine(gameRoot, "libraries");
+            Directory.CreateDirectory(versionRoot);
+            Directory.CreateDirectory(Path.Combine(assetsRoot, "indexes"));
+            Directory.CreateDirectory(Path.Combine(assetsRoot, "objects", "aa"));
+            await File.WriteAllTextAsync(Path.Combine(instanceRoot, "install-state.json"), "{}");
+            await File.WriteAllBytesAsync(Path.Combine(versionRoot, version + ".jar"), [1]);
+
+            var launchWrapperRelative = "net/minecraft/launchwrapper/1.5/launchwrapper-1.5.jar";
+            var launchWrapperPath = Path.Combine(librariesRoot, launchWrapperRelative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(launchWrapperPath)!);
+            await File.WriteAllBytesAsync(launchWrapperPath, [2]);
+
+            var assetHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            var objectPath = Path.Combine(assetsRoot, "objects", "aa", assetHash);
+            await File.WriteAllBytesAsync(objectPath, [3]);
+            await File.WriteAllTextAsync(
+                Path.Combine(assetsRoot, "indexes", "legacy.json"),
+                "{\"virtual\":true,\"objects\":{\"lang/en_US.lang\":{\"hash\":\"" + assetHash + "\"}}}");
+
+            var metadata = """
+                {
+                  "id":"1.5.2",
+                  "type":"release",
+                  "downloads":{"client":{}},
+                  "assetIndex":{"id":"legacy"},
+                  "libraries":[
+                    {
+                      "name":"net.minecraft:launchwrapper:1.5",
+                      "downloads":{"artifact":{"path":"net/minecraft/launchwrapper/1.5/launchwrapper-1.5.jar","size":1}}
+                    }
+                  ],
+                  "mainClass":"net.minecraft.launchwrapper.Launch",
+                  "minecraftArguments":"${auth_player_name} ${auth_session} --gameDir ${game_directory} --assetsDir ${game_assets}"
+                }
+                """;
+            await File.WriteAllTextAsync(Path.Combine(versionRoot, version + ".json"), metadata);
+
+            var java8 = Path.Combine(temp, "java8");
+            await File.WriteAllTextAsync(java8, "test");
+            var plan = await new MinecraftLaunchPlanBuilder(paths).BuildAsync(
+                instance,
+                account,
+                [new JavaInstallation(java8, temp, "1.8.0_442", true, "test")]);
+
+            Equal(java8, plan.JavaPath, "Minecraft 1.5.2 should default to Java 8");
+            Contains(plan.Arguments, "net.minecraft.launchwrapper.Launch", "1.5.2 launchwrapper main class");
+            Contains(plan.Arguments, "LegacyTester", "1.5.2 username argument");
+            Contains(plan.Arguments, "0", "1.5.2 offline session argument");
+            Contains(plan.Arguments, gameRoot, "1.5.2 game directory");
+            var virtualAssets = Path.Combine(assetsRoot, "virtual", "legacy");
+            Contains(plan.Arguments, virtualAssets, "1.5.2 legacy virtual assets argument");
+            Equal(true, File.Exists(Path.Combine(virtualAssets, "lang", "en_US.lang")), "legacy asset should be materialized");
+            Any(plan.Arguments,
+                value => value.Contains("launchwrapper-1.5.jar", StringComparison.Ordinal)
+                         && value.Contains("1.5.2.jar", StringComparison.Ordinal),
+                "1.5.2 classpath should include launchwrapper and client");
+
+            var serverPlan = await new MinecraftServerLaunchDecorator(paths).ApplyAsync(
+                plan,
+                instance,
+                MinecraftServerTarget.Parse("localhost:25565"));
+            Contains(serverPlan.Arguments, "--server", "1.5.2 direct connect server argument");
+            Contains(serverPlan.Arguments, "--port", "1.5.2 direct connect port argument");
+        }
+        finally
+        {
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
     private static void Equal<T>(T expected, T actual, string message)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
@@ -237,6 +368,18 @@ internal static class Program
     {
         if (!values.Any(value => value.StartsWith(prefix, StringComparison.Ordinal)))
             throw new InvalidOperationException($"{message}: missing prefix '{prefix}'.");
+    }
+
+    private static void ContainsText(string value, string expected, string message)
+    {
+        if (!value.Contains(expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"{message}: '{value}' does not contain '{expected}'.");
+    }
+
+    private static void Any(IEnumerable<string> values, Func<string, bool> predicate, string message)
+    {
+        if (!values.Any(predicate))
+            throw new InvalidOperationException(message);
     }
 
     private static void DoesNotContain(IEnumerable<string> values, string unexpected, string message)
@@ -281,6 +424,37 @@ internal static class Program
             {
                 Content = new StringContent(manifest)
             });
+        }
+    }
+
+    private sealed class ManagedJavaHandler(byte[] archiveBytes, string checksum) : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            var host = request.RequestUri?.Host ?? string.Empty;
+            if (host.Equals("api.adoptium.net", StringComparison.OrdinalIgnoreCase))
+            {
+                var json = "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\""
+                           + checksum
+                           + "\"}},\"version_data\":{\"semver\":\"8.0.442+6\"}}]";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                });
+            }
+
+            if (host.Equals("runtime.example.test", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(archiveBytes)
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
 

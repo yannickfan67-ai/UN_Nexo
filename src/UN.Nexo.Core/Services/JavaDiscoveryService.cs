@@ -6,6 +6,13 @@ namespace UN.Nexo.Core.Services;
 
 public sealed partial class JavaDiscoveryService
 {
+    private readonly NexoPathService? _paths;
+
+    public JavaDiscoveryService(NexoPathService? paths = null)
+    {
+        _paths = paths;
+    }
+
     public async Task<IReadOnlyList<JavaInstallation>> DiscoverAsync(CancellationToken cancellationToken = default)
     {
         var candidates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -13,6 +20,8 @@ public sealed partial class JavaDiscoveryService
         AddJavaHome(candidates);
         AddPathCandidates(candidates);
         AddPlatformCandidates(candidates);
+        if (_paths is not null)
+            AddRoot(candidates, _paths.GetRuntimesRoot(), "Nexo managed runtime", 4);
 
         var results = new List<JavaInstallation>();
         foreach (var candidate in candidates)

@@ -32,7 +32,7 @@ public sealed partial class MainWindow : Window
         ApplyRuntimeVersionLabel(launcherVersion);
 
         _viewModel = new MainWindowViewModel(
-            new JavaDiscoveryService(),
+            new JavaDiscoveryService(_paths),
             _paths,
             new MinecraftVersionManifestService(httpClient, downloadSources),
             new InstanceStoreService(_paths),

@@ -49,6 +49,8 @@ public sealed class NexoPathService
 
     public string GetInstancesRoot() => Path.Combine(GetDataRoot(), "instances");
 
+    public string GetRuntimesRoot() => Path.Combine(GetDataRoot(), "runtimes");
+
     public string GetInstanceDirectory(string instanceId)
         => Path.Combine(GetInstancesRoot(), instanceId);
 
@@ -59,5 +61,6 @@ public sealed class NexoPathService
     {
         Directory.CreateDirectory(GetDataRoot());
         Directory.CreateDirectory(GetInstancesRoot());
+        Directory.CreateDirectory(GetRuntimesRoot());
     }
 }
