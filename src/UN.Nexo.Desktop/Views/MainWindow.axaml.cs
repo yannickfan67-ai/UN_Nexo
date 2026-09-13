@@ -1,5 +1,7 @@
 using System.Reflection;
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Layout;
 using UN.Nexo.Core.Services;
 using UN.Nexo.Desktop.ViewModels;
 
@@ -9,6 +11,7 @@ public sealed partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _viewModel;
     private Task? _initializationTask;
+    private ServerHubWindow? _serverHub;
 
     public MainWindow()
     {
@@ -23,6 +26,7 @@ public sealed partial class MainWindow : Window
         var launcherVersion = typeof(MainWindow).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "dev";
+        Title = $"UN_Nexo {launcherVersion}";
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
 
         _viewModel = new MainWindowViewModel(
@@ -36,7 +40,7 @@ public sealed partial class MainWindow : Window
             downloadSources);
 
         DataContext = _viewModel;
-        AddSessionOverlay();
+        AddOverlays();
         Opened += OnOpened;
     }
 
@@ -54,7 +58,7 @@ public sealed partial class MainWindow : Window
         Opacity = 1;
     }
 
-    private void AddSessionOverlay()
+    private void AddOverlays()
     {
         if (Content is not Control shell)
             return;
@@ -62,8 +66,34 @@ public sealed partial class MainWindow : Window
         Content = null;
         var layers = new Grid();
         layers.Children.Add(shell);
+
+        var servers = new Button
+        {
+            Content = "Servers",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 22, 22),
+            Padding = new Thickness(16, 10),
+            MinWidth = 100
+        };
+        servers.Classes.Add("primary");
+        servers.Click += (_, _) => OpenServerHub();
+        layers.Children.Add(servers);
         layers.Children.Add(new LaunchStatusOverlay());
         Content = layers;
+    }
+
+    private void OpenServerHub()
+    {
+        if (_serverHub is not null)
+        {
+            _serverHub.Activate();
+            return;
+        }
+
+        _serverHub = new ServerHubWindow(_viewModel);
+        _serverHub.Closed += (_, _) => _serverHub = null;
+        _serverHub.Show(this);
     }
 
     private async void OnOpened(object? sender, EventArgs e)
