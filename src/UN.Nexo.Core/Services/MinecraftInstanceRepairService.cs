@@ -123,6 +123,9 @@ public sealed class MinecraftInstanceRepairService
         statusProgress?.Report("Repairing game files…");
         await _installer.InstallAsync(instance, version, installProgress, cancellationToken);
 
+        statusProgress?.Report("Rebuilding legacy/virtual asset views…");
+        await RebuildMappedAssetsAsync(instance, cancellationToken);
+
         var requiredJava = await _runtimeInspector.GetRequiredJavaMajorAsync(instance, cancellationToken) ?? 8;
         statusProgress?.Report($"Checking Java {requiredJava}…");
         var java = await _javaDiscovery.DiscoverAsync(cancellationToken);
@@ -188,7 +191,17 @@ public sealed class MinecraftInstanceRepairService
                 continue;
 
             if (downloads.TryGetProperty("artifact", out var artifact))
-                await InspectLibraryArtifactAsync(artifact, librariesRoot, samples, value => missing += value, value => corrupt += value, cancellationToken);
+            {
+                var artifactPath = GetArtifactPath(artifact, librariesRoot);
+                if (artifactPath is not null)
+                {
+                    var sha1 = artifact.TryGetProperty("sha1", out var artifactSha) ? artifactSha.GetString() : null;
+                    var result = await InspectFileAsync(artifactPath, sha1, cancellationToken);
+                    if (result == FileHealth.Missing) missing++;
+                    if (result == FileHealth.Corrupt) corrupt++;
+                    if (result != FileHealth.Healthy && samples.Count < 4) samples.Add(artifactPath);
+                }
+            }
 
             if (!library.TryGetProperty("natives", out var natives))
                 continue;
@@ -243,26 +256,6 @@ public sealed class MinecraftInstanceRepairService
         return nativeArchives;
     }
 
-    private static async Task InspectLibraryArtifactAsync(
-        JsonElement artifact,
-        string librariesRoot,
-        ICollection<string> samples,
-        Action<int> addMissing,
-        Action<int> addCorrupt,
-        CancellationToken cancellationToken)
-    {
-        var path = GetArtifactPath(artifact, librariesRoot);
-        if (path is null)
-            return;
-
-        var sha1 = artifact.TryGetProperty("sha1", out var shaElement) ? shaElement.GetString() : null;
-        var result = await InspectFileAsync(path, sha1, cancellationToken);
-        if (result == FileHealth.Missing) addMissing(1);
-        if (result == FileHealth.Corrupt) addCorrupt(1);
-        if (result != FileHealth.Healthy && samples.Count < 4)
-            samples.Add(path);
-    }
-
     private static string? GetArtifactPath(JsonElement artifact, string librariesRoot)
     {
         if (!artifact.TryGetProperty("path", out var pathElement))
@@ -270,7 +263,7 @@ public sealed class MinecraftInstanceRepairService
         var relative = pathElement.GetString();
         return string.IsNullOrWhiteSpace(relative)
             ? null
-            : Path.Combine(librariesRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+            : Within(librariesRoot, relative);
     }
 
     private async Task CheckExtractedNativesAsync(
@@ -301,7 +294,18 @@ public sealed class MinecraftInstanceRepairService
                         || native.Excludes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
                         continue;
 
-                    var target = Path.Combine(nativesRoot, normalized.Replace('/', Path.DirectorySeparatorChar));
+                    string target;
+                    try
+                    {
+                        target = Within(nativesRoot, normalized);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        corrupt++;
+                        firstProblem ??= native.ArchivePath;
+                        continue;
+                    }
+
                     if (!File.Exists(target))
                     {
                         missing++;
@@ -396,14 +400,39 @@ public sealed class MinecraftInstanceRepairService
                 if (!property.Value.TryGetProperty("hash", out var hashElement))
                     continue;
                 var hash = hashElement.GetString();
-                if (string.IsNullOrWhiteSpace(hash) || hash.Length < 2)
-                    continue;
-                var objectPath = Path.Combine(assetsRoot, "objects", hash[..2], hash);
-                checks.Add(new AssetCheck(objectPath, hash, "asset object"));
+                if (!IsSha1(hash))
+                {
+                    issues.Add(new InstanceHealthIssue(
+                        "asset-index-invalid-hash",
+                        "Assets",
+                        InstanceHealthLevel.Error,
+                        $"Asset index contains an invalid SHA-1 for {property.Name}.",
+                        indexPath,
+                        "Run Repair to replace the asset index."));
+                    return;
+                }
+
+                var objectPath = Within(Path.Combine(assetsRoot, "objects"), Path.Combine(hash![..2], hash));
+                checks.Add(new AssetCheck(objectPath, hash));
                 if (mapToResources)
                 {
-                    var resourcePath = Path.Combine(gameRoot, "resources", property.Name.Replace('/', Path.DirectorySeparatorChar));
-                    checks.Add(new AssetCheck(resourcePath, hash, "legacy resource"));
+                    string resourcePath;
+                    try
+                    {
+                        resourcePath = Within(Path.Combine(gameRoot, "resources"), property.Name);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        issues.Add(new InstanceHealthIssue(
+                            "asset-index-invalid-path",
+                            "Assets",
+                            InstanceHealthLevel.Error,
+                            $"Asset index contains an unsafe resource path: {property.Name}.",
+                            indexPath,
+                            "Run Repair to replace the asset index."));
+                        return;
+                    }
+                    checks.Add(new AssetCheck(resourcePath, hash));
                 }
             }
 
@@ -433,6 +462,79 @@ public sealed class MinecraftInstanceRepairService
                     "Run Repair to restore only missing/corrupt assets; verified objects are reused."));
             }
         }
+    }
+
+    private async Task RebuildMappedAssetsAsync(GameInstance instance, CancellationToken cancellationToken)
+    {
+        var gameRoot = _paths.GetInstanceGameDirectory(instance.Id);
+        var versionPath = Path.Combine(gameRoot, "versions", instance.VersionId, instance.VersionId + ".json");
+        if (!File.Exists(versionPath))
+            return;
+
+        using var version = await ReadJsonAsync(versionPath, cancellationToken);
+        var root = version.RootElement;
+        if (!root.TryGetProperty("assetIndex", out var assetIndex))
+            return;
+
+        var assetId = assetIndex.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
+        if (string.IsNullOrWhiteSpace(assetId))
+            return;
+
+        var assetsRoot = Path.Combine(gameRoot, "assets");
+        var indexPath = Path.Combine(assetsRoot, "indexes", assetId + ".json");
+        if (!File.Exists(indexPath))
+            return;
+
+        using var index = await ReadJsonAsync(indexPath, cancellationToken);
+        var indexRoot = index.RootElement;
+        if (!indexRoot.TryGetProperty("objects", out var objects))
+            return;
+
+        var legacyAssets = string.Equals(assetId, "legacy", StringComparison.OrdinalIgnoreCase)
+            || (root.TryGetProperty("assets", out var assetsElement)
+                && string.Equals(assetsElement.GetString(), "legacy", StringComparison.OrdinalIgnoreCase));
+        var virtualAssets = legacyAssets
+            || (indexRoot.TryGetProperty("virtual", out var virtualElement)
+                && virtualElement.ValueKind == JsonValueKind.True);
+        var mapToResources = indexRoot.TryGetProperty("map_to_resources", out var resourcesElement)
+            && resourcesElement.ValueKind == JsonValueKind.True;
+        if (!virtualAssets && !mapToResources)
+            return;
+
+        var objectsRoot = Path.Combine(assetsRoot, "objects");
+        var virtualRoot = Path.Combine(assetsRoot, "virtual", assetId);
+        var resourceRoot = Path.Combine(gameRoot, "resources");
+
+        foreach (var property in objects.EnumerateObject())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!property.Value.TryGetProperty("hash", out var hashElement))
+                continue;
+            var hash = hashElement.GetString();
+            if (!IsSha1(hash))
+                throw new InvalidDataException($"Asset index contains an invalid SHA-1 for {property.Name}.");
+
+            var source = Within(objectsRoot, Path.Combine(hash![..2], hash));
+            if (await InspectFileAsync(source, hash, cancellationToken) != FileHealth.Healthy)
+                throw new InvalidDataException($"Verified asset object is missing or damaged: {property.Name}.");
+
+            if (virtualAssets)
+                await EnsureMappedCopyAsync(source, Within(virtualRoot, property.Name), hash, cancellationToken);
+            if (mapToResources)
+                await EnsureMappedCopyAsync(source, Within(resourceRoot, property.Name), hash, cancellationToken);
+        }
+    }
+
+    private static async Task EnsureMappedCopyAsync(
+        string source,
+        string target,
+        string sha1,
+        CancellationToken cancellationToken)
+    {
+        if (await InspectFileAsync(target, sha1, cancellationToken) == FileHealth.Healthy)
+            return;
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.Copy(source, target, overwrite: true);
     }
 
     private async Task<int?> CheckJavaAndSystemAsync(
@@ -523,6 +625,12 @@ public sealed class MinecraftInstanceRepairService
         return expectedHash.AsSpan().SequenceEqual(actualHash);
     }
 
+    private static async Task<JsonDocument> ReadJsonAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+    }
+
     private static bool ShouldUseLibrary(JsonElement library)
     {
         if (!library.TryGetProperty("rules", out var rules))
@@ -584,7 +692,26 @@ public sealed class MinecraftInstanceRepairService
         return candidates.Any(File.Exists);
     }
 
+    private static bool IsSha1(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+           && value.Length == 40
+           && value.All(Uri.IsHexDigit);
+
+    private static string Within(string root, string relative)
+    {
+        if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative))
+            throw new InvalidDataException("Invalid relative game path.");
+        var fullRoot = Path.GetFullPath(root) + Path.DirectorySeparatorChar;
+        var result = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!result.StartsWith(fullRoot, comparison))
+            throw new InvalidDataException("Game metadata path escapes its expected directory.");
+        return result;
+    }
+
     private sealed record NativeArchive(string ArchivePath, IReadOnlyList<string> Excludes);
-    private sealed record AssetCheck(string Path, string Sha1, string Kind);
+    private sealed record AssetCheck(string Path, string Sha1);
     private enum FileHealth { Healthy, Missing, Corrupt }
 }
