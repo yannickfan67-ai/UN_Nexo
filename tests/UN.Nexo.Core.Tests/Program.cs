@@ -13,6 +13,7 @@ internal static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Java major parsing", TestJavaMajorAsync),
+            ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
             ("Modern 1.21.4 launch plan and Quick Play", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
@@ -43,6 +44,45 @@ internal static class Program
         Equal(8, MinecraftLaunchPlanBuilder.JavaMajor("1.8.0_442"), "Java 8 parsing");
         Equal(17, MinecraftLaunchPlanBuilder.JavaMajor("17.0.13"), "Java 17 parsing");
         Equal(21, MinecraftLaunchPlanBuilder.JavaMajor("21.0.8+9"), "Java 21 parsing");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestRuntimeLaunchOptionsAsync()
+    {
+        const long gib = 1024L * 1024L * 1024L;
+        Equal(4096, RuntimeLaunchOptions.RecommendMemoryMb(16 * gib), "Auto memory recommendation");
+
+        var baseArguments = new[]
+        {
+            "-Xmx2G",
+            "-Djava.library.path=/tmp/natives",
+            "net.minecraft.client.main.Main",
+            "--username",
+            "NexoTester"
+        };
+        var settings = new LauncherRuntimeSettings(
+            0,
+            "-XX:+UseG1GC \"-Dgreeting=hello world\"");
+        var applied = RuntimeLaunchOptions.Apply(baseArguments, settings, 16 * gib);
+        Contains(applied, "-Xmx4096M", "Auto memory should replace the fixed launcher value");
+        DoesNotContain(applied, "-Xmx2G", "Old fixed memory must be removed");
+        Contains(applied, "-XX:+UseG1GC", "Extra JVM option");
+        Contains(applied, "-Dgreeting=hello world", "Quoted JVM option should remain one argument");
+        Contains(applied, "net.minecraft.client.main.Main", "Main class must remain in the launch plan");
+
+        var custom = RuntimeLaunchOptions.Apply(
+            baseArguments,
+            new LauncherRuntimeSettings(6144, "-Xms1024M"),
+            4 * gib);
+        Contains(custom, "-Xmx6144M", "Custom memory setting");
+        Contains(custom, "-Xms1024M", "Custom minimum heap");
+
+        Throws<ArgumentException>(
+            () => RuntimeLaunchOptions.ParseExtraJvmArguments("-Xmx8G"),
+            "Manual -Xmx should be blocked");
+        Throws<ArgumentException>(
+            () => RuntimeLaunchOptions.ParseExtraJvmArguments("-cp hacked.jar"),
+            "Classpath override should be blocked");
         return Task.CompletedTask;
     }
 
@@ -203,6 +243,21 @@ internal static class Program
     {
         if (values.Contains(unexpected, StringComparer.Ordinal))
             throw new InvalidOperationException($"{message}: unexpected '{unexpected}'.");
+    }
+
+    private static void Throws<TException>(Action action, string message)
+        where TException : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (TException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException($"{message}: expected {typeof(TException).Name}.");
     }
 
     private sealed class ManifestFallbackHandler : HttpMessageHandler
