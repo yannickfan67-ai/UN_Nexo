@@ -8,7 +8,7 @@ public partial class MainWindowViewModel
     {
         if (!CanPlay || SelectedInstance is null || SelectedAccount is null)
         {
-            GameStatus = "Server launch needs a prepared instance, compatible Java and a selected local profile.";
+            GameStatus = "Server launch needs a selected instance and local profile.";
             LauncherStatus = GameStatus;
             return;
         }
@@ -37,6 +37,7 @@ public partial class MainWindowViewModel
 
         try
         {
+            await EnsureLaunchReadyAsync(instance, cancellation.Token);
             var plan = await _launchBuilder.BuildAsync(
                 instance, account, JavaInstallations.ToArray(), cancellation.Token);
             plan = await new MinecraftServerLaunchDecorator(_paths).ApplyAsync(
