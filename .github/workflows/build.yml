@@ -25,3 +25,61 @@ jobs:
         run: dotnet restore UN_Nexo.sln
       - name: Build
         run: dotnet build UN_Nexo.sln -c Release --no-restore
+
+  linux-desktop-smoke:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish self-contained Linux x64 build
+        run: >-
+          dotnet publish src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
+          -c Release
+          -r linux-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -o artifacts/linux-x64
+
+      - name: Install virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Smoke launch desktop UI
+        shell: bash
+        run: |
+          set +e
+          timeout 8s xvfb-run -a ./artifacts/linux-x64/UN_Nexo
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+            echo "UN_Nexo exited unexpectedly with code $code"
+            exit "$code"
+          fi
+          echo "UN_Nexo stayed alive under X11 virtual display."
+
+      - name: Add Linux Mint test instructions
+        run: |
+          cat > artifacts/linux-x64/RUN-ON-LINUX-MINT.txt <<'EOF'
+          UN_Nexo Linux Mint test build
+
+          1. Extract this archive.
+          2. Open a terminal in the extracted folder.
+          3. Run: chmod +x UN_Nexo
+          4. Run: ./UN_Nexo
+
+          This build is self-contained: installing the .NET runtime is not required.
+          Linux Mint still needs its normal desktop libraries (X11/fontconfig/etc.), which are present on a standard Cinnamon installation.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UN_Nexo-linux-x64-mint-test
+          path: artifacts/linux-x64/
+          if-no-files-found: error
+          retention-days: 14
