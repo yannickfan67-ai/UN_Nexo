@@ -90,11 +90,27 @@ jobs:
           fpm -s dir -t deb -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a amd64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
+            -d 'libc6 (>= 2.35)' -d libgcc-s1 -d libstdc++6 \
+            -d libfontconfig1 -d libfreetype6 \
+            -d libx11-6 -d libx11-xcb1 -d libxcb1 -d libxext6 \
+            -d libxi6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.deb" .
           fpm -s dir -t rpm -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a x86_64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
+            -d glibc -d libgcc -d libstdc++ -d fontconfig -d freetype \
+            -d libX11 -d libXcursor -d libXi -d libXrandr -d libXext -d mesa-libGL -d libICE -d libSM \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" .
+      - name: Validate DEB dependencies with APT
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          DEB="UN_Nexo-${VERSION}-linux-x64.deb"
+          echo "Declared dependencies:"
+          dpkg-deb -f "release/$DEB" Depends
+          docker run --rm -v "$PWD/release:/packages:ro" ubuntu:24.04 bash -lc \
+            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed'"
       - name: Smoke test packaged DEB UI
         shell: bash
         run: |
@@ -136,24 +152,25 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### New in this build
-          - Accounts page with persistent offline profiles and deterministic Minecraft offline UUIDs
-          - Download source setting: Official or BMCLAPI
-          - BMCLAPI acceleration for version metadata, client files, libraries and assets
-          - Automatic fallback to official Mojang/Minecraft URLs when a mirror request fails
-          - SHA-1 verification remains enabled regardless of source
-          - Linux DEB/RPM packaging now includes Avalonia native SkiaSharp/HarfBuzz libraries
-          - Packaged DEB is actually launched under Xvfb before the release is published
+          ### Bug fixes
+          - Mirror version-catalog fallback now also handles invalid/truncated HTTP-200 responses
+          - Instance preparation progress stays attached to the instance that actually started the operation
+          - Instance/version controls no longer disappear or overlap at supported narrow window sizes
+          - DEB/RPM packages now declare native Linux runtime dependencies
+          - Release CI validates DEB installation with APT in a clean Ubuntu 24.04 container and still performs the packaged Xvfb UI smoke test
 
-          ### Microsoft account status
-          The Microsoft/Xbox/XSTS authentication path is being prepared, but Minecraft Services requires third-party application registration approval/allowlisting. UN_Nexo will only ship Microsoft sign-in with its own approved client ID; it will not reuse or spoof another launcher's ID.
+          ### Included
+          - Accounts page with persistent offline profiles
+          - Official/BMCLAPI download source selection with hash verification and official fallback
+          - Vanilla instance preparation pipeline
+          - Java discovery and cross-platform launcher data paths
 
           ### Current limitations
           - Play/launch pipeline is still under development
-          - Microsoft account sign-in is not enabled in this build yet
+          - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
           - Fabric, Forge and NeoForge installers are not included yet
 
-          Offline profiles are intended for local worlds, development and offline-mode servers; they are not a replacement for Minecraft ownership or authenticated online play.
+          This is a development pre-release. Offline profiles do not replace Minecraft ownership or authenticated online play.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
