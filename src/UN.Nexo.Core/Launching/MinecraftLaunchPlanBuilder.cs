@@ -114,6 +114,11 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         var virtualRoot = virtualAssets
             ? Within(Path.Combine(assetsRoot, "virtual"), assetId) : assetsRoot;
         var resourceRoot = Within(gameRoot, "resources");
+        var gameAssetsRoot = mapToResources
+            ? resourceRoot
+            : virtualAssets
+                ? virtualRoot
+                : assetsRoot;
 
         if (index.TryGetProperty("objects", out var objects))
         {
@@ -154,7 +159,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             ["game_directory"] = gameRoot,
             ["assets_root"] = assetsRoot,
             ["assets_index_name"] = assetId,
-            ["game_assets"] = virtualRoot,
+            ["game_assets"] = gameAssetsRoot,
             ["natives_directory"] = nativesRoot,
             ["library_directory"] = librariesRoot,
             ["classpath"] = string.Join(Path.PathSeparator, classpath.Distinct(StringComparer.Ordinal)),
