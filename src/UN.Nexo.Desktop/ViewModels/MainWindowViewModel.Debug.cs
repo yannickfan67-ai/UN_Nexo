@@ -33,6 +33,8 @@ public partial class MainWindowViewModel
     private StreamWriter? _launchTraceWriter;
     private string? _lastTracedGameLine;
     private bool _debugProcessStarted;
+    private string? _pendingTerminalGameStatus;
+    private bool _restoringTerminalGameStatus;
 
     partial void OnLaunchDebugEnabledChanged(bool value)
     {
@@ -45,6 +47,31 @@ public partial class MainWindowViewModel
 
     partial void OnGameStatusChanged(string value)
     {
+        if (_restoringTerminalGameStatus)
+            return;
+
+        if (IsTerminalStatus(value))
+        {
+            _pendingTerminalGameStatus = value;
+        }
+        else if (!IsGameRunning
+                 && _pendingTerminalGameStatus is { Length: > 0 } terminal
+                 && IsAvailabilityStatus(value))
+        {
+            _pendingTerminalGameStatus = null;
+            _restoringTerminalGameStatus = true;
+            try
+            {
+                GameStatus = terminal;
+                LauncherStatus = terminal;
+            }
+            finally
+            {
+                _restoringTerminalGameStatus = false;
+            }
+            return;
+        }
+
         if (IsGameRunning && _launchTraceWriter is null && IsLaunchBeginning(value))
             StartDebugTrace();
 
@@ -194,4 +221,11 @@ public partial class MainWindowViewModel
         => status.Contains("exited", StringComparison.OrdinalIgnoreCase)
            || status.Contains("failed", StringComparison.OrdinalIgnoreCase)
            || status.StartsWith("Stopped ", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAvailabilityStatus(string status)
+        => status.StartsWith("Ready", StringComparison.OrdinalIgnoreCase)
+           || status.StartsWith("Wait for file preparation", StringComparison.OrdinalIgnoreCase)
+           || status.StartsWith("Scanning environment", StringComparison.OrdinalIgnoreCase)
+           || status.StartsWith("Create or select an instance", StringComparison.OrdinalIgnoreCase)
+           || status.StartsWith("Select an offline profile", StringComparison.OrdinalIgnoreCase);
 }
