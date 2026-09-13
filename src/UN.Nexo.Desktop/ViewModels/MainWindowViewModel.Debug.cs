@@ -81,13 +81,16 @@ public partial class MainWindowViewModel
     {
         try
         {
-            var directory = Path.Combine(_paths.GetDataRoot(), "logs");
+            var directory = GetDebugDirectory();
             Directory.CreateDirectory(directory);
-            Process.Start(new ProcessStartInfo
+            var info = new ProcessStartInfo
             {
-                FileName = directory,
-                UseShellExecute = true
-            });
+                FileName = OperatingSystem.IsWindows() ? "explorer.exe"
+                    : OperatingSystem.IsMacOS() ? "open" : "xdg-open",
+                UseShellExecute = false
+            };
+            info.ArgumentList.Add(directory);
+            Process.Start(info);
         }
         catch (Exception ex)
         {
@@ -98,7 +101,7 @@ public partial class MainWindowViewModel
     private void StartDebugTrace()
     {
         CloseDebugTrace();
-        var directory = Path.Combine(_paths.GetDataRoot(), "logs");
+        var directory = GetDebugDirectory();
         Directory.CreateDirectory(directory);
         var instanceId = SelectedInstance?.Id ?? "no-instance";
         var safeInstanceId = string.Concat(instanceId.Select(character =>
@@ -124,6 +127,11 @@ public partial class MainWindowViewModel
         WriteDebugTrace($"[trace] Data root {_paths.GetDataRoot()}");
         LaunchDebugSummary = $"Tracing launch · {Path.GetFileName(LastLaunchTracePath)}";
     }
+
+    private string GetDebugDirectory()
+        => SelectedInstance is null
+            ? Path.Combine(_paths.GetDataRoot(), "logs")
+            : Path.Combine(_paths.GetInstanceDirectory(SelectedInstance.Id), "launcher-logs");
 
     private void WriteDebugTrace(string line)
     {
