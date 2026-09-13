@@ -1,10 +1,9 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             x:Class="UN.Nexo.Desktop.Views.LaunchStatusOverlay"
-             IsVisible="{Binding IsGameRunning}"
-             IsHitTestVisible="True">
+             x:Class="UN.Nexo.Desktop.Views.LaunchStatusOverlay">
   <Grid>
-    <Border HorizontalAlignment="Right"
+    <Border IsVisible="{Binding IsGameRunning}"
+            HorizontalAlignment="Right"
             VerticalAlignment="Top"
             Margin="0,18,18,0"
             Width="430"
@@ -49,6 +48,116 @@
                   VerticalAlignment="Center" />
         </Grid>
       </Grid>
+    </Border>
+
+    <Border IsVisible="{Binding HasLaunchDiagnostic}"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Margin="0,18,18,0"
+            Width="520"
+            MaxHeight="720"
+            Background="#FA121923"
+            BorderBrush="#40536B"
+            BorderThickness="1"
+            CornerRadius="13"
+            Padding="16,14">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="9">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="3">
+              <TextBlock Text="LAUNCH RESULT"
+                         Foreground="#AAB5C4"
+                         FontSize="10"
+                         FontWeight="SemiBold" />
+              <TextBlock Text="{Binding LaunchDiagnosticTitle}"
+                         FontSize="16"
+                         FontWeight="SemiBold"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Content="Dismiss"
+                    Command="{Binding DismissLaunchDiagnosticCommand}"
+                    Padding="8,4"
+                    FontSize="10"
+                    VerticalAlignment="Top" />
+          </Grid>
+
+          <TextBlock Text="{Binding LaunchDiagnosticSummary}"
+                     Foreground="#C7D0DC"
+                     FontSize="11"
+                     TextWrapping="Wrap" />
+
+          <Border Background="#0D131B"
+                  BorderBrush="#253243"
+                  BorderThickness="1"
+                  CornerRadius="8"
+                  Padding="10,8">
+            <StackPanel Spacing="3">
+              <TextBlock Text="EVIDENCE"
+                         Foreground="#7F8A99"
+                         FontSize="9"
+                         FontWeight="SemiBold" />
+              <TextBlock Text="{Binding LaunchDiagnosticEvidence}"
+                         Foreground="#AEB9C7"
+                         FontSize="10"
+                         TextWrapping="Wrap"
+                         MaxLines="5" />
+            </StackPanel>
+          </Border>
+
+          <StackPanel Spacing="3">
+            <TextBlock Text="SUGGESTED ACTION"
+                       Foreground="#7F8A99"
+                       FontSize="9"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="{Binding LaunchDiagnosticSuggestion}"
+                       Foreground="#AEB9C7"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       MaxLines="5" />
+          </StackPanel>
+
+          <Border Background="#0A0F16"
+                  BorderBrush="#253243"
+                  BorderThickness="1"
+                  CornerRadius="8"
+                  Padding="10,8">
+            <StackPanel Spacing="5">
+              <TextBlock Text="SANITIZED EXPORT PREVIEW"
+                         Foreground="#7F8A99"
+                         FontSize="9"
+                         FontWeight="SemiBold" />
+              <TextBlock Text="{Binding DiagnosticPreviewText}"
+                         Foreground="#96A4B5"
+                         FontSize="9"
+                         FontFamily="Cascadia Mono,Consolas,monospace"
+                         TextWrapping="Wrap"
+                         MaxLines="12" />
+            </StackPanel>
+          </Border>
+
+          <TextBlock Text="{Binding DiagnosticExportStatus}"
+                     Foreground="#8FA0B5"
+                     FontSize="9"
+                     TextWrapping="Wrap"
+                     MaxLines="3" />
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="Open logs"
+                    Command="{Binding OpenDebugFolderCommand}"
+                    Padding="9,5"
+                    FontSize="10" />
+            <Button Content="Copy summary"
+                    Click="CopyDiagnosticSummary_OnClick"
+                    Padding="9,5"
+                    FontSize="10" />
+            <Button Content="Export sanitized ZIP"
+                    Command="{Binding ExportDiagnosticPackageCommand}"
+                    Padding="9,5"
+                    FontSize="10" />
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
     </Border>
   </Grid>
 </UserControl>
