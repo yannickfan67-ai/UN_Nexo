@@ -9,6 +9,17 @@ permissions:
   contents: write
 
 jobs:
+  test-core:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run launch and download regression checks
+        run: dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release
+
   build-windows:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: windows-latest
@@ -132,7 +143,7 @@ jobs:
 
   publish-release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
-    needs: [build-windows, build-linux-packages]
+    needs: [test-core, build-windows, build-linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -152,25 +163,30 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Bug fixes
-          - Mirror version-catalog fallback now also handles invalid/truncated HTTP-200 responses
-          - Instance preparation progress stays attached to the instance that actually started the operation
-          - Instance/version controls no longer disappear or overlap at supported narrow window sizes
-          - DEB/RPM packages now declare native Linux runtime dependencies
-          - Release CI validates DEB installation with APT in a clean Ubuntu 24.04 container and still performs the packaged Xvfb UI smoke test
+          ### New in this build
+          - Prepared Vanilla instances can now be launched with a local/offline profile
+          - Minecraft-required Java major version is selected automatically from detected 64-bit runtimes
+          - Modern and legacy launch metadata are supported, including 1.21.4-style arguments and 1.8.9-style minecraftArguments
+          - Game stdout/stderr is captured to per-launch logs with recent output visible in Nexo
+          - Stop game terminates the launched Java process tree
+          - Paths containing spaces are passed safely through ProcessStartInfo.ArgumentList
+          - BMCLAPI manifest fallback now also recovers from interrupted HTTP-200 response bodies
+          - CI includes regression fixtures for Java 8/17/21 parsing, mirror streaming fallback and modern/legacy launch plans
 
-          ### Included
-          - Accounts page with persistent offline profiles
-          - Official/BMCLAPI download source selection with hash verification and official fallback
-          - Vanilla instance preparation pipeline
-          - Java discovery and cross-platform launcher data paths
+          ### Packaging checks
+          - Linux DEB/RPM include required native launcher dependencies
+          - The DEB is installed with APT in a clean Ubuntu 24.04 container
+          - The packaged DEB is launched under Xvfb before publishing
+          - Windows and Linux packages remain self-contained for the .NET runtime
 
           ### Current limitations
-          - Play/launch pipeline is still under development
           - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
+          - Local/offline profiles are not authenticated Microsoft accounts and cannot join online-mode servers
           - Fabric, Forge and NeoForge installers are not included yet
+          - HTTP Range resume and mod/resource-pack/shader management are not implemented yet
+          - Real Linux Mint/Cinnamon game-menu validation is still an on-device acceptance check
 
-          This is a development pre-release. Offline profiles do not replace Minecraft ownership or authenticated online play.
+          This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber

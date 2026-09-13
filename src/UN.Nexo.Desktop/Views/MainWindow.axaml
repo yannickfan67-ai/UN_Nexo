@@ -52,7 +52,7 @@
 
         <Border Grid.Row="3" Background="#111923" CornerRadius="10" Padding="12">
           <StackPanel>
-            <TextBlock Text="v0.3.1-dev" FontWeight="SemiBold" />
+            <TextBlock Text="v0.4.0-dev" FontWeight="SemiBold" />
             <TextBlock Text="{Binding LauncherStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
