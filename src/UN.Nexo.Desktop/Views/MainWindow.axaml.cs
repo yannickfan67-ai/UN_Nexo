@@ -171,10 +171,13 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _downloadManagerWindow = new DownloadManagerWindow(_installer);
+        _downloadManagerWindow = new DownloadManagerWindow(_installer, RetrySelectedInstanceAsync);
         _downloadManagerWindow.Closed += (_, _) => _downloadManagerWindow = null;
         _downloadManagerWindow.Show(this);
     }
+
+    private async Task RetrySelectedInstanceAsync()
+        => await _viewModel.PrepareSelectedInstanceCommand.ExecuteAsync(null);
 
     private void OpenRepair()
     {
