@@ -46,7 +46,9 @@ internal static class CrashDiagnosisRegression
         Equal(false, sanitized.Contains("abcdefghijklmnop", StringComparison.Ordinal), "Bearer token must be absent");
         Equal(false, sanitized.Contains("keep", StringComparison.Ordinal), "explicit secret must be absent");
 
-        var temp = Path.Combine(Path.GetTempPath(), "nexo-crash-diagnosis", Guid.NewGuid().ToString("N") + ".log");
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "nexo-crash-diagnosis");
+        Directory.CreateDirectory(tempDirectory);
+        var temp = Path.Combine(tempDirectory, Guid.NewGuid().ToString("N") + ".log");
         try
         {
             var padding = new string('x', 600 * 1024);
