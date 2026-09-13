@@ -93,31 +93,19 @@ try
     if (!plan.Arguments.Contains("net.minecraft.launchwrapper.Launch", StringComparer.Ordinal))
         throw new InvalidOperationException("1.5.2 launch plan does not use LaunchWrapper.");
 
-    var virtualBase = Path.Combine(gameRoot, "assets", "virtual");
-    if (Directory.Exists(virtualBase))
-    {
-        Console.WriteLine("Virtual asset directories:");
-        foreach (var directory in Directory.EnumerateDirectories(virtualBase))
-        {
-            var files = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Take(3).ToArray();
-            Console.WriteLine($"  {directory} · sample files={files.Length}");
-            foreach (var file in files)
-                Console.WriteLine($"    {Path.GetRelativePath(directory, file)}");
-        }
-    }
-    else
-    {
-        Console.WriteLine("Virtual asset base directory is absent.");
-    }
-
-    var virtualAssets = Path.Combine(gameRoot, "assets", "virtual", assetIndexId);
-    if (!Directory.Exists(virtualAssets) || !Directory.EnumerateFiles(virtualAssets, "*", SearchOption.AllDirectories).Any())
+    var resourcesRoot = Path.Combine(gameRoot, "resources");
+    if (!Directory.Exists(resourcesRoot) || !Directory.EnumerateFiles(resourcesRoot, "*", SearchOption.AllDirectories).Any())
         throw new InvalidOperationException(
-            $"1.5.2 legacy virtual assets were not materialized at {virtualAssets}. metadata assets={rootAssets}, assetIndex.id={assetIndexId}, index virtual={indexVirtual}.");
+            $"1.5.2 pre-1.6 assets were not mapped to {resourcesRoot}. metadata assets={rootAssets}, assetIndex.id={assetIndexId}, map_to_resources={indexMapToResources}.");
+    Console.WriteLine($"Mapped pre-1.6 resources: {Directory.EnumerateFiles(resourcesRoot, "*", SearchOption.AllDirectories).Count()} files");
+
+    if (!plan.Arguments.Contains(resourcesRoot, StringComparer.Ordinal))
+        throw new InvalidOperationException("1.5.2 --assetsDir does not point to the mapped resources directory.");
 
     var natives = Path.Combine(gameRoot, "natives", "1.5.2");
     if (!Directory.Exists(natives) || !Directory.EnumerateFiles(natives, "*", SearchOption.AllDirectories).Any())
         throw new InvalidOperationException("1.5.2 native libraries were not extracted.");
+    Console.WriteLine($"Extracted natives: {Directory.EnumerateFiles(natives, "*", SearchOption.AllDirectories).Count()} files");
 
     Console.WriteLine("Launching real Minecraft 1.5.2 under the CI X display…");
     var outputLines = new List<string>();
@@ -156,8 +144,8 @@ try
         throw new InvalidOperationException("Minecraft emitted a fatal JVM/class/native error during the smoke launch.");
 
     Console.WriteLine(survivedUntilTimeout
-        ? "LIVE 1.5.2 SMOKE PASS: real files, Java 8, legacy assets/natives, and startup survived the observation window."
-        : "LIVE 1.5.2 SMOKE PASS: real files, Java 8, legacy assets/natives, and startup completed without an error.");
+        ? "LIVE 1.5.2 SMOKE PASS: real files, managed Java 8, pre-1.6 resources, natives, and startup survived the observation window."
+        : "LIVE 1.5.2 SMOKE PASS: real files, managed Java 8, pre-1.6 resources, natives, and startup completed without an error.");
     return 0;
 }
 catch (Exception ex)
