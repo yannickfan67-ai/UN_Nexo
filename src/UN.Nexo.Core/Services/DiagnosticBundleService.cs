@@ -197,7 +197,7 @@ public sealed class DiagnosticBundleService
 
     private static string?[] NormalizeSecrets(IEnumerable<string?>? secrets)
         => secrets?
-            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Where(value => !string.IsNullOrWhiteSpace(value) && value!.Length >= 4)
             .Distinct(StringComparer.Ordinal)
             .Take(32)
             .ToArray()
@@ -220,7 +220,7 @@ public sealed class DiagnosticBundleService
     {
         var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
         await using var entryStream = entry.Open();
-        await using var writer = new StreamWriter(entryStream, new UTF8Encoding(false), leaveOpen: false);
+        await using var writer = new StreamWriter(entryStream, new UTF8Encoding(false), 1024, leaveOpen: false);
         await writer.WriteAsync(text.AsMemory(), cancellationToken);
     }
 }
