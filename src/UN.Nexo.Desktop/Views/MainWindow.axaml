@@ -79,13 +79,24 @@
                 <TextBlock Text="{Binding AccountSummary}" Classes="muted" Margin="0,4,0,0" />
               </StackPanel>
               <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
-                <Button Classes="primary" Content="Play" IsEnabled="False" MinWidth="150" />
-                <TextBlock Text="Launch pipeline in development" Classes="muted" FontSize="11" HorizontalAlignment="Center" />
+                <Button Classes="primary" Content="Play offline" Command="{Binding PlayCommand}" MinWidth="150" />
+                <Button Content="Stop game" Command="{Binding StopGameCommand}" IsVisible="{Binding IsGameRunning}" HorizontalAlignment="Stretch" />
               </StackPanel>
             </Grid>
           </Border>
 
-          <Grid ColumnDefinitions="1.25*,*" ColumnSpacing="18">
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="{Binding GameStatus}" TextWrapping="Wrap" />
+              <TextBlock Text="Offline profiles support local worlds and offline-mode servers. Java is selected automatically for the instance version." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <TextBox Text="{Binding GameLog, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                       Height="180" FontFamily="monospace" FontSize="11"
+                       ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
+            </StackPanel>
+          </Border>
+
+          <Grid ColumnDefinitions="1.25*,*"
+                ColumnSpacing="18">
             <Border Classes="card">
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel>

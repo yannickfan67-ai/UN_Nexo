@@ -18,7 +18,7 @@ public sealed partial class MainWindow : Window
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.3.0-dev");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.4.0-dev");
 
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(),

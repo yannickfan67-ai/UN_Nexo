@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UN.Nexo.Core.Models;
+using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Desktop.ViewModels;
@@ -16,6 +17,11 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly AccountStoreService _accounts;
     private readonly LauncherSettingsService _settings;
     private readonly DownloadSourceService _downloadSources;
+    private readonly MinecraftLaunchPlanBuilder _launchBuilder;
+    private readonly MinecraftProcessService _gameProcess = new();
+    private CancellationTokenSource? _gameCancellation;
+    private readonly Queue<string> _gameLogLines = new();
+
 
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool isInstallBusy;
@@ -47,6 +53,38 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string downloadSourceStatus = "Official Mojang/Minecraft services";
     [ObservableProperty] private string microsoftAuthStatus = "Microsoft sign-in needs an approved UN_Nexo application registration before Minecraft Services will accept the client ID.";
 
+    [ObservableProperty] private bool isGameRunning;
+    [ObservableProperty] private string gameStatus = "Select a prepared instance and an offline profile.";
+    [ObservableProperty] private string gameLog = string.Empty;
+
+    public bool CanPlay => !IsBusy && !IsInstallBusy && !IsGameRunning
+        && SelectedInstance is not null
+        && SelectedAccount?.IsOffline == true
+        && JavaInstallations.Count > 0
+        && File.Exists(Path.Combine(_paths.GetInstanceDirectory(SelectedInstance.Id), "install-state.json"));
+
+    private void UpdatePlayAvailability()
+    {
+        OnPropertyChanged(nameof(CanPlay));
+        PlayCommand.NotifyCanExecuteChanged();
+        StopGameCommand.NotifyCanExecuteChanged();
+        if (IsGameRunning)
+            return;
+
+        GameStatus = IsInstallBusy ? "Wait for file preparation to finish."
+            : IsBusy ? "Scanning environment…"
+            : SelectedInstance is null ? "Create or select an instance in Instances."
+            : SelectedAccount?.IsOffline != true ? "Select an offline profile in Accounts."
+            : JavaInstallations.Count == 0 ? "No Java found. Install it, then Refresh."
+            : !CanPlay ? "Run Prepare Vanilla files in Instances first."
+            : "Ready for offline play.";
+    }
+
+    partial void OnIsBusyChanged(bool value) => UpdatePlayAvailability();
+    partial void OnIsInstallBusyChanged(bool value) => UpdatePlayAvailability();
+    partial void OnIsGameRunningChanged(bool value) => UpdatePlayAvailability();
+
+
     public ObservableCollection<JavaInstallation> JavaInstallations { get; } = [];
     public ObservableCollection<MinecraftVersionInfo> AvailableVersions { get; } = [];
     public ObservableCollection<GameInstance> Instances { get; } = [];
@@ -63,6 +101,7 @@ public partial class MainWindowViewModel : ObservableObject
         LauncherSettingsService settings,
         DownloadSourceService downloadSources)
     {
+        _launchBuilder = new MinecraftLaunchPlanBuilder(paths);
         _javaDiscovery = javaDiscovery;
         _paths = paths;
         _manifest = manifest;
@@ -71,6 +110,7 @@ public partial class MainWindowViewModel : ObservableObject
         _accounts = accounts;
         _settings = settings;
         _downloadSources = downloadSources;
+        JavaInstallations.CollectionChanged += (_, _) => UpdatePlayAvailability();
     }
 
     public async Task InitializeAsync()
@@ -94,6 +134,7 @@ public partial class MainWindowViewModel : ObservableObject
     partial void OnSelectedInstanceChanged(GameInstance? value)
     {
         HasSelectedInstance = value is not null;
+        UpdatePlayAvailability();
         if (value is null)
         {
             InstallProgressValue = 0;
@@ -109,6 +150,7 @@ public partial class MainWindowViewModel : ObservableObject
     partial void OnSelectedAccountChanged(LauncherAccount? value)
     {
         HasSelectedAccount = value is not null;
+        UpdatePlayAvailability();
         AccountSummary = value is null
             ? "No account selected"
             : value.IsOffline
@@ -139,7 +181,7 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task RefreshEnvironmentAsync()
     {
-        if (IsBusy)
+        if (IsBusy || IsGameRunning)
             return;
 
         IsBusy = true;
@@ -202,8 +244,8 @@ public partial class MainWindowViewModel : ObservableObject
 
             JavaSummary = java.Count == 0 ? "No Java found" : $"{java.Count} Java installation{(java.Count == 1 ? string.Empty : "s")}";
             JavaDetail = java.Count == 0
-                ? "No Java runtime detected. Nexo will support per-instance runtime selection."
-                : $"Preferred: Java {java[0].Version} · {(java[0].Is64Bit ? "64-bit" : "architecture unknown")}\n{java[0].JavaPath}";
+                ? "No Java runtime detected. Install the Java version required by your instance."
+                : $"Detected: Java {java[0].Version} · {(java[0].Is64Bit ? "64-bit" : "architecture unknown")}\n{java[0].JavaPath}";
 
             InstanceSummary = $"{instances.Count} instance{(instances.Count == 1 ? string.Empty : "s")}";
             LauncherStatus = catalog is null ? "Ready · version service offline" : $"Ready · {_downloadSources.DisplayName}";
@@ -216,13 +258,14 @@ public partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            UpdatePlayAvailability();
         }
     }
 
     [RelayCommand]
     private async Task CreateInstanceAsync()
     {
-        if (IsBusy || SelectedVersion is null)
+        if (IsBusy || IsGameRunning || SelectedVersion is null)
             return;
 
         var name = string.IsNullOrWhiteSpace(NewInstanceName) ? SelectedVersion.Id : NewInstanceName.Trim();
@@ -249,7 +292,7 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task PrepareSelectedInstanceAsync()
     {
-        if (IsInstallBusy || SelectedInstance is null)
+        if (IsInstallBusy || IsGameRunning || SelectedInstance is null)
             return;
 
         var targetInstance = SelectedInstance;
@@ -299,6 +342,64 @@ public partial class MainWindowViewModel : ObservableObject
             if (!IsSelectedInstance(targetInstance) && SelectedInstance is not null)
                 RefreshSelectedInstanceInstallState();
         }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanPlay))]
+    private async Task PlayAsync()
+    {
+        if (!CanPlay || SelectedInstance is null || SelectedAccount is null)
+            return;
+
+        var instance = SelectedInstance;
+        var account = SelectedAccount;
+        var cancellation = new CancellationTokenSource();
+        _gameCancellation = cancellation;
+        IsGameRunning = true;
+        _gameLogLines.Clear();
+        GameLog = string.Empty;
+        GameStatus = $"Checking {instance.Name}…";
+        LauncherStatus = GameStatus;
+
+        try
+        {
+            var plan = await _launchBuilder.BuildAsync(
+                instance, account, JavaInstallations.ToArray(), cancellation.Token);
+            GameStatus = $"Running {instance.Name} · Offline profile {account.DisplayName}";
+            LauncherStatus = GameStatus;
+            var result = await _gameProcess.RunAsync(
+                plan, new Progress<string>(AppendGameLog), cancellation.Token);
+            GameStatus = result.ExitCode == 0
+                ? $"{instance.Name} exited normally."
+                : $"{instance.Name} exited with code {result.ExitCode}.";
+            AppendGameLog($"Full log: {result.LogPath}");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            GameStatus = $"Stopped {instance.Name}.";
+        }
+        catch (Exception ex)
+        {
+            GameStatus = $"Launch failed: {ex.Message}";
+            AppendGameLog(GameStatus);
+        }
+        finally
+        {
+            _gameCancellation = null;
+            IsGameRunning = false;
+            LauncherStatus = GameStatus;
+            cancellation.Dispose();
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(IsGameRunning))]
+    private void StopGame() => _gameCancellation?.Cancel();
+
+    private void AppendGameLog(string line)
+    {
+        _gameLogLines.Enqueue(line);
+        while (_gameLogLines.Count > 200)
+            _gameLogLines.Dequeue();
+        GameLog = string.Join(Environment.NewLine, _gameLogLines);
     }
 
     [RelayCommand]
