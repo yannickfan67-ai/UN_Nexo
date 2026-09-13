@@ -1,0 +1,104 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.InstanceBackupWindow"
+        Title="Nexo Instance Backups"
+        Width="900" Height="700"
+        MinWidth="760" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#8E9AAA" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="24" RowDefinitions="Auto,16,*,16,Auto">
+    <Grid ColumnDefinitions="*,Auto">
+      <StackPanel>
+        <TextBlock Text="Clone &amp; world backups" FontSize="30" FontWeight="SemiBold" />
+        <TextBlock x:Name="InstanceSummary" Text="No instance selected" Classes="muted" Margin="0,5,0,0" />
+      </StackPanel>
+      <Button Grid.Column="1" Content="Refresh backups" Click="OnRefreshClicked" Padding="14,9" VerticalAlignment="Center" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="2">
+      <StackPanel Spacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Clone instance" FontSize="19" FontWeight="SemiBold" />
+            <TextBlock Text="The clone is staged completely before it becomes visible. You can copy the whole instance or leave worlds behind." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <TextBox x:Name="CloneNameBox" Watermark="New instance name" />
+            <CheckBox x:Name="IncludeWorldsBox" IsChecked="True" Content="Include world saves" />
+            <Button x:Name="CloneButton" Classes="primary" Content="Clone selected instance" Click="OnCloneClicked" HorizontalAlignment="Left" />
+          </StackPanel>
+        </Border>
+
+        <Grid ColumnDefinitions="1.1*,*" ColumnSpacing="16">
+          <Border Classes="card">
+            <Grid RowDefinitions="Auto,10,*,10,Auto">
+              <StackPanel>
+                <TextBlock Text="World backups" FontSize="19" FontWeight="SemiBold" />
+                <TextBlock Text="Backups are written to a temporary ZIP first and only published after completion." Classes="muted" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <ListBox x:Name="BackupList" Grid.Row="2" Background="Transparent" BorderThickness="0" SelectionChanged="OnBackupSelectionChanged" MinHeight="220">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="6,6">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding WorldsSummary}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding ArchiveSizeLabel}" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                <Button x:Name="BackupButton" Content="Backup worlds" Click="OnBackupClicked" Padding="12,8" />
+                <Button x:Name="PreUpgradeBackupButton" Grid.Column="1" Content="Pre-upgrade backup" Click="OnPreUpgradeBackupClicked" Padding="12,8" />
+              </Grid>
+            </Grid>
+          </Border>
+
+          <Border Grid.Column="1" Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Restore preview" FontSize="19" FontWeight="SemiBold" />
+              <TextBlock x:Name="BackupPreview" Text="Select a backup to preview its worlds." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <TextBlock Text="World to restore" Classes="muted" FontSize="11" />
+              <ComboBox x:Name="WorldCombo" MinWidth="220">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="1" Text="{Binding SizeLabel}" Classes="muted" FontSize="11" Margin="12,0,0,0" />
+                    </Grid>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Border Background="#0E141C" CornerRadius="9" Padding="12">
+                <TextBlock Text="Restore first extracts to staging. If a world with the same name exists, Nexo moves it to restore-safety before swapping in the backup. A failed extraction never overwrites the current world." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              </Border>
+              <Button x:Name="RestoreButton" Classes="primary" Content="Restore selected world" Click="OnRestoreClicked" IsEnabled="False" HorizontalAlignment="Left" />
+            </StackPanel>
+          </Border>
+        </Grid>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="4" Background="#101720" CornerRadius="10" Padding="12">
+      <TextBlock x:Name="OperationStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+    </Border>
+  </Grid>
+</Window>
