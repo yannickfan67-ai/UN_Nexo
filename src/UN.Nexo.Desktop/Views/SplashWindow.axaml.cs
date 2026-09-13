@@ -1,3 +1,4 @@
+using System.Reflection;
 using Avalonia.Controls;
 
 namespace UN.Nexo.Desktop.Views;
@@ -8,6 +9,9 @@ public sealed partial class SplashWindow : Window
     {
         InitializeComponent();
         Opacity = 0;
+        VersionText.Text = typeof(SplashWindow).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? "dev";
     }
 
     public Task FadeInAsync()
