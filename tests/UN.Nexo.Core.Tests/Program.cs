@@ -13,9 +13,10 @@ internal static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Java major parsing", TestJavaMajorAsync),
+            ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
-            ("Modern 1.21.4 launch plan", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
-            ("Legacy 1.8.9 launch plan", () => TestLaunchPlanAsync("1.8.9", 8, modern: false))
+            ("Modern 1.21.4 launch plan and Quick Play", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
+            ("Legacy 1.8.9 launch plan and direct connect", () => TestLaunchPlanAsync("1.8.9", 8, modern: false))
         };
 
         var failures = 0;
@@ -42,6 +43,22 @@ internal static class Program
         Equal(8, MinecraftLaunchPlanBuilder.JavaMajor("1.8.0_442"), "Java 8 parsing");
         Equal(17, MinecraftLaunchPlanBuilder.JavaMajor("17.0.13"), "Java 17 parsing");
         Equal(21, MinecraftLaunchPlanBuilder.JavaMajor("21.0.8+9"), "Java 21 parsing");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestServerAddressParsingAsync()
+    {
+        var normal = MinecraftServerTarget.Parse("play.example.net:25566");
+        Equal("play.example.net", normal.Host, "hostname parsing");
+        Equal(25566, normal.Port, "custom port parsing");
+        Equal("play.example.net:25566", normal.Authority, "authority formatting");
+
+        var defaultPort = MinecraftServerTarget.Parse("localhost");
+        Equal(25565, defaultPort.Port, "default Minecraft port");
+
+        var ipv6 = MinecraftServerTarget.Parse("[2001:db8::1]:25570");
+        Equal("2001:db8::1", ipv6.Host, "IPv6 host parsing");
+        Equal("[2001:db8::1]:25570", ipv6.Authority, "IPv6 authority formatting");
         return Task.CompletedTask;
     }
 
@@ -94,7 +111,10 @@ internal static class Program
                     "mainClass":"net.minecraft.client.main.Main",
                     "arguments":{
                       "jvm":["-Djava.library.path=${natives_directory}","-cp","${classpath}","-Dnexo.launcher=${launcher_version}"],
-                      "game":["--username","${auth_player_name}","--version","${version_name}","--gameDir","${game_directory}","--assetsDir","${assets_root}","--assetIndex","${assets_index_name}","--uuid","${auth_uuid}","--accessToken","${auth_access_token}","--userType","${user_type}","--versionType","${version_type}"]
+                      "game":[
+                        "--username","${auth_player_name}","--version","${version_name}","--gameDir","${game_directory}","--assetsDir","${assets_root}","--assetIndex","${assets_index_name}","--uuid","${auth_uuid}","--accessToken","${auth_access_token}","--userType","${user_type}","--versionType","${version_type}",
+                        {"rules":[{"action":"allow","features":{"is_quick_play_multiplayer":true}}],"value":["--quickPlayMultiplayer","${quickPlayMultiplayer}"]}
+                      ]
                     }
                   }
                   """
@@ -132,11 +152,27 @@ internal static class Program
             Contains(plan.Arguments, gameRoot, "game directory should remain one argument even with spaces");
             Contains(plan.Arguments, "net.minecraft.client.main.Main", "main class");
             if (modern)
-                Contains(plan.Arguments, "-Dnexo.launcher=0.4.0-dev", "launcher version substitution");
+                ContainsPrefix(plan.Arguments, "-Dnexo.launcher=", "launcher version substitution");
             else
                 Contains(plan.Arguments, "-Djava.library.path=" + Path.Combine(gameRoot, "natives", version), "legacy native path");
 
-            var startInfo = plan.CreateStartInfo();
+            var target = MinecraftServerTarget.Parse("play.example.net:25566");
+            var serverPlan = await new MinecraftServerLaunchDecorator(paths).ApplyAsync(plan, instance, target);
+            if (modern)
+            {
+                Contains(serverPlan.Arguments, "--quickPlayMultiplayer", "modern server launch should use Quick Play");
+                Contains(serverPlan.Arguments, target.Authority, "Quick Play target");
+                DoesNotContain(serverPlan.Arguments, "--server", "modern server launch should not use removed legacy option");
+            }
+            else
+            {
+                Contains(serverPlan.Arguments, "--server", "legacy server option");
+                Contains(serverPlan.Arguments, target.Host, "legacy server host");
+                Contains(serverPlan.Arguments, "--port", "legacy port option");
+                Contains(serverPlan.Arguments, target.Port.ToString(), "legacy server port");
+            }
+
+            var startInfo = serverPlan.CreateStartInfo();
             Contains(startInfo.ArgumentList, gameRoot, "ProcessStartInfo.ArgumentList must preserve spaced path");
         }
         finally
@@ -155,6 +191,18 @@ internal static class Program
     {
         if (!values.Contains(expected, StringComparer.Ordinal))
             throw new InvalidOperationException($"{message}: missing '{expected}'.");
+    }
+
+    private static void ContainsPrefix(IEnumerable<string> values, string prefix, string message)
+    {
+        if (!values.Any(value => value.StartsWith(prefix, StringComparison.Ordinal)))
+            throw new InvalidOperationException($"{message}: missing prefix '{prefix}'.");
+    }
+
+    private static void DoesNotContain(IEnumerable<string> values, string unexpected, string message)
+    {
+        if (values.Contains(unexpected, StringComparer.Ordinal))
+            throw new InvalidOperationException($"{message}: unexpected '{unexpected}'.");
     }
 
     private sealed class ManifestFallbackHandler : HttpMessageHandler
