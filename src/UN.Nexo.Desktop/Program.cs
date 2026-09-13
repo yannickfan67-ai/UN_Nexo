@@ -11,6 +11,18 @@ internal static class Program
         LauncherStartupTrace.Start();
         LauncherStartupTrace.Write($"[startup] Program.Main entered · args={args.Length}");
 
+        AppDomain.CurrentDomain.UnhandledException += (_, eventArgs) =>
+        {
+            if (eventArgs.ExceptionObject is Exception exception)
+                LauncherStartupTrace.Failure("unhandled AppDomain exception", exception);
+            else
+                LauncherStartupTrace.Write($"[failure] Unhandled AppDomain object: {eventArgs.ExceptionObject}");
+        };
+        TaskScheduler.UnobservedTaskException += (_, eventArgs) =>
+        {
+            LauncherStartupTrace.Failure("unobserved task exception", eventArgs.Exception);
+        };
+
         try
         {
             LauncherStartupTrace.Write("[startup] Building Avalonia application");
