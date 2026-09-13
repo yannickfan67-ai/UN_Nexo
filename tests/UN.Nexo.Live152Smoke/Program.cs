@@ -1,3 +1,4 @@
+using System.Text.Json;
 using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
@@ -43,6 +44,30 @@ try
             }
         }));
 
+    var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
+    var metadataPath = Path.Combine(gameRoot, "versions", "1.5.2", "1.5.2.json");
+    using var metadata = JsonDocument.Parse(await File.ReadAllTextAsync(metadataPath));
+    var metadataRoot = metadata.RootElement;
+    var assetIndexId = metadataRoot.GetProperty("assetIndex").GetProperty("id").GetString() ?? "<missing>";
+    var rootAssets = metadataRoot.TryGetProperty("assets", out var rootAssetsElement)
+        ? rootAssetsElement.GetString() ?? "<null>"
+        : "<absent>";
+    Console.WriteLine($"Real metadata assets={rootAssets}; assetIndex.id={assetIndexId}");
+
+    var indexPath = Path.Combine(gameRoot, "assets", "indexes", assetIndexId + ".json");
+    using var assetIndexDocument = JsonDocument.Parse(await File.ReadAllTextAsync(indexPath));
+    var assetIndexRoot = assetIndexDocument.RootElement;
+    var indexVirtual = assetIndexRoot.TryGetProperty("virtual", out var indexVirtualElement)
+        ? indexVirtualElement.ToString()
+        : "<absent>";
+    var indexMapToResources = assetIndexRoot.TryGetProperty("map_to_resources", out var indexMapElement)
+        ? indexMapElement.ToString()
+        : "<absent>";
+    var objectCount = assetIndexRoot.TryGetProperty("objects", out var objectElement)
+        ? objectElement.EnumerateObject().Count()
+        : 0;
+    Console.WriteLine($"Real asset index virtual={indexVirtual}; map_to_resources={indexMapToResources}; objects={objectCount}");
+
     Console.WriteLine("Acquiring real Java 8 through Adoptium/Temurin if needed…");
     var java = await new JavaRuntimeProvisionService(http, paths).EnsureJavaAsync(
         8,
@@ -59,15 +84,38 @@ try
     var plan = await new MinecraftLaunchPlanBuilder(paths).BuildAsync(instance, account, [java]);
     Console.WriteLine($"Main launch Java: {plan.JavaPath}");
     Console.WriteLine($"Working directory: {plan.WorkingDirectory}");
+    foreach (var argument in plan.Arguments.Where(argument =>
+                 argument.Contains("asset", StringComparison.OrdinalIgnoreCase)
+                 || argument.Contains("virtual", StringComparison.OrdinalIgnoreCase)
+                 || argument.Contains("resources", StringComparison.OrdinalIgnoreCase)))
+        Console.WriteLine($"Asset-related launch arg: {argument}");
 
     if (!plan.Arguments.Contains("net.minecraft.launchwrapper.Launch", StringComparer.Ordinal))
         throw new InvalidOperationException("1.5.2 launch plan does not use LaunchWrapper.");
 
-    var virtualAssets = Path.Combine(paths.GetInstanceGameDirectory(instance.Id), "assets", "virtual", "legacy");
-    if (!Directory.Exists(virtualAssets) || !Directory.EnumerateFiles(virtualAssets, "*", SearchOption.AllDirectories).Any())
-        throw new InvalidOperationException("1.5.2 legacy virtual assets were not materialized.");
+    var virtualBase = Path.Combine(gameRoot, "assets", "virtual");
+    if (Directory.Exists(virtualBase))
+    {
+        Console.WriteLine("Virtual asset directories:");
+        foreach (var directory in Directory.EnumerateDirectories(virtualBase))
+        {
+            var files = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Take(3).ToArray();
+            Console.WriteLine($"  {directory} · sample files={files.Length}");
+            foreach (var file in files)
+                Console.WriteLine($"    {Path.GetRelativePath(directory, file)}");
+        }
+    }
+    else
+    {
+        Console.WriteLine("Virtual asset base directory is absent.");
+    }
 
-    var natives = Path.Combine(paths.GetInstanceGameDirectory(instance.Id), "natives", "1.5.2");
+    var virtualAssets = Path.Combine(gameRoot, "assets", "virtual", assetIndexId);
+    if (!Directory.Exists(virtualAssets) || !Directory.EnumerateFiles(virtualAssets, "*", SearchOption.AllDirectories).Any())
+        throw new InvalidOperationException(
+            $"1.5.2 legacy virtual assets were not materialized at {virtualAssets}. metadata assets={rootAssets}, assetIndex.id={assetIndexId}, index virtual={indexVirtual}.");
+
+    var natives = Path.Combine(gameRoot, "natives", "1.5.2");
     if (!Directory.Exists(natives) || !Directory.EnumerateFiles(natives, "*", SearchOption.AllDirectories).Any())
         throw new InvalidOperationException("1.5.2 native libraries were not extracted.");
 
