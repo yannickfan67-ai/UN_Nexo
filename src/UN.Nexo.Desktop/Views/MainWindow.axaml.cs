@@ -7,6 +7,7 @@ namespace UN.Nexo.Desktop.Views;
 public sealed partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _viewModel;
+    private Task? _initializationTask;
 
     public MainWindow()
     {
@@ -31,12 +32,39 @@ public sealed partial class MainWindow : Window
             downloadSources);
 
         DataContext = _viewModel;
+        AddSessionOverlay();
         Opened += OnOpened;
+    }
+
+    public Task InitializeAsync()
+        => _initializationTask ??= _viewModel.InitializeAsync();
+
+    public async Task RevealAsync()
+    {
+        const int frames = 9;
+        for (var frame = 1; frame <= frames; frame++)
+        {
+            Opacity = frame / (double)frames;
+            await Task.Delay(18);
+        }
+        Opacity = 1;
+    }
+
+    private void AddSessionOverlay()
+    {
+        if (Content is not Control shell)
+            return;
+
+        Content = null;
+        var layers = new Grid();
+        layers.Children.Add(shell);
+        layers.Children.Add(new LaunchStatusOverlay());
+        Content = layers;
     }
 
     private async void OnOpened(object? sender, EventArgs e)
     {
         Opened -= OnOpened;
-        await _viewModel.InitializeAsync();
+        await InitializeAsync();
     }
 }
