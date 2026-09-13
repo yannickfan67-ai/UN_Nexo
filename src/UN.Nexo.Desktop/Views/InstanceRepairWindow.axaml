@@ -1,0 +1,89 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.InstanceRepairWindow"
+        Title="Nexo Instance Repair"
+        Width="860" Height="680"
+        MinWidth="720" MinHeight="560"
+        WindowStartupLocation="CenterOwner"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#8E9AAA" /></Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="24" RowDefinitions="Auto,16,*">
+    <Grid ColumnDefinitions="*,Auto">
+      <StackPanel>
+        <TextBlock Text="Check &amp; Repair" FontSize="30" FontWeight="SemiBold" />
+        <TextBlock Text="Verify the selected instance and repair only files that are missing or damaged." Classes="muted" Margin="0,5,0,0" />
+      </StackPanel>
+      <Button Grid.Column="1" Content="Open game folder" Click="OnOpenGameFolderClicked" VerticalAlignment="Center" />
+    </Grid>
+
+    <ScrollViewer Grid.Row="2">
+      <StackPanel Spacing="16">
+        <Border Classes="card">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+            <StackPanel Spacing="5">
+              <TextBlock Text="CURRENT INSTANCE" Classes="muted" FontSize="11" FontWeight="SemiBold" />
+              <TextBlock x:Name="InstanceName" Text="No instance selected" FontSize="22" FontWeight="SemiBold" />
+              <TextBlock x:Name="InstanceVersion" Text="Select an instance in the main window." Classes="muted" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <Button x:Name="CheckButton" Content="Check" Click="OnCheckClicked" Padding="15,10" />
+              <Button x:Name="RepairButton" Classes="primary" Content="Repair problems" Click="OnRepairClicked" />
+              <Button x:Name="CancelButton" Content="Cancel" Click="OnCancelClicked" IsVisible="False" Padding="15,10" />
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <TextBlock x:Name="SummaryText" Text="Run Check to inspect this instance." FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock x:Name="StatusText" Text="Waiting." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <ProgressBar x:Name="RepairProgress" Minimum="0" Maximum="100" Height="7" IsIndeterminate="False" />
+            <TextBlock Text="Repair never removes worlds, mods, resource packs, screenshots or configuration files. Existing files that pass verification are reused." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="Findings" FontSize="19" FontWeight="SemiBold" />
+              <TextBlock Grid.Column="1" x:Name="FindingCount" Text="0" Classes="muted" VerticalAlignment="Center" />
+            </Grid>
+            <ListBox x:Name="IssuesList" MinHeight="220" MaxHeight="330" Background="Transparent" BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border BorderBrush="#202B38" BorderThickness="0,0,0,1" Padding="4,9">
+                    <StackPanel Spacing="3">
+                      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                        <TextBlock Text="{Binding Level}" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="{Binding Component}" FontWeight="SemiBold" />
+                      </Grid>
+                      <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding SuggestedAction}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>
