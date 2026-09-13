@@ -6,26 +6,36 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.4.1-dev
+## Current milestone — v0.5.0-dev
 
 The current development line includes:
 
-- Windows and Linux desktop UI with Home, Instances, Accounts and Settings pages
+- Windows and Linux desktop UI with Home, Instances, Accounts, Servers and Settings access
 - Lightweight cold-start splash and main-window fade-in without heavy GPU effects
+- Bundled Avalonia Inter for a reliable baseline UI font instead of relying on a host default font
+- Noto CJK package dependencies on Linux packages for Chinese/Japanese/Korean fallback coverage
 - Compact in-app game-session status overlay while Minecraft launches or runs
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
 - Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
-- Persistent local/offline profiles, kept clearly separate from Microsoft authentication
+- Persistent local profiles, kept clearly separate from Microsoft authentication
 - Java discovery through `JAVA_HOME`, `PATH` and common platform install locations
 - Automatic exact-major Java selection from Minecraft version metadata
 - Vanilla launch-plan generation for modern `arguments` metadata and legacy `minecraftArguments`
 - Safe process launching through `ProcessStartInfo.ArgumentList`, including paths containing spaces
 - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
+- Server Hub with persistent favorites and validated host/port/IPv6 addresses
+- Version-aware direct multiplayer launching: Quick Play when advertised by modern metadata, legacy server/port arguments for older versions
 - Linux DEB/RPM and Windows self-contained EXE prerelease packages
-- Linux package installation and packaged UI smoke checks in CI
+- Linux package installation, CJK fallback and packaged UI smoke checks in CI
 
-Local/offline profiles are intended for local worlds, development and offline-mode test servers. They do **not** represent an authenticated Microsoft account and do not replace Minecraft ownership or authenticated online play.
+Local profiles are intended for local worlds, development and servers that explicitly accept that login mode. They do **not** represent an authenticated Microsoft account and do not replace Minecraft ownership or authenticated online play.
+
+## Multiplayer status
+
+Server Hub can save a server address and launch a prepared instance directly toward it. Modern Minecraft versions that advertise Quick Play support use `--quickPlayMultiplayer`; older versions use the legacy `--server` / `--port` path.
+
+Authenticated public/online-mode servers still require Microsoft authentication, which is intentionally not spoofed with another launcher's Client ID. Friend-to-friend room-code networking is planned around interoperability with the Terracotta / EasyTier / Scaffolding ecosystem rather than creating another incompatible private protocol.
 
 ## Microsoft account status
 
@@ -58,6 +68,7 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 ## Current limitations
 
 - Microsoft account sign-in is not enabled yet
+- Friend-to-friend room-code/P2P networking is not included yet
 - Fabric, Forge and NeoForge installers are not included yet
 - HTTP Range resume for partially downloaded files is not implemented yet
 - Mod/resource-pack/shader management is not implemented yet
@@ -66,12 +77,12 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 ## Next milestones
 
 1. Complete Microsoft AppID approval and authenticated Microsoft/Xbox/XSTS/Minecraft Services login
-2. Add practical launch controls: memory selection, custom JVM options and better Java/runtime diagnostics
-3. Harden real-game launch compatibility across legacy and current releases
+2. Add global and per-instance memory/JVM controls, plus optional automatic Java acquisition
+3. Add Terracotta/EasyTier/Scaffolding-compatible friend room networking after license/protocol review
 4. Add resumable downloads, retries/backoff, speed reporting and cancel/retry UX
 5. Add instance actions such as duplicate, rename, delete, open game folder and open logs
-6. Add Fabric, Forge and NeoForge support
-7. Add mod/resource-pack/shader management
-8. Add app/package icons, signing and updater
+6. Add Fabric first, then NeoForge and Forge support
+7. Add Modrinth-oriented mod/resource-pack/shader management and dependency handling
+8. Add crash diagnosis, app/package icons, signing and updater
 
 UN_Nexo is under active development and its releases are currently marked as prereleases.
