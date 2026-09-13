@@ -13,11 +13,25 @@ internal static class StabilityRegression
 
     private static async Task RunAsync()
     {
-        await TestVanillaBodyIdleFallbackAsync();
-        await TestVanillaUserCancellationDoesNotFallbackAsync();
-        await TestDamagedManagedRuntimeIsRejectedAsync();
-        await TestManagedJavaBodyIdleTimeoutAsync();
+        await RunBoundedAsync("Vanilla body idle fallback", TestVanillaBodyIdleFallbackAsync);
+        await RunBoundedAsync("Vanilla user cancellation", TestVanillaUserCancellationDoesNotFallbackAsync);
+        await RunBoundedAsync("Damaged managed Java cache", TestDamagedManagedRuntimeIsRejectedAsync);
+        await RunBoundedAsync("Managed Java body idle timeout", TestManagedJavaBodyIdleTimeoutAsync);
         Console.WriteLine("PASS stability regressions");
+    }
+
+    private static async Task RunBoundedAsync(string name, Func<Task> test)
+    {
+        Console.WriteLine($"RUN stability: {name}");
+        try
+        {
+            await test().WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException($"Stability fixture timed out: {name}", ex);
+        }
+        Console.WriteLine($"PASS stability: {name}");
     }
 
     private static async Task TestVanillaBodyIdleFallbackAsync()
