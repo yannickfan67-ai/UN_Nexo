@@ -252,7 +252,9 @@ public partial class MainWindowViewModel : ObservableObject
         if (IsInstallBusy || SelectedInstance is null)
             return;
 
-        var version = AvailableVersions.FirstOrDefault(v => v.Id == SelectedInstance.VersionId);
+        var targetInstance = SelectedInstance;
+        var targetSource = _downloadSources.DisplayName;
+        var version = AvailableVersions.FirstOrDefault(v => v.Id == targetInstance.VersionId);
         if (version is null)
         {
             LauncherStatus = "Version metadata is unavailable. Refresh the catalog first.";
@@ -261,11 +263,14 @@ public partial class MainWindowViewModel : ObservableObject
 
         IsInstallBusy = true;
         InstallProgressValue = 0;
-        InstallProgressText = $"Starting via {_downloadSources.DisplayName}…";
-        LauncherStatus = $"Preparing {SelectedInstance.Name}…";
+        InstallProgressText = $"Starting via {targetSource}…";
+        LauncherStatus = $"Preparing {targetInstance.Name}…";
 
         var progress = new Progress<InstallProgress>(value =>
         {
+            if (!IsSelectedInstance(targetInstance))
+                return;
+
             InstallProgressValue = value.Percent;
             InstallProgressText = value.Total > 0
                 ? $"{value.Stage} · {value.Completed}/{value.Total}{(string.IsNullOrWhiteSpace(value.CurrentItem) ? string.Empty : $" · {value.CurrentItem}")}" 
@@ -274,19 +279,25 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            await _installer.InstallAsync(SelectedInstance, version, progress);
-            InstallProgressValue = 100;
-            InstallProgressText = $"Vanilla files prepared · {_downloadSources.DisplayName}";
-            LauncherStatus = $"{SelectedInstance.Name} is prepared";
+            await _installer.InstallAsync(targetInstance, version, progress);
+            if (IsSelectedInstance(targetInstance))
+            {
+                InstallProgressValue = 100;
+                InstallProgressText = $"Vanilla files prepared · {targetSource}";
+            }
+            LauncherStatus = $"{targetInstance.Name} is prepared";
         }
         catch (Exception ex)
         {
-            InstallProgressText = "Install failed";
-            LauncherStatus = $"Install failed: {ex.Message}";
+            if (IsSelectedInstance(targetInstance))
+                InstallProgressText = "Install failed";
+            LauncherStatus = $"Install failed for {targetInstance.Name}: {ex.Message}";
         }
         finally
         {
             IsInstallBusy = false;
+            if (!IsSelectedInstance(targetInstance) && SelectedInstance is not null)
+                RefreshSelectedInstanceInstallState();
         }
     }
 
@@ -337,6 +348,23 @@ public partial class MainWindowViewModel : ObservableObject
         foreach (var account in accounts)
             Accounts.Add(account);
         SelectedAccount = Accounts.FirstOrDefault(x => x.Id == previousId) ?? Accounts.FirstOrDefault();
+    }
+
+    private bool IsSelectedInstance(GameInstance instance)
+        => SelectedInstance?.Id == instance.Id;
+
+    private void RefreshSelectedInstanceInstallState()
+    {
+        if (SelectedInstance is null)
+        {
+            InstallProgressValue = 0;
+            InstallProgressText = "Not installed";
+            return;
+        }
+
+        var prepared = File.Exists(Path.Combine(_paths.GetInstanceDirectory(SelectedInstance.Id), "install-state.json"));
+        InstallProgressValue = prepared ? 100 : 0;
+        InstallProgressText = prepared ? "Vanilla files prepared" : "Not installed";
     }
 
     private void UpdateDownloadSourceStatus()
