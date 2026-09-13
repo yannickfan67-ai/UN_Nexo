@@ -1,21 +1,33 @@
 # UN_Nexo
 
-A modern, lightweight and extensible Minecraft launcher built with **C#**, **.NET 10** and **Avalonia 12**.
+UN_Nexo is an independent, cross-platform Minecraft: Java Edition launcher built with **C#**, **.NET 10** and **Avalonia 12**.
 
-UN_Nexo is in early development. The goal is to keep the launcher core independent from the UI so Minecraft installation, accounts, mod loaders and launch logic can evolve without turning the desktop project into a monolith.
+The launcher core is kept separate from the desktop UI so installation, accounts, launch logic and future mod-loader support can evolve without turning the UI project into a monolith.
 
-## Current milestone — v0.1.0-dev
+> UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-Implemented in the first development pass:
+## Current milestone — v0.4.0-dev
 
-- Avalonia desktop shell with a dark Nexo dashboard
-- Cross-platform Minecraft directory detection
-- Nexo data and instance directory management
+The current development line includes:
+
+- Windows and Linux desktop UI with Home, Instances, Accounts and Settings pages
+- Mojang version catalog with release history and recent snapshots
+- Per-instance Vanilla preparation with client, libraries, natives and assets
+- Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
+- Persistent local/offline profiles, kept clearly separate from Microsoft authentication
 - Java discovery through `JAVA_HOME`, `PATH` and common platform install locations
-- Java version probing
-- Mojang version-manifest lookup for the latest release and snapshot
-- JSON-backed instance metadata store
-- Windows + Linux CI build matrix
+- Automatic exact-major Java selection from Minecraft version metadata
+- Vanilla launch-plan generation for modern `arguments` metadata and legacy `minecraftArguments`
+- Safe process launching through `ProcessStartInfo.ArgumentList`, including paths containing spaces
+- Per-launch stdout/stderr logs, exit-code reporting and Stop game support
+- Linux DEB/RPM and Windows self-contained EXE prerelease packages
+- Linux package installation and packaged UI smoke checks in CI
+
+Local/offline profiles are intended for local worlds, development and offline-mode test servers. They do **not** represent an authenticated Microsoft account and do not replace Minecraft ownership or authenticated online play.
+
+## Microsoft account status
+
+Microsoft/Xbox/XSTS/Minecraft Services sign-in is planned. UN_Nexo will use only its own approved Microsoft application registration; it will not reuse or impersonate another launcher's Client ID. Until that registration is approved, the UI keeps Microsoft sign-in unavailable rather than presenting a broken or misleading login flow.
 
 ## Project layout
 
@@ -23,9 +35,12 @@ Implemented in the first development pass:
 src/
 ├─ UN.Nexo.Core/       Launcher/domain logic with no UI dependency
 └─ UN.Nexo.Desktop/    Avalonia desktop application
+
+tests/
+└─ UN.Nexo.Core.Tests/ Dependency-free regression executable used by CI
 ```
 
-## Build
+## Build and test
 
 Requirements:
 
@@ -34,22 +49,25 @@ Requirements:
 ```bash
 dotnet restore UN_Nexo.sln
 dotnet build UN_Nexo.sln -c Release
+dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release --no-build
 dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 ```
 
-## Roadmap
+## Current limitations
 
-The next launcher milestones are:
+- Microsoft account sign-in is not enabled yet
+- Fabric, Forge and NeoForge installers are not included yet
+- HTTP Range resume for partially downloaded files is not implemented yet
+- Mod/resource-pack/shader management is not implemented yet
+- Linux CI uses Ubuntu/Xvfb; Linux Mint/Cinnamon still needs real-device acceptance testing
 
-1. Minecraft version installation and download pipeline
-2. Asset, library and native dependency resolution
-3. Per-version Java selection and JVM argument builder
-4. Microsoft/Xbox/Minecraft authentication
-5. Actual game process launch and log console
-6. Fabric, Forge and NeoForge support
-7. Mod/resource-pack/shader management
-8. Update channel and self-update support
+## Next milestones
 
-## Status
+1. Complete Microsoft AppID approval and authenticated Microsoft/Xbox/XSTS/Minecraft Services login
+2. Harden real-game launch compatibility across legacy and current releases
+3. Resumable downloads, retries/backoff, speed reporting and cancel/retry UX
+4. Fabric, Forge and NeoForge support
+5. Mod/resource-pack/shader management
+6. App/package icons, signing and updater
 
-This repository is under active development and is **not yet a production-ready Minecraft launcher**.
+UN_Nexo is under active development and its releases are currently marked as prereleases.

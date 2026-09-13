@@ -36,6 +36,7 @@ public sealed class MinecraftVersionManifestService
                 lastException = new HttpRequestException($"Timed out while reading the version catalog from {new Uri(url).Host}.");
             }
             catch (Exception ex) when (ex is HttpRequestException
+                or IOException
                 or JsonException
                 or InvalidDataException
                 or KeyNotFoundException

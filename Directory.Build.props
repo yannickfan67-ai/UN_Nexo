@@ -4,5 +4,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
+    <NexoVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</NexoVersion>
+    <Version>$(NexoVersion)</Version>
+    <InformationalVersion>$(NexoVersion)</InformationalVersion>
   </PropertyGroup>
 </Project>
