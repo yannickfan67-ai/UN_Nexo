@@ -92,7 +92,7 @@ public sealed partial class ServerHubWindow : Window
 
         if (!_viewModel.CanPlay)
         {
-            ServerStatus.Text = "Prepare an instance, select a local profile and make sure the required Java is detected first.";
+            ServerStatus.Text = "Select an instance and a local profile first. Nexo will prepare missing game files and Java automatically.";
             UpdateSelectionSummary();
             return;
         }
