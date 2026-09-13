@@ -166,11 +166,11 @@ jobs:
           ### Runtime controls and diagnostics
           - Replaces the fixed 2 GB heap with Auto or explicit game-memory settings
           - Adds validated extra JVM arguments without invoking a shell
-          - Prevents accidental overrides of launcher-managed `-Xmx`, classpath and `-jar` options
+          - Prevents accidental overrides of launcher-managed -Xmx, classpath and -jar options
           - Applies the same runtime settings to normal Play and Server Hub launches
           - Adds a Runtime & Diagnostics window with detected Java installations and the selected instance's required Java major
           - Adds quick access to the selected instance's game directory and launcher logs
-          - Keeps runtime settings in a separate `runtime-settings.json` file so existing instance metadata remains compatible
+          - Keeps runtime settings in a separate runtime-settings.json file so existing instance metadata remains compatible
 
           ### Existing launcher capabilities
           - Prepared Vanilla instances can launch with local profiles
