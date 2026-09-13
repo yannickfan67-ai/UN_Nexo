@@ -163,21 +163,25 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Runtime controls and diagnostics
-          - Replaces the fixed 2 GB heap with Auto or explicit game-memory settings
-          - Adds validated extra JVM arguments without invoking a shell
-          - Prevents accidental overrides of launcher-managed -Xmx, classpath and -jar options
-          - Applies the same runtime settings to normal Play and Server Hub launches
-          - Adds a Runtime & Diagnostics window with detected Java installations and the selected instance's required Java major
-          - Adds quick access to the selected instance's game directory and launcher logs
-          - Keeps runtime settings in a separate runtime-settings.json file so existing instance metadata remains compatible
+          ### Minecraft 1.5.2 compatibility
+          - Validated against the current official Mojang 1.5.2 metadata and files, not only synthetic fixtures
+          - Supports pre-1.6 asset indexes that request map_to_resources and materializes them into the legacy resources directory
+          - The live smoke mapped 749 resource entries, extracted six native files and launched through LaunchWrapper with LWJGL 2.9.0
+          - The real 1.5.2 client stayed alive for the full 45-second CI observation window
 
-          ### Existing launcher capabilities
-          - Prepared Vanilla instances can launch with local profiles
+          ### Automatic Java acquisition
+          - If the required Java major is missing, Nexo can acquire a matching x64 Eclipse Temurin JRE automatically
+          - Downloaded runtimes are SHA-256 verified before installation and then reused from Nexo-managed storage
+          - Supports both the current Adoptium binaries-array response and the older binary response shape
+          - Minecraft 1.5.2 is validated with managed Java 8
+
+          ### Existing runtime and launcher capabilities
+          - Auto or explicit game-memory settings replace the old fixed 2 GB heap
+          - Validated extra JVM arguments without invoking a shell
           - Automatic Minecraft-required Java-major selection
-          - Modern and legacy launch metadata, including 1.21.4 and 1.8.9-style arguments
+          - Modern and legacy launch metadata, including 1.21.4, 1.8.9 and 1.5.2 paths
           - Server Hub favorites with modern Quick Play and legacy direct-connect launch paths
-          - Official/BMCLAPI downloads with official fallback and SHA-1 verification
+          - Official/BMCLAPI downloads with official fallback and hash verification
           - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
 
           ### Font and Linux compatibility
@@ -188,7 +192,7 @@ jobs:
 
           ### Current limitations
           - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
-          - Runtime overrides are currently global; per-instance memory/JVM overrides and automatic Java acquisition are planned
+          - Runtime overrides are currently global; per-instance memory/JVM overrides are not implemented yet
           - Friend-to-friend room-code/P2P networking is not included yet
           - Fabric, Forge and NeoForge installers are not included yet
           - HTTP Range resume and mod/resource-pack/shader management are not implemented yet
