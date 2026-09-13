@@ -36,6 +36,8 @@ jobs:
         run: dotnet run --project tests/UN.Nexo.Diagnostics.Tests/UN.Nexo.Diagnostics.Tests.csproj -c Release
       - name: Server status regression checks
         run: dotnet run --project tests/UN.Nexo.ServerStatus.Tests/UN.Nexo.ServerStatus.Tests.csproj -c Release
+      - name: Instance lifecycle regression checks
+        run: dotnet run --project tests/UN.Nexo.InstanceLifecycle.Tests/UN.Nexo.InstanceLifecycle.Tests.csproj -c Release
       - name: Stability regression checks
         run: dotnet run --project tests/UN.Nexo.Stability.Tests/UN.Nexo.Stability.Tests.csproj -c Release
       - name: Instance repair regression checks

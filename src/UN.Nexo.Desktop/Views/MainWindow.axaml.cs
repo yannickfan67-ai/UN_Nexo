@@ -16,6 +16,7 @@ public sealed partial class MainWindow : Window
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
     private InstanceRepairWindow? _repairWindow;
+    private InstanceBackupWindow? _backupWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
     public MainWindow()
@@ -132,6 +133,17 @@ public sealed partial class MainWindow : Window
             downloads.Click += (_, _) => OpenDownloads();
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Backups")))
+        {
+            var backups = new Button { Content = "Backups" };
+            backups.Classes.Add("nav");
+            backups.Click += (_, _) => OpenBackups();
+            var settingsIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Settings")).index;
+            nav.Children.Insert(settingsIndex > 0 ? settingsIndex : nav.Children.Count, backups);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Repair")))
         {
             var repair = new Button { Content = "Repair" };
@@ -197,6 +209,19 @@ public sealed partial class MainWindow : Window
 
     private async Task RetrySelectedInstanceAsync()
         => await _viewModel.PrepareSelectedInstanceCommand.ExecuteAsync(null);
+
+    private void OpenBackups()
+    {
+        if (_backupWindow is not null)
+        {
+            _backupWindow.Activate();
+            return;
+        }
+
+        _backupWindow = new InstanceBackupWindow(_viewModel, _paths);
+        _backupWindow.Closed += (_, _) => _backupWindow = null;
+        _backupWindow.Show(this);
+    }
 
     private void OpenRepair()
     {
