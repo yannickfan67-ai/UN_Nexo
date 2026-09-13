@@ -14,6 +14,22 @@ public partial class MainWindowViewModel
     [ObservableProperty] private string launchDebugSummary = "Debug trace enabled · launch phases and Java process health will be recorded.";
     [ObservableProperty] private string lastLaunchTracePath = string.Empty;
 
+    public string LauncherVersion
+    {
+        get
+        {
+            var assembly = Assembly.GetEntryAssembly();
+            var informational = assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(informational))
+            {
+                var metadataIndex = informational.IndexOf('+');
+                return "v" + (metadataIndex >= 0 ? informational[..metadataIndex] : informational);
+            }
+
+            return "v" + (assembly?.GetName().Version?.ToString() ?? "unknown");
+        }
+    }
+
     private StreamWriter? _launchTraceWriter;
     private string? _lastTracedGameLine;
     private bool _debugProcessStarted;
@@ -118,8 +134,7 @@ public partial class MainWindowViewModel
         _debugProcessStarted = false;
         IsGameStarting = true;
 
-        var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "unknown";
-        WriteDebugTrace($"[trace] UN_Nexo {version}");
+        WriteDebugTrace($"[trace] UN_Nexo {LauncherVersion}");
         WriteDebugTrace($"[trace] Started {DateTimeOffset.Now:O}");
         WriteDebugTrace($"[trace] OS {RuntimeInformation.OSDescription.Trim()} · {RuntimeInformation.OSArchitecture} · process {RuntimeInformation.ProcessArchitecture}");
         WriteDebugTrace($"[trace] Instance {SelectedInstance?.Name ?? "none"} · Minecraft {SelectedInstance?.VersionId ?? "unknown"}");
