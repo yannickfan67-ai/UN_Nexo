@@ -19,6 +19,10 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Run launch and download regression checks
         run: dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release
+      - name: Run stability regression checks
+        run: dotnet run --project tests/UN.Nexo.Stability.Tests/UN.Nexo.Stability.Tests.csproj -c Release
+      - name: Run instance repair regression checks
+        run: dotnet run --project tests/UN.Nexo.Repair.Tests/UN.Nexo.Repair.Tests.csproj -c Release
 
   build-windows:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
@@ -163,12 +167,21 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Stability hotfixes
+          ### Instance check and repair
+          - Adds a dedicated Repair utility for the selected Vanilla instance
+          - Checks install state, version metadata, client JAR, libraries, asset index and objects, extracted natives, required Java and Linux libXtst
+          - Verifies Mojang SHA-1 metadata and rejects unsafe metadata paths or malformed hashes
+          - Reuses verified files and reacquires only missing or corrupt Vanilla components
+          - Rebuilds historical virtual assets and current pre-1.6 resource mappings after object repair
+          - Keeps worlds, mods, resource packs, screenshots and ordinary game configuration outside the repair write set
+
+          ### Reliability carried forward
           - Bounds stalled response bodies and falls back from an idle mirror to the official Minecraft source
           - Preserves explicit user cancellation instead of silently retrying it
           - Validates cached Nexo-managed Java before reuse and reacquires damaged runtimes
           - Preserves launch failure, stop and exit results instead of immediately overwriting them with Ready
           - Adds the Linux libXtst runtime dependency needed by Java 8 / LWJGL 2 launch paths
+          - Release CI now runs launch/download, stability and repair regressions before publishing
 
           ### Compatibility carried forward
           - Automatic SHA-256-verified Eclipse Temurin acquisition when the required Java major is missing
@@ -186,6 +199,7 @@ jobs:
 
           ### Current limitations
           - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
+          - Repair currently targets Vanilla instance contents; loader-specific repair will arrive with loader support
           - Runtime overrides are currently global; per-instance memory/JVM overrides are not implemented yet
           - Friend-to-friend room-code/P2P networking is not included yet
           - Fabric, Forge and NeoForge installers are not included yet
