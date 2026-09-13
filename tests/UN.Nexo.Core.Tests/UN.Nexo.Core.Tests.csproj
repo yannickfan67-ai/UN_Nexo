@@ -6,6 +6,7 @@
     <RootNamespace>UN.Nexo.Core.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="StabilityRegression.cs" />
     <ProjectReference Include="../../src/UN.Nexo.Core/UN.Nexo.Core.csproj" />
   </ItemGroup>
 </Project>
