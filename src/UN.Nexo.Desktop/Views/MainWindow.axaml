@@ -52,7 +52,7 @@
 
         <Border Grid.Row="3" Background="#111923" CornerRadius="10" Padding="12">
           <StackPanel>
-            <TextBlock Text="v0.3.0-dev" FontWeight="SemiBold" />
+            <TextBlock Text="v0.3.1-dev" FontWeight="SemiBold" />
             <TextBlock Text="{Binding LauncherStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
@@ -156,7 +156,7 @@
           <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
         </Grid>
 
-        <Grid Grid.Row="1" ColumnDefinitions="300,*" ColumnSpacing="18">
+        <Grid Grid.Row="1" ColumnDefinitions="230,*" ColumnSpacing="18">
           <Border Classes="card" Padding="14">
             <Grid RowDefinitions="Auto,12,*,12,Auto">
               <TextBlock Text="Your instances" FontSize="17" FontWeight="SemiBold" />
@@ -164,8 +164,8 @@
                 <ListBox.ItemTemplate>
                   <DataTemplate>
                     <StackPanel Margin="7,6">
-                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                      <TextBlock Text="{Binding VersionId}" Classes="muted" FontSize="11" />
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding VersionId}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
@@ -180,36 +180,36 @@
                 <StackPanel Spacing="12">
                   <StackPanel>
                     <TextBlock Text="Create instance" FontSize="19" FontWeight="SemiBold" />
-                    <TextBlock Text="Start with Vanilla. Mod loaders will be added on top of the same instance model." Classes="muted" FontSize="12" Margin="0,4,0,0" />
+                    <TextBlock Text="Start with Vanilla. Mod loaders will be added on top of the same instance model." Classes="muted" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
                   </StackPanel>
-                  <Grid ColumnDefinitions="1.1*,1.2*,Auto" ColumnSpacing="10">
-                    <TextBox Watermark="Instance name" Text="{Binding NewInstanceName}" />
-                    <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableVersions}" SelectedItem="{Binding SelectedVersion}" MaxDropDownHeight="360">
+                  <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="10" ColumnSpacing="10">
+                    <TextBox Grid.ColumnSpan="2" Watermark="Instance name" Text="{Binding NewInstanceName}" />
+                    <ComboBox Grid.Row="1" ItemsSource="{Binding AvailableVersions}" SelectedItem="{Binding SelectedVersion}" MaxDropDownHeight="360" MinWidth="120">
                       <ComboBox.ItemTemplate>
                         <DataTemplate>
-                          <Grid ColumnDefinitions="*,Auto" Width="260">
-                            <TextBlock Text="{Binding Id}" />
-                            <TextBlock Grid.Column="1" Text="{Binding Type}" Classes="muted" FontSize="11" />
+                          <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Text="{Binding Id}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="1" Text="{Binding Type}" Classes="muted" FontSize="11" Margin="10,0,0,0" />
                           </Grid>
                         </DataTemplate>
                       </ComboBox.ItemTemplate>
                     </ComboBox>
-                    <Button Grid.Column="2" Classes="primary" Content="Create" Command="{Binding CreateInstanceCommand}" IsEnabled="{Binding HasSelectedVersion}" />
+                    <Button Grid.Row="1" Grid.Column="1" Classes="primary" Content="Create" Command="{Binding CreateInstanceCommand}" IsEnabled="{Binding HasSelectedVersion}" />
                   </Grid>
-                  <TextBlock Text="{Binding CatalogStatus}" Classes="muted" FontSize="11" />
+                  <TextBlock Text="{Binding CatalogStatus}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
 
               <Border Classes="card">
                 <StackPanel Spacing="12">
-                  <Grid ColumnDefinitions="*,Auto">
+                  <StackPanel Spacing="10">
                     <StackPanel>
                       <TextBlock Text="Selected instance" Classes="muted" FontSize="11" />
-                      <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=Nothing selected}" FontSize="22" FontWeight="SemiBold" Margin="0,3,0,0" />
-                      <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Choose an instance on the left}" Classes="muted" />
+                      <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=Nothing selected}" FontSize="22" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Choose an instance on the left}" Classes="muted" TextTrimming="CharacterEllipsis" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Prepare Vanilla files" Command="{Binding PrepareSelectedInstanceCommand}" IsEnabled="{Binding HasSelectedInstance}" Padding="16,10" VerticalAlignment="Center" />
-                  </Grid>
+                    <Button Content="Prepare Vanilla files" Command="{Binding PrepareSelectedInstanceCommand}" IsEnabled="{Binding HasSelectedInstance}" Padding="16,10" HorizontalAlignment="Left" />
+                  </StackPanel>
                   <ProgressBar Minimum="0" Maximum="100" Value="{Binding InstallProgressValue}" Height="7" />
                   <TextBlock Text="{Binding InstallProgressText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <Border Background="#0E141C" CornerRadius="9" Padding="12">
@@ -231,7 +231,7 @@
           <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
         </Grid>
 
-        <Grid Grid.Row="1" ColumnDefinitions="300,*" ColumnSpacing="18">
+        <Grid Grid.Row="1" ColumnDefinitions="230,*" ColumnSpacing="18">
           <Border Classes="card" Padding="14">
             <Grid RowDefinitions="Auto,12,*,12,Auto">
               <TextBlock Text="Profiles" FontSize="17" FontWeight="SemiBold" />
@@ -239,7 +239,7 @@
                 <ListBox.ItemTemplate>
                   <DataTemplate>
                     <StackPanel Margin="7,6">
-                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                       <TextBlock Text="{Binding TypeLabel}" Classes="muted" FontSize="11" />
                     </StackPanel>
                   </DataTemplate>
@@ -255,10 +255,10 @@
                 <StackPanel Spacing="12">
                   <TextBlock Text="Offline profile" FontSize="19" FontWeight="SemiBold" />
                   <TextBlock Text="Useful for local worlds, development and offline-mode test servers. It does not replace Minecraft ownership or Microsoft authentication." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                  <StackPanel Spacing="10">
                     <TextBox Watermark="Minecraft name (3-16 characters)" Text="{Binding OfflineUserName}" />
-                    <Button Grid.Column="1" Classes="primary" Content="Add offline profile" Command="{Binding CreateOfflineAccountCommand}" />
-                  </Grid>
+                    <Button Classes="primary" Content="Add offline profile" Command="{Binding CreateOfflineAccountCommand}" HorizontalAlignment="Left" />
+                  </StackPanel>
                 </StackPanel>
               </Border>
 
