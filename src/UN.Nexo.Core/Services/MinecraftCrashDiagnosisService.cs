@@ -17,7 +17,7 @@ public sealed class MinecraftCrashDiagnosisService
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex TokenAssignmentRegex = new(
-        @"(?im)(?<key>access[_-]?token|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:id)?)(?<sep>\s*[:=]\s*|\s+)(?<value>[^\s\"']{8,})",
+        @"(?im)(?<key>access[_-]?token|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:id)?)(?<sep>\s*[:=]\s*|\s+)(?<value>[^\s""']{8,})",
         RegexOptions.Compiled);
 
     private static readonly Regex AccessTokenArgumentRegex = new(
