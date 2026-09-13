@@ -1,3 +1,4 @@
+using System.Reflection;
 using Avalonia.Controls;
 using UN.Nexo.Core.Services;
 using UN.Nexo.Desktop.ViewModels;
@@ -19,7 +20,10 @@ public sealed partial class MainWindow : Window
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.4.0-dev");
+        var launcherVersion = typeof(MainWindow).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? "dev";
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
 
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(),
