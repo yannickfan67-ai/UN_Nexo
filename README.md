@@ -6,14 +6,15 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.6.1-dev
+## Current milestone — v0.6.2-dev
 
 The current development line includes:
 
 - Windows and Linux desktop UI with Home, Instances, Accounts, Servers, Runtime and Settings access
 - Lightweight cold-start splash and main-window fade-in without heavy GPU effects
 - Bundled Avalonia Inter plus Linux Noto CJK fallback dependencies
-- Compact in-app game-session status overlay while Minecraft launches or runs
+- Compact in-app game-session status overlay with separate **starting** and **running** states
+- Persistent per-instance launch traces and Java-process health diagnostics for stuck launches
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
 - Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
@@ -37,6 +38,20 @@ The current development line includes:
 - Linux package installation, CJK fallback and packaged UI smoke checks in CI
 
 Local profiles are intended for local worlds, development and servers that explicitly accept that login mode. They do **not** represent an authenticated Microsoft account and do not replace Minecraft ownership or authenticated online play.
+
+## Launch debug tracing
+
+Nexo now writes a `launch-trace-*.log` beside the selected instance's normal launcher logs. The trace starts before preparation/Java selection and records launch phase changes, the selected Java executable, working directory, heap setting, main class, native path, classpath entry count and platform architecture. It intentionally does not dump authentication tokens or the complete command line.
+
+After Java starts, a watchdog emits a heartbeat every 10 seconds with the Java PID, process lifetime, time since the last stdout/stderr line and working-set memory when available. The trace also records how long Java took to start, how long it took to produce the first Minecraft output, process-start exceptions and the final exit code.
+
+The game-session overlay only shows its indeterminate progress bar while Nexo is actually in the starting phase. Once the Java process exists, the overlay switches to process-health information instead of looking permanently stuck on “Launching”. The overlay also provides an **Open logs** action.
+
+Per-instance traces and process logs are kept under:
+
+```text
+UN_Nexo/instances/<instance-id>/launcher-logs/
+```
 
 ## Legacy compatibility status
 
