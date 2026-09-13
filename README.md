@@ -6,11 +6,13 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.4.0-dev
+## Current milestone — v0.4.1-dev
 
 The current development line includes:
 
 - Windows and Linux desktop UI with Home, Instances, Accounts and Settings pages
+- Lightweight cold-start splash and main-window fade-in without heavy GPU effects
+- Compact in-app game-session status overlay while Minecraft launches or runs
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
 - Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
@@ -64,10 +66,12 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 ## Next milestones
 
 1. Complete Microsoft AppID approval and authenticated Microsoft/Xbox/XSTS/Minecraft Services login
-2. Harden real-game launch compatibility across legacy and current releases
-3. Resumable downloads, retries/backoff, speed reporting and cancel/retry UX
-4. Fabric, Forge and NeoForge support
-5. Mod/resource-pack/shader management
-6. App/package icons, signing and updater
+2. Add practical launch controls: memory selection, custom JVM options and better Java/runtime diagnostics
+3. Harden real-game launch compatibility across legacy and current releases
+4. Add resumable downloads, retries/backoff, speed reporting and cancel/retry UX
+5. Add instance actions such as duplicate, rename, delete, open game folder and open logs
+6. Add Fabric, Forge and NeoForge support
+7. Add mod/resource-pack/shader management
+8. Add app/package icons, signing and updater
 
 UN_Nexo is under active development and its releases are currently marked as prereleases.
