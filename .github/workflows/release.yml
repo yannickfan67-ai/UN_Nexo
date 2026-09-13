@@ -163,26 +163,25 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Minecraft 1.5.2 compatibility
-          - Validated against the current official Mojang 1.5.2 metadata and files, not only synthetic fixtures
-          - Supports pre-1.6 asset indexes that request map_to_resources and materializes them into the legacy resources directory
-          - The live smoke mapped 749 resource entries, extracted six native files and launched through LaunchWrapper with LWJGL 2.9.0
-          - The real 1.5.2 client stayed alive for the full 45-second CI observation window
+          ### Launch debug and stuck-start diagnostics
+          - Adds a persistent launch trace from preparation through Java process exit
+          - Records launch phases, Java executable, working directory, heap, main class, native path, classpath entry count and platform architecture without dumping authentication tokens
+          - Adds a Java-process heartbeat every 10 seconds with PID, process lifetime, output-silence time and working-set memory when available
+          - Records process-start failures and the time to the first Minecraft stdout or stderr line
+          - Stores launch-trace files beside the selected instance's normal launcher logs
+          - Adds an Open logs action directly to the game-session overlay
 
-          ### Automatic Java acquisition
-          - If the required Java major is missing, Nexo can acquire a matching x64 Eclipse Temurin JRE automatically
-          - Downloaded runtimes are SHA-256 verified before installation and then reused from Nexo-managed storage
-          - Supports both the current Adoptium binaries-array response and the older binary response shape
-          - Minecraft 1.5.2 is validated with managed Java 8
+          ### Starting versus running state
+          - The indeterminate progress bar is now shown only while the game is actually starting
+          - Once Java starts, the overlay switches to live process-health information instead of looking permanently stuck on Launching
+          - Existing stdout, stderr, exit-code and Stop game handling remain available
 
-          ### Existing runtime and launcher capabilities
-          - Auto or explicit game-memory settings replace the old fixed 2 GB heap
-          - Validated extra JVM arguments without invoking a shell
-          - Automatic Minecraft-required Java-major selection
-          - Modern and legacy launch metadata, including 1.21.4, 1.8.9 and 1.5.2 paths
-          - Server Hub favorites with modern Quick Play and legacy direct-connect launch paths
+          ### Compatibility carried forward
+          - Automatic SHA-256-verified Eclipse Temurin acquisition when the required Java major is missing
+          - Modern 1.21.4, legacy 1.8.9 and real Minecraft 1.5.2 launch paths
+          - Minecraft 1.5.2 pre-1.6 resource mapping plus LaunchWrapper and LWJGL 2 compatibility
           - Official/BMCLAPI downloads with official fallback and hash verification
-          - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
+          - Server Hub favorites with modern Quick Play and legacy direct-connect launch paths
 
           ### Font and Linux compatibility
           - Bundles Avalonia Inter for a reliable baseline UI font
