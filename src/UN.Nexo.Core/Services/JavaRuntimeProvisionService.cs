@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
@@ -12,16 +14,26 @@ public sealed class JavaRuntimeProvisionService
     private static readonly HttpClient SharedClient = CreateSharedClient();
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
+    private readonly TimeSpan _transferIdleTimeout;
+    private readonly Func<string, int, CancellationToken, Task<bool>> _runtimeValidator;
 
     public JavaRuntimeProvisionService(NexoPathService paths)
         : this(SharedClient, paths)
     {
     }
 
-    public JavaRuntimeProvisionService(HttpClient httpClient, NexoPathService paths)
+    public JavaRuntimeProvisionService(
+        HttpClient httpClient,
+        NexoPathService paths,
+        TimeSpan? transferIdleTimeout = null,
+        Func<string, int, CancellationToken, Task<bool>>? runtimeValidator = null)
     {
         _httpClient = httpClient;
         _paths = paths;
+        _transferIdleTimeout = transferIdleTimeout ?? TimeSpan.FromSeconds(30);
+        if (_transferIdleTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(transferIdleTimeout), "Transfer idle timeout must be positive.");
+        _runtimeValidator = runtimeValidator ?? ValidateRuntimeAsync;
     }
 
     public async Task<JavaInstallation> EnsureJavaAsync(
@@ -90,6 +102,12 @@ public sealed class JavaRuntimeProvisionService
                 if (File.Exists(spawnHelper))
                     EnsureUnixExecutable(spawnHelper);
 
+                if (!await _runtimeValidator(finalJavaPath, major, cancellationToken))
+                {
+                    try { Directory.Delete(targetRoot, recursive: true); } catch { }
+                    throw new InvalidDataException($"Downloaded Java {major} runtime failed its startup probe.");
+                }
+
                 var manifest = new ManagedRuntimeManifest(
                     major,
                     asset.Version,
@@ -137,32 +155,41 @@ public sealed class JavaRuntimeProvisionService
         if (javaPath is null)
             return null;
 
-        var version = $"{expectedMajor}.0.0";
         var manifestPath = Path.Combine(targetRoot, "nexo-runtime.json");
+        if (!File.Exists(manifestPath))
+            return null;
+
+        ManagedRuntimeManifest? manifest;
         try
         {
-            if (File.Exists(manifestPath))
-            {
-                await using var stream = File.OpenRead(manifestPath);
-                var manifest = await JsonSerializer.DeserializeAsync<ManagedRuntimeManifest>(
-                    stream,
-                    JsonOptions,
-                    cancellationToken);
-                if (manifest is not null && manifest.Major == expectedMajor
-                    && !string.IsNullOrWhiteSpace(manifest.Version))
-                    version = manifest.Version;
-            }
+            await using var stream = File.OpenRead(manifestPath);
+            manifest = await JsonSerializer.DeserializeAsync<ManagedRuntimeManifest>(
+                stream,
+                JsonOptions,
+                cancellationToken);
         }
         catch (JsonException)
         {
-            // The runtime itself can still be reused; a later successful install rewrites metadata.
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
         }
 
+        if (manifest is null
+            || manifest.Major != expectedMajor
+            || string.IsNullOrWhiteSpace(manifest.Version))
+            return null;
+
         EnsureUnixExecutable(javaPath);
+        if (!await _runtimeValidator(javaPath, expectedMajor, cancellationToken))
+            return null;
+
         return new JavaInstallation(
             javaPath,
             targetRoot,
-            version,
+            manifest.Version,
             true,
             "Nexo managed · Eclipse Temurin");
     }
@@ -178,7 +205,10 @@ public sealed class JavaRuntimeProvisionService
         using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        await using var buffered = new MemoryStream();
+        await CopyWithIdleTimeoutAsync(stream, buffered, "api.adoptium.net", cancellationToken);
+        buffered.Position = 0;
+        using var document = await JsonDocument.ParseAsync(buffered, cancellationToken: cancellationToken);
         if (document.RootElement.ValueKind != JsonValueKind.Array
             || document.RootElement.GetArrayLength() == 0)
             throw new InvalidOperationException($"No supported Java {major} runtime was returned by Adoptium.");
@@ -252,7 +282,7 @@ public sealed class JavaRuntimeProvisionService
         var lastPercent = -1;
         while (true)
         {
-            var read = await input.ReadAsync(buffer, cancellationToken);
+            var read = await ReadWithIdleTimeoutAsync(input, buffer, new Uri(url).Host, cancellationToken);
             if (read == 0)
                 break;
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
@@ -267,6 +297,127 @@ public sealed class JavaRuntimeProvisionService
                 }
             }
         }
+    }
+
+    private async Task CopyWithIdleTimeoutAsync(
+        Stream input,
+        Stream output,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[64 * 1024];
+        while (true)
+        {
+            var read = await ReadWithIdleTimeoutAsync(input, buffer, source, cancellationToken);
+            if (read == 0)
+                return;
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+    }
+
+    private async ValueTask<int> ReadWithIdleTimeoutAsync(
+        Stream input,
+        Memory<byte> buffer,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        idle.CancelAfter(_transferIdleTimeout);
+        try
+        {
+            return await input.ReadAsync(buffer, idle.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Transfer from {source} made no progress for {_transferIdleTimeout.TotalSeconds:0.#} seconds.");
+        }
+    }
+
+    private static async Task<bool> ValidateRuntimeAsync(
+        string javaPath,
+        int expectedMajor,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var file = new FileInfo(javaPath);
+            if (!file.Exists || file.Length == 0)
+                return false;
+
+            EnsureUnixExecutable(javaPath);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = javaPath,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add("-version");
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+                return false;
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+                await process.WaitForExitAsync(timeout.Token);
+                var text = $"{await stderrTask}\n{await stdoutTask}";
+                if (process.ExitCode != 0)
+                    return false;
+
+                var version = ExtractQuotedVersion(text);
+                if (MinecraftLaunchPlanBuilder.JavaMajor(version) != expectedMajor)
+                    return false;
+
+                return text.Contains("64-Bit", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("amd64", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("x86_64", StringComparison.OrdinalIgnoreCase)
+                       || text.Contains("aarch64", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                }
+                catch { }
+                return false;
+            }
+            catch (OperationCanceledException)
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                }
+                catch { }
+                throw;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ExtractQuotedVersion(string text)
+    {
+        var first = text.IndexOf('"');
+        if (first < 0)
+            return "Unknown";
+        var second = text.IndexOf('"', first + 1);
+        return second > first + 1 ? text[(first + 1)..second] : "Unknown";
     }
 
     private static async Task VerifySha256Async(
