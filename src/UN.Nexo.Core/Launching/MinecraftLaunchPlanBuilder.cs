@@ -104,8 +104,11 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         RequireFile(indexPath, assetIndex);
         using var indexDocument = await ReadJsonAsync(indexPath, cancellationToken);
         var index = indexDocument.RootElement;
-        var virtualAssets = index.TryGetProperty("virtual", out var virtualElement)
-            && virtualElement.GetBoolean();
+        var legacyAssets = string.Equals(assetId, "legacy", StringComparison.OrdinalIgnoreCase)
+            || (root.TryGetProperty("assets", out var assetsElement)
+                && string.Equals(assetsElement.GetString(), "legacy", StringComparison.OrdinalIgnoreCase));
+        var virtualAssets = legacyAssets
+            || (index.TryGetProperty("virtual", out var virtualElement) && virtualElement.GetBoolean());
         var mapToResources = index.TryGetProperty("map_to_resources", out var resourcesElement)
             && resourcesElement.GetBoolean();
         var virtualRoot = virtualAssets
