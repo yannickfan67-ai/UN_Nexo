@@ -6,11 +6,11 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.6.4-dev
+## Current milestone — v0.6.5-dev
 
 The current development line includes:
 
-- Windows and Linux desktop UI with Home, Instances, Accounts, Servers, Runtime and Settings access
+- Windows and Linux desktop UI with Home, Instances, Accounts, Servers, Runtime, Repair and Settings access
 - Lightweight cold-start splash and main-window fade-in without heavy GPU effects
 - Bundled Avalonia Inter plus Linux Noto CJK fallback dependencies
 - Compact in-app game-session status overlay with separate **starting** and **running** states
@@ -19,6 +19,9 @@ The current development line includes:
 - Terminal launch results remain visible after the session ends instead of being immediately replaced by a generic Ready message
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
+- One-click instance integrity checking and repair for install state, metadata, client JAR, libraries, asset index/objects, extracted natives, required Java and Linux runtime dependencies
+- Repair verifies Mojang SHA-1 metadata, rejects unsafe metadata paths/hashes, keeps verified files and reacquires only missing or corrupt Vanilla components
+- Repair preserves worlds, mods, resource packs, screenshots and ordinary configuration; legacy virtual assets and pre-1.6 resources are rebuilt after object repair
 - Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
 - Response-body idle timeouts so a source that returns headers and then stops sending data cannot leave preparation stuck forever
 - Explicit user cancellation remains cancellation and is not silently converted into a source retry
@@ -46,6 +49,14 @@ The current development line includes:
 
 Local profiles are intended for local worlds, development and servers that explicitly accept that login mode. They do **not** represent an authenticated Microsoft account and do not replace Minecraft ownership or authenticated online play.
 
+## Instance check and repair
+
+The Repair utility can inspect the selected Vanilla instance without launching it. It checks the install marker, version metadata, client JAR, libraries, native archives and extracted files, asset index and asset objects, the required Java major, and the Linux libXtst dependency when relevant.
+
+Where Mojang metadata provides a SHA-1, Nexo verifies it instead of trusting file presence alone. Metadata-controlled relative paths and SHA-1 values are validated before they are followed, so a damaged or malicious local metadata file cannot make Repair walk outside the expected game directories.
+
+Repair reuses already verified files and runs the normal verified installer for missing/corrupt game components. It then ensures the required Java runtime is usable and reacquires a managed Temurin runtime when necessary. Historical virtual assets and current pre-1.6 `map_to_resources` layouts are rebuilt from verified object files after repair. User worlds, mods, resource packs, screenshots and ordinary game configuration are outside the repair write set.
+
 ## Launch debug tracing
 
 Nexo writes a `launch-trace-*.log` beside the selected instance's normal launcher logs. The trace starts before preparation/Java selection and records launch phase changes, the selected Java executable, working directory, heap setting, main class, native path, classpath entry count and platform architecture. It intentionally does not dump authentication tokens or the complete command line.
@@ -66,7 +77,7 @@ UN_Nexo/instances/<instance-id>/launcher-logs/
 
 Minecraft 1.5.2 has been exercised against the current official Mojang metadata and files, not only synthetic fixtures. The live smoke downloaded the real 1.5.2 client, libraries, natives and assets, mapped 749 `pre-1.6` resource entries into the legacy `resources/` layout, extracted six native files, acquired a managed Temurin Java 8 runtime, launched through LaunchWrapper/LWJGL 2.9.0 and stayed alive for the full 45-second observation window.
 
-A later real Ubuntu 24.04 Minecraft 1.8.9 launch also reached LWJGL and exposed a missing `libXtst.so.6` package dependency. v0.6.4 declares that dependency in the Linux packages and verifies it during release packaging.
+A later real Ubuntu 24.04 Minecraft 1.8.9 launch also reached LWJGL and exposed a missing `libXtst.so.6` package dependency. v0.6.4 and later declare that dependency in the Linux packages and verify it during release packaging.
 
 The legacy client may still attempt obsolete Mojang-era network endpoints for some resources, and a headless CI runner has no physical audio device, but those conditions did not prevent the tested 1.5.2 client from reaching its running game process.
 
@@ -96,7 +107,9 @@ src/
 └─ UN.Nexo.Desktop/    Avalonia desktop application
 
 tests/
-└─ UN.Nexo.Core.Tests/ Dependency-free regression executable used by CI
+├─ UN.Nexo.Core.Tests/       Launch/download regression executable
+├─ UN.Nexo.Stability.Tests/  Timeout/runtime/process stability regressions
+└─ UN.Nexo.Repair.Tests/     Cross-platform instance integrity regressions
 ```
 
 ## Build and test
@@ -109,6 +122,8 @@ Requirements:
 dotnet restore UN_Nexo.sln
 dotnet build UN_Nexo.sln -c Release
 dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release --no-build
+dotnet run --project tests/UN.Nexo.Stability.Tests/UN.Nexo.Stability.Tests.csproj -c Release
+dotnet run --project tests/UN.Nexo.Repair.Tests/UN.Nexo.Repair.Tests.csproj -c Release
 dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 ```
 
@@ -120,13 +135,14 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 - Fabric, Forge and NeoForge installers are not included yet
 - HTTP Range resume for partially downloaded files is not implemented yet
 - Mod/resource-pack/shader management is not implemented yet
+- Repair currently targets Vanilla instance contents; loader-specific repair will arrive with loader support
 - Linux CI uses Ubuntu/Xvfb; Linux Mint/Cinnamon still needs real-device acceptance testing
 
 ## Next milestones
 
-1. Complete Microsoft AppID approval and authenticated Microsoft/Xbox/XSTS/Minecraft Services login
-2. Add a one-click instance verifier/repair flow and crash diagnosis/export on top of the new runtime/download validation
-3. Add resumable downloads, retries/backoff, speed reporting and cancel/retry UX
+1. Add crash diagnosis and safe diagnostic export on top of launch traces and repair findings
+2. Add resumable downloads, retries/backoff, speed reporting and cancel/retry UX
+3. Complete Microsoft AppID approval and authenticated Microsoft/Xbox/XSTS/Minecraft Services login
 4. Add per-instance runtime overrides and richer managed-Java controls
 5. Add instance import, duplicate, rename, delete and safe world backup/restore
 6. Add Fabric first, then NeoForge and Forge support
