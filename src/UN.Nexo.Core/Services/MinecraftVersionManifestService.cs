@@ -5,18 +5,18 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class MinecraftVersionManifestService
 {
-    private const string ManifestUrl = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
     private readonly HttpClient _httpClient;
+    private readonly DownloadSourceService _downloadSources;
 
-    public MinecraftVersionManifestService(HttpClient httpClient)
+    public MinecraftVersionManifestService(HttpClient httpClient, DownloadSourceService downloadSources)
     {
         _httpClient = httpClient;
+        _downloadSources = downloadSources;
     }
 
     public async Task<MinecraftVersionCatalog> GetCatalogAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await _httpClient.GetAsync(ManifestUrl, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var response = await GetFirstSuccessfulAsync(_downloadSources.GetManifestCandidates(), cancellationToken);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
 
@@ -44,4 +44,29 @@ public sealed class MinecraftVersionManifestService
 
     public async Task<MinecraftReleaseInfo> GetLatestAsync(CancellationToken cancellationToken = default)
         => (await GetCatalogAsync(cancellationToken)).Latest;
+
+    private async Task<HttpResponseMessage> GetFirstSuccessfulAsync(
+        IReadOnlyList<string> urls,
+        CancellationToken cancellationToken)
+    {
+        Exception? lastException = null;
+        foreach (var url in urls)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                    return response;
+
+                lastException = new HttpRequestException($"HTTP {(int)response.StatusCode} from {new Uri(url).Host}.");
+                response.Dispose();
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                lastException = ex;
+            }
+        }
+
+        throw lastException ?? new HttpRequestException("No download source was available.");
+    }
 }

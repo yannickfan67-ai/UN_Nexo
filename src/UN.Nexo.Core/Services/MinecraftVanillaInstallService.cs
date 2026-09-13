@@ -9,11 +9,13 @@ public sealed class MinecraftVanillaInstallService
 {
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
+    private readonly DownloadSourceService _downloadSources;
 
-    public MinecraftVanillaInstallService(HttpClient httpClient, NexoPathService paths)
+    public MinecraftVanillaInstallService(HttpClient httpClient, NexoPathService paths, DownloadSourceService downloadSources)
     {
         _httpClient = httpClient;
         _paths = paths;
+        _downloadSources = downloadSources;
     }
 
     public async Task InstallAsync(
@@ -91,6 +93,7 @@ public sealed class MinecraftVanillaInstallService
             version = version.Id,
             loader = instance.Loader,
             installedAt = DateTimeOffset.UtcNow,
+            source = _downloadSources.SourceId,
             state = "prepared"
         };
         var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
@@ -290,24 +293,48 @@ public sealed class MinecraftVanillaInstallService
             return;
 
         var temporaryPath = path + ".part";
+        Exception? lastException = null;
+
+        foreach (var candidate in _downloadSources.GetCandidates(url))
+        {
+            if (File.Exists(temporaryPath))
+                File.Delete(temporaryPath);
+
+            try
+            {
+                using var response = await _httpClient.GetAsync(candidate, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastException = new HttpRequestException($"HTTP {(int)response.StatusCode} from {new Uri(candidate).Host}.");
+                    continue;
+                }
+
+                await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
+                await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true))
+                {
+                    await input.CopyToAsync(output, cancellationToken);
+                }
+
+                if (!await HashMatchesAsync(temporaryPath, expectedSha1, cancellationToken))
+                {
+                    File.Delete(temporaryPath);
+                    lastException = new InvalidDataException($"SHA-1 verification failed from {new Uri(candidate).Host}.");
+                    continue;
+                }
+
+                File.Move(temporaryPath, path, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            {
+                lastException = ex;
+            }
+        }
+
         if (File.Exists(temporaryPath))
             File.Delete(temporaryPath);
 
-        using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
-        await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true))
-        {
-            await input.CopyToAsync(output, cancellationToken);
-        }
-
-        if (!await HashMatchesAsync(temporaryPath, expectedSha1, cancellationToken))
-        {
-            File.Delete(temporaryPath);
-            throw new InvalidDataException($"SHA-1 verification failed for {Path.GetFileName(path)}.");
-        }
-
-        File.Move(temporaryPath, path, overwrite: true);
+        throw lastException ?? new HttpRequestException($"No download source was available for {Path.GetFileName(path)}.");
     }
 
     private static async Task<bool> HashMatchesAsync(string path, string? expectedSha1, CancellationToken cancellationToken)

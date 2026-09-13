@@ -13,18 +13,22 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         var paths = new NexoPathService();
+        var downloadSources = new DownloadSourceService();
         var httpClient = new HttpClient
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.2.0-dev");
+        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/0.3.0-dev");
 
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(),
             paths,
-            new MinecraftVersionManifestService(httpClient),
+            new MinecraftVersionManifestService(httpClient, downloadSources),
             new InstanceStoreService(paths),
-            new MinecraftVanillaInstallService(httpClient, paths));
+            new MinecraftVanillaInstallService(httpClient, paths, downloadSources),
+            new AccountStoreService(paths),
+            new LauncherSettingsService(paths),
+            downloadSources);
 
         DataContext = _viewModel;
         Opened += OnOpened;

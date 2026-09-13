@@ -13,13 +13,19 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly MinecraftVersionManifestService _manifest;
     private readonly InstanceStoreService _instances;
     private readonly MinecraftVanillaInstallService _installer;
+    private readonly AccountStoreService _accounts;
+    private readonly LauncherSettingsService _settings;
+    private readonly DownloadSourceService _downloadSources;
 
     [ObservableProperty] private bool isBusy;
     [ObservableProperty] private bool isInstallBusy;
     [ObservableProperty] private bool isHomeVisible = true;
     [ObservableProperty] private bool isInstancesVisible;
+    [ObservableProperty] private bool isAccountsVisible;
+    [ObservableProperty] private bool isSettingsVisible;
     [ObservableProperty] private bool hasSelectedInstance;
     [ObservableProperty] private bool hasSelectedVersion;
+    [ObservableProperty] private bool hasSelectedAccount;
     [ObservableProperty] private string launcherStatus = "Ready";
     [ObservableProperty] private string minecraftDirectory = "Detecting…";
     [ObservableProperty] private string instanceRoot = "Detecting…";
@@ -32,28 +38,50 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string newInstanceName = "New Minecraft";
     [ObservableProperty] private MinecraftVersionInfo? selectedVersion;
     [ObservableProperty] private GameInstance? selectedInstance;
+    [ObservableProperty] private LauncherAccount? selectedAccount;
     [ObservableProperty] private double installProgressValue;
     [ObservableProperty] private string installProgressText = "Not installed";
+    [ObservableProperty] private string offlineUserName = string.Empty;
+    [ObservableProperty] private string accountSummary = "No account selected";
+    [ObservableProperty] private string selectedDownloadSource = "Official";
+    [ObservableProperty] private string downloadSourceStatus = "Official Mojang/Minecraft services";
+    [ObservableProperty] private string microsoftAuthStatus = "Microsoft sign-in needs an approved UN_Nexo application registration before Minecraft Services will accept the client ID.";
 
     public ObservableCollection<JavaInstallation> JavaInstallations { get; } = [];
     public ObservableCollection<MinecraftVersionInfo> AvailableVersions { get; } = [];
     public ObservableCollection<GameInstance> Instances { get; } = [];
+    public ObservableCollection<LauncherAccount> Accounts { get; } = [];
+    public ObservableCollection<string> DownloadSources { get; } = ["Official", "BMCLAPI"];
 
     public MainWindowViewModel(
         JavaDiscoveryService javaDiscovery,
         NexoPathService paths,
         MinecraftVersionManifestService manifest,
         InstanceStoreService instances,
-        MinecraftVanillaInstallService installer)
+        MinecraftVanillaInstallService installer,
+        AccountStoreService accounts,
+        LauncherSettingsService settings,
+        DownloadSourceService downloadSources)
     {
         _javaDiscovery = javaDiscovery;
         _paths = paths;
         _manifest = manifest;
         _instances = instances;
         _installer = installer;
+        _accounts = accounts;
+        _settings = settings;
+        _downloadSources = downloadSources;
     }
 
-    public Task InitializeAsync() => RefreshEnvironmentAsync();
+    public async Task InitializeAsync()
+    {
+        var settings = await _settings.LoadAsync();
+        _downloadSources.SetSource(settings.DownloadSource);
+        SelectedDownloadSource = _downloadSources.SourceId == "bmclapi" ? "BMCLAPI" : "Official";
+        UpdateDownloadSourceStatus();
+        await ReloadAccountsAsync();
+        await RefreshEnvironmentAsync();
+    }
 
     partial void OnSelectedVersionChanged(MinecraftVersionInfo? value)
     {
@@ -78,18 +106,34 @@ public partial class MainWindowViewModel : ObservableObject
         InstallProgressText = prepared ? "Vanilla files prepared" : "Not installed";
     }
 
-    [RelayCommand]
-    private void ShowHome()
+    partial void OnSelectedAccountChanged(LauncherAccount? value)
     {
-        IsHomeVisible = true;
-        IsInstancesVisible = false;
+        HasSelectedAccount = value is not null;
+        AccountSummary = value is null
+            ? "No account selected"
+            : value.IsOffline
+                ? $"{value.DisplayName} · Offline profile"
+                : $"{value.DisplayName} · Microsoft";
     }
 
     [RelayCommand]
-    private void ShowInstances()
+    private void ShowHome() => ShowPage("home");
+
+    [RelayCommand]
+    private void ShowInstances() => ShowPage("instances");
+
+    [RelayCommand]
+    private void ShowAccounts() => ShowPage("accounts");
+
+    [RelayCommand]
+    private void ShowSettings() => ShowPage("settings");
+
+    private void ShowPage(string page)
     {
-        IsHomeVisible = false;
-        IsInstancesVisible = true;
+        IsHomeVisible = page == "home";
+        IsInstancesVisible = page == "instances";
+        IsAccountsVisible = page == "accounts";
+        IsSettingsVisible = page == "settings";
     }
 
     [RelayCommand]
@@ -99,7 +143,7 @@ public partial class MainWindowViewModel : ObservableObject
             return;
 
         IsBusy = true;
-        LauncherStatus = "Scanning environment…";
+        LauncherStatus = $"Scanning environment · {_downloadSources.DisplayName} source…";
         MinecraftDirectory = _paths.GetMinecraftDirectory();
         InstanceRoot = _paths.GetInstancesRoot();
         _paths.EnsureDirectories();
@@ -139,7 +183,7 @@ public partial class MainWindowViewModel : ObservableObject
 
                 LatestRelease = catalog.Latest.LatestRelease;
                 LatestSnapshot = catalog.Latest.LatestSnapshot;
-                CatalogStatus = $"{releases.Length} releases · {recentSnapshots.Length} recent snapshots";
+                CatalogStatus = $"{releases.Length} releases · {recentSnapshots.Length} recent snapshots · {_downloadSources.DisplayName}";
 
                 SelectedVersion = AvailableVersions.FirstOrDefault(v => v.Id == previousVersionId)
                     ?? AvailableVersions.FirstOrDefault(v => v.Id == catalog.Latest.LatestRelease)
@@ -149,7 +193,7 @@ public partial class MainWindowViewModel : ObservableObject
             {
                 LatestRelease = "Offline";
                 LatestSnapshot = "Offline";
-                CatalogStatus = "Version catalog unavailable · check network and refresh";
+                CatalogStatus = $"Version catalog unavailable · {_downloadSources.DisplayName} and fallback failed";
                 SelectedVersion = null;
             }
 
@@ -162,7 +206,7 @@ public partial class MainWindowViewModel : ObservableObject
                 : $"Preferred: Java {java[0].Version} · {(java[0].Is64Bit ? "64-bit" : "architecture unknown")}\n{java[0].JavaPath}";
 
             InstanceSummary = $"{instances.Count} instance{(instances.Count == 1 ? string.Empty : "s")}";
-            LauncherStatus = catalog is null ? "Ready · version service offline" : "Ready";
+            LauncherStatus = catalog is null ? "Ready · version service offline" : $"Ready · {_downloadSources.DisplayName}";
         }
         catch (Exception ex)
         {
@@ -217,7 +261,7 @@ public partial class MainWindowViewModel : ObservableObject
 
         IsInstallBusy = true;
         InstallProgressValue = 0;
-        InstallProgressText = "Starting…";
+        InstallProgressText = $"Starting via {_downloadSources.DisplayName}…";
         LauncherStatus = $"Preparing {SelectedInstance.Name}…";
 
         var progress = new Progress<InstallProgress>(value =>
@@ -232,7 +276,7 @@ public partial class MainWindowViewModel : ObservableObject
         {
             await _installer.InstallAsync(SelectedInstance, version, progress);
             InstallProgressValue = 100;
-            InstallProgressText = "Vanilla files prepared";
+            InstallProgressText = $"Vanilla files prepared · {_downloadSources.DisplayName}";
             LauncherStatus = $"{SelectedInstance.Name} is prepared";
         }
         catch (Exception ex)
@@ -244,6 +288,62 @@ public partial class MainWindowViewModel : ObservableObject
         {
             IsInstallBusy = false;
         }
+    }
+
+    [RelayCommand]
+    private async Task CreateOfflineAccountAsync()
+    {
+        try
+        {
+            var account = await _accounts.CreateOfflineAsync(OfflineUserName);
+            var existing = Accounts.FirstOrDefault(x => x.Id == account.Id);
+            if (existing is null)
+                Accounts.Add(account);
+            SelectedAccount = existing ?? account;
+            OfflineUserName = string.Empty;
+            LauncherStatus = $"Offline profile {account.DisplayName} is ready";
+        }
+        catch (Exception ex)
+        {
+            LauncherStatus = $"Offline profile: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private void ExplainMicrosoftSignIn()
+    {
+        MicrosoftAuthStatus = "The Microsoft → Xbox Live → XSTS → Minecraft Services flow is planned, but Minecraft Services now rejects unapproved third-party application IDs. Nexo will use its own approved client ID only; it will not borrow another launcher's identity.";
+        LauncherStatus = "Microsoft sign-in is waiting for UN_Nexo app registration approval";
+    }
+
+    [RelayCommand]
+    private async Task SaveDownloadSourceAsync()
+    {
+        var id = SelectedDownloadSource.Equals("BMCLAPI", StringComparison.OrdinalIgnoreCase)
+            ? "bmclapi"
+            : "official";
+        _downloadSources.SetSource(id);
+        await _settings.SaveAsync(new LauncherSettings(id));
+        UpdateDownloadSourceStatus();
+        LauncherStatus = $"Download source changed to {_downloadSources.DisplayName}";
+        await RefreshEnvironmentAsync();
+    }
+
+    private async Task ReloadAccountsAsync()
+    {
+        var previousId = SelectedAccount?.Id;
+        var accounts = await _accounts.GetAllAsync();
+        Accounts.Clear();
+        foreach (var account in accounts)
+            Accounts.Add(account);
+        SelectedAccount = Accounts.FirstOrDefault(x => x.Id == previousId) ?? Accounts.FirstOrDefault();
+    }
+
+    private void UpdateDownloadSourceStatus()
+    {
+        DownloadSourceStatus = _downloadSources.SourceId == "bmclapi"
+            ? "BMCLAPI mirror first · automatic fallback to official Mojang/Minecraft URLs"
+            : "Official Mojang/Minecraft services only";
     }
 
     private async Task<MinecraftVersionCatalog?> TryGetCatalogAsync()

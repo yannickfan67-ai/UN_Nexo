@@ -45,13 +45,14 @@
         <StackPanel Grid.Row="2">
           <Button Classes="nav" Content="Home" Command="{Binding ShowHomeCommand}" />
           <Button Classes="nav" Content="Instances" Command="{Binding ShowInstancesCommand}" />
+          <Button Classes="nav" Content="Accounts" Command="{Binding ShowAccountsCommand}" />
           <Button Classes="nav" Content="Downloads" IsHitTestVisible="False" Opacity="0.35" />
-          <Button Classes="nav" Content="Settings" IsHitTestVisible="False" Opacity="0.35" />
+          <Button Classes="nav" Content="Settings" Command="{Binding ShowSettingsCommand}" />
         </StackPanel>
 
         <Border Grid.Row="3" Background="#111923" CornerRadius="10" Padding="12">
           <StackPanel>
-            <TextBlock Text="v0.2.0-dev" FontWeight="SemiBold" />
+            <TextBlock Text="v0.3.0-dev" FontWeight="SemiBold" />
             <TextBlock Text="{Binding LauncherStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
           </StackPanel>
         </Border>
@@ -64,7 +65,7 @@
           <Grid ColumnDefinitions="*,Auto">
             <StackPanel>
               <TextBlock Text="Ready when you are." FontSize="32" FontWeight="SemiBold" />
-              <TextBlock Text="Pick an instance, keep the environment healthy, then play." Classes="muted" Margin="0,6,0,0" />
+              <TextBlock Text="Pick an instance and account, then let Nexo handle the environment." Classes="muted" Margin="0,6,0,0" />
             </StackPanel>
             <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshEnvironmentCommand}" Padding="16,10" VerticalAlignment="Center" />
           </Grid>
@@ -75,10 +76,11 @@
                 <TextBlock Text="CURRENT INSTANCE" Classes="muted" FontSize="11" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=No instance selected}" FontSize="25" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Create an instance to get started}" Classes="muted" />
+                <TextBlock Text="{Binding AccountSummary}" Classes="muted" Margin="0,4,0,0" />
               </StackPanel>
               <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
                 <Button Classes="primary" Content="Play" IsEnabled="False" MinWidth="150" />
-                <TextBlock Text="Microsoft sign-in required" Classes="muted" FontSize="11" HorizontalAlignment="Center" />
+                <TextBlock Text="Launch pipeline in development" Classes="muted" FontSize="11" HorizontalAlignment="Center" />
               </StackPanel>
             </Grid>
           </Border>
@@ -88,7 +90,7 @@
               <Grid ColumnDefinitions="*,Auto">
                 <StackPanel>
                   <TextBlock Text="Minecraft catalog" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="Official version metadata" Classes="muted" Margin="0,4,0,0" />
+                  <TextBlock Text="Version metadata and downloads" Classes="muted" Margin="0,4,0,0" />
                   <TextBlock Text="{Binding CatalogStatus}" Classes="muted" FontSize="11" Margin="0,8,0,0" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" HorizontalAlignment="Right">
@@ -106,6 +108,29 @@
                 <TextBlock Text="{Binding JavaSummary}" Margin="0,9,0,0" />
                 <TextBlock Text="{Binding JavaDetail}" Classes="muted" TextWrapping="Wrap" FontSize="12" Margin="0,5,0,0" />
               </StackPanel>
+            </Border>
+          </Grid>
+
+          <Grid ColumnDefinitions="*,*" ColumnSpacing="18">
+            <Border Classes="card">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel>
+                  <TextBlock Text="Accounts" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding AccountSummary}" Margin="0,6,0,0" />
+                  <TextBlock Text="Offline profiles are for local/offline-mode play." Classes="muted" FontSize="11" Margin="0,4,0,0" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Manage" Command="{Binding ShowAccountsCommand}" Padding="14,9" VerticalAlignment="Center" />
+              </Grid>
+            </Border>
+            <Border Grid.Column="1" Classes="card">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel>
+                  <TextBlock Text="Download source" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding SelectedDownloadSource}" Margin="0,6,0,0" />
+                  <TextBlock Text="{Binding DownloadSourceStatus}" Classes="muted" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="Settings" Command="{Binding ShowSettingsCommand}" Padding="14,9" VerticalAlignment="Center" />
+              </Grid>
             </Border>
           </Grid>
 
@@ -188,7 +213,7 @@
                   <ProgressBar Minimum="0" Maximum="100" Value="{Binding InstallProgressValue}" Height="7" />
                   <TextBlock Text="{Binding InstallProgressText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <Border Background="#0E141C" CornerRadius="9" Padding="12">
-                    <TextBlock Text="Preparing downloads the client, libraries, assets and native libraries into this instance. Play stays disabled until account authentication and the launch pipeline are implemented." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="The selected download source is used first. BMCLAPI automatically falls back to official URLs if a mirrored file is missing or unavailable." Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </Border>
                 </StackPanel>
               </Border>
@@ -196,6 +221,88 @@
           </ScrollViewer>
         </Grid>
       </Grid>
+
+      <Grid IsVisible="{Binding IsAccountsVisible}" Margin="30" RowDefinitions="Auto,*" RowSpacing="18">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="Accounts" FontSize="32" FontWeight="SemiBold" />
+            <TextBlock Text="Keep offline profiles separate from authenticated Microsoft accounts." Classes="muted" Margin="0,5,0,0" />
+          </StackPanel>
+          <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
+        </Grid>
+
+        <Grid Grid.Row="1" ColumnDefinitions="300,*" ColumnSpacing="18">
+          <Border Classes="card" Padding="14">
+            <Grid RowDefinitions="Auto,12,*,12,Auto">
+              <TextBlock Text="Profiles" FontSize="17" FontWeight="SemiBold" />
+              <ListBox Grid.Row="2" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount}" Background="Transparent" BorderThickness="0">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="7,6">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                      <TextBlock Text="{Binding TypeLabel}" Classes="muted" FontSize="11" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBlock Grid.Row="4" Text="Offline profiles cannot authenticate to online-mode servers." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+
+          <ScrollViewer Grid.Column="1">
+            <StackPanel Spacing="18">
+              <Border Classes="card">
+                <StackPanel Spacing="12">
+                  <TextBlock Text="Offline profile" FontSize="19" FontWeight="SemiBold" />
+                  <TextBlock Text="Useful for local worlds, development and offline-mode test servers. It does not replace Minecraft ownership or Microsoft authentication." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <TextBox Watermark="Minecraft name (3-16 characters)" Text="{Binding OfflineUserName}" />
+                    <Button Grid.Column="1" Classes="primary" Content="Add offline profile" Command="{Binding CreateOfflineAccountCommand}" />
+                  </Grid>
+                </StackPanel>
+              </Border>
+
+              <Border Classes="card">
+                <StackPanel Spacing="12">
+                  <TextBlock Text="Microsoft account" FontSize="19" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding MicrosoftAuthStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  <Button Content="Microsoft sign-in status" Command="{Binding ExplainMicrosoftSignInCommand}" HorizontalAlignment="Left" Padding="15,9" />
+                  <Border Background="#0E141C" CornerRadius="9" Padding="12">
+                    <TextBlock Text="Nexo will use its own Microsoft application registration and the official Microsoft → Xbox Live → XSTS → Minecraft Services flow. Third-party launcher client IDs will not be copied or spoofed." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                  </Border>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Grid>
+
+      <ScrollViewer IsVisible="{Binding IsSettingsVisible}">
+        <StackPanel Margin="34" Spacing="18" MaxWidth="900" HorizontalAlignment="Stretch">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <TextBlock Text="Settings" FontSize="32" FontWeight="SemiBold" />
+              <TextBlock Text="Prefer safe defaults; expose the knobs that actually matter." Classes="muted" Margin="0,5,0,0" />
+            </StackPanel>
+            <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
+          </Grid>
+
+          <Border Classes="card">
+            <StackPanel Spacing="12">
+              <TextBlock Text="Download source" FontSize="19" FontWeight="SemiBold" />
+              <TextBlock Text="Choose where Minecraft metadata, client files, libraries and assets are fetched first." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <Grid ColumnDefinitions="280,Auto" ColumnSpacing="10">
+                <ComboBox ItemsSource="{Binding DownloadSources}" SelectedItem="{Binding SelectedDownloadSource}" />
+                <Button Grid.Column="1" Classes="primary" Content="Save and refresh" Command="{Binding SaveDownloadSourceCommand}" />
+              </Grid>
+              <TextBlock Text="{Binding DownloadSourceStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <Border Background="#0E141C" CornerRadius="9" Padding="12">
+                <TextBlock Text="BMCLAPI mode uses the mirror for Mojang version metadata, client files, libraries and assets. Every rewritten request retains the official URL as fallback, and SHA-1 checks still apply." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              </Border>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
     </Grid>
   </Grid>
 </Window>
