@@ -13,6 +13,8 @@ internal static class Program
         {
             ("Vanilla body idle fallback", TestVanillaBodyIdleFallbackAsync),
             ("Vanilla user cancellation", TestVanillaUserCancellationDoesNotFallbackAsync),
+            ("Vanilla download telemetry", TestVanillaDownloadTelemetryAsync),
+            ("Installer-owned cancellation", TestInstallerOwnedCancellationAsync),
             ("Damaged managed Java cache", TestDamagedManagedRuntimeIsRejectedAsync),
             ("Managed Java body idle timeout", TestManagedJavaBodyIdleTimeoutAsync)
         };
@@ -48,6 +50,8 @@ internal static class Program
             using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
             var paths = new NexoPathService(temp);
             var service = new MinecraftVanillaInstallService(client, paths, sources, TimeSpan.FromMilliseconds(100));
+            var observed = new List<InstallProgress>();
+            service.ProgressChanged += value => observed.Add(value);
             var instance = new GameInstance("stall-test", "Stall fallback", "stall-test", "vanilla", DateTimeOffset.UtcNow);
             var version = new MinecraftVersionInfo("stall-test", "release", "https://piston-meta.mojang.com/v1/packages/test/stall-test.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
@@ -57,6 +61,7 @@ internal static class Program
             Equal(2, handler.Hosts.Count, "stalled mirror must fall back to official source");
             Equal("bmclapi2.bangbang93.com", handler.Hosts[0], "mirror should be attempted first");
             Equal("piston-meta.mojang.com", handler.Hosts[1], "official source should follow idle timeout");
+            Equal(true, observed.Any(value => value.IsFallback && value.Source == "Official"), "fallback transition should be visible to download telemetry");
             Equal(true, File.Exists(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json")), "fallback install should complete");
         }
         finally
@@ -87,6 +92,71 @@ internal static class Program
             catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
 
             Equal(1, handler.Hosts.Count, "explicit user cancellation must not try fallback");
+        }
+        finally
+        {
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestVanillaDownloadTelemetryAsync()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "nexo-download-telemetry", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var handler = new OfficialMetadataHandler();
+            using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var sources = new DownloadSourceService();
+            var service = new MinecraftVanillaInstallService(client, new NexoPathService(temp), sources);
+            var observed = new List<InstallProgress>();
+            var activity = new List<bool>();
+            service.ProgressChanged += value => observed.Add(value);
+            service.InstallActivityChanged += value => activity.Add(value);
+            var instance = new GameInstance("telemetry-test", "Telemetry", "telemetry-test", "vanilla", DateTimeOffset.UtcNow);
+            var version = new MinecraftVersionInfo("telemetry-test", "release", "https://piston-meta.mojang.com/v1/packages/test/telemetry-test.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
+
+            await service.InstallAsync(instance, version);
+
+            Equal(true, observed.Any(value => value.Source == "Official" && value.BytesDownloaded > 0), "telemetry should expose downloaded bytes and source");
+            Equal(true, observed.Any(value => value.TotalBytes is > 0), "telemetry should expose response content length when known");
+            Equal(true, observed.Any(value => value.BytesPerSecond > 0), "telemetry should expose transfer speed");
+            Equal(true, activity.SequenceEqual([true, false]), "install activity should publish start and stop exactly once");
+            Equal(false, service.IsInstalling, "completed install should not remain active");
+        }
+        finally
+        {
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestInstallerOwnedCancellationAsync()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "nexo-installer-cancel", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var handler = new AlwaysStalledHandler();
+            using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+            var sources = new DownloadSourceService();
+            var service = new MinecraftVanillaInstallService(client, new NexoPathService(temp), sources, TimeSpan.FromSeconds(10));
+            var instance = new GameInstance("owned-cancel", "Owned cancel", "owned-cancel", "vanilla", DateTimeOffset.UtcNow);
+            var version = new MinecraftVersionInfo("owned-cancel", "release", "https://piston-meta.mojang.com/v1/packages/test/owned-cancel.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
+
+            var install = service.InstallAsync(instance, version);
+            using var fixtureDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (handler.RequestCount == 0 && !fixtureDeadline.IsCancellationRequested)
+                await Task.Delay(10, fixtureDeadline.Token);
+
+            Equal(true, service.IsInstalling, "installer should report active while response body is stalled");
+            Equal(true, service.CancelCurrentInstall(), "download manager cancellation should cancel the active install");
+            try
+            {
+                await install;
+                throw new InvalidOperationException("Expected installer-owned cancellation to propagate.");
+            }
+            catch (OperationCanceledException) { }
+
+            Equal(false, service.IsInstalling, "cancelled install should clear active state");
+            Equal(false, service.CancelCurrentInstall(), "cancelling again after completion should be a no-op");
         }
         finally
         {
@@ -171,6 +241,29 @@ internal static class Program
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"id\":\"test\",\"type\":\"release\",\"libraries\":[]}", Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private sealed class OfficialMetadataHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"telemetry-test\",\"type\":\"release\",\"libraries\":[]}", Encoding.UTF8, "application/json")
+            });
+    }
+
+    private sealed class AlwaysStalledHandler : HttpMessageHandler
+    {
+        public int RequestCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new NeverProgressStream())
             });
         }
     }
