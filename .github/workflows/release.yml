@@ -67,24 +67,15 @@ jobs:
           BASE_VERSION="${VERSION%%-*}"
           ITERATION="${VERSION#*-}"
           if [ "$ITERATION" = "$VERSION" ]; then ITERATION="1"; fi
-
-          mkdir -p package-root/usr/lib/un-nexo
-          mkdir -p package-root/usr/bin
-          mkdir -p package-root/usr/share/applications
-          mkdir -p release
-
-          # Avalonia/Skia uses native sidecar libraries on Linux. Package the
-          # complete publish output rather than only the managed apphost.
+          mkdir -p package-root/usr/lib/un-nexo package-root/usr/bin package-root/usr/share/applications release
           cp -a publish/linux-x64/. package-root/usr/lib/un-nexo/
           find package-root/usr/lib/un-nexo -name '*.pdb' -delete
           chmod 0755 package-root/usr/lib/un-nexo/UN_Nexo
-
           cat > package-root/usr/bin/un-nexo <<'EOF'
           #!/bin/sh
           exec /usr/lib/un-nexo/UN_Nexo "$@"
           EOF
           chmod 0755 package-root/usr/bin/un-nexo
-
           cat > package-root/usr/share/applications/un-nexo.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -96,30 +87,14 @@ jobs:
           StartupNotify=true
           StartupWMClass=UN_Nexo
           EOF
-
-          fpm -s dir -t deb \
-            -n un-nexo \
-            -v "$BASE_VERSION" \
-            --iteration "$ITERATION" \
-            -a amd64 \
+          fpm -s dir -t deb -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a amd64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
-            --url "https://github.com/yannickfan67-ai/UN_Nexo" \
-            --maintainer "UN_Nexo project" \
-            -C package-root \
-            -p "release/UN_Nexo-${VERSION}-linux-x64.deb" \
-            .
-
-          fpm -s dir -t rpm \
-            -n un-nexo \
-            -v "$BASE_VERSION" \
-            --iteration "$ITERATION" \
-            -a x86_64 \
+            --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
+            -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.deb" .
+          fpm -s dir -t rpm -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a x86_64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
-            --url "https://github.com/yannickfan67-ai/UN_Nexo" \
-            --maintainer "UN_Nexo project" \
-            -C package-root \
-            -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" \
-            .
+            --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
+            -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" .
       - name: Smoke test packaged DEB UI
         shell: bash
         run: |
@@ -128,17 +103,11 @@ jobs:
           rm -rf smoke-root smoke-data
           mkdir -p smoke-root smoke-data
           dpkg-deb -x "release/UN_Nexo-${VERSION}-linux-x64.deb" smoke-root
-
           set +e
-          timeout 8s xvfb-run -a env XDG_DATA_HOME="$PWD/smoke-data" \
-            "$PWD/smoke-root/usr/lib/un-nexo/UN_Nexo" >package-smoke.log 2>&1
+          timeout 8s xvfb-run -a env XDG_DATA_HOME="$PWD/smoke-data" "$PWD/smoke-root/usr/lib/un-nexo/UN_Nexo" >package-smoke.log 2>&1
           code=$?
           set -e
-
-          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
-            cat package-smoke.log
-            exit "$code"
-          fi
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then cat package-smoke.log; exit "$code"; fi
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
@@ -164,40 +133,31 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '\r\n' < VERSION)"
           TAG="v${VERSION}"
-
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          Packaged development release of UN_Nexo.
+          ### New in this build
+          - Accounts page with persistent offline profiles and deterministic Minecraft offline UUIDs
+          - Download source setting: Official or BMCLAPI
+          - BMCLAPI acceleration for version metadata, client files, libraries and assets
+          - Automatic fallback to official Mojang/Minecraft URLs when a mirror request fails
+          - SHA-1 verification remains enabled regardless of source
+          - Linux DEB/RPM packaging now includes Avalonia native SkiaSharp/HarfBuzz libraries
+          - Packaged DEB is actually launched under Xvfb before the release is published
 
-          ### Included
-          - Windows x64 self-contained executable
-          - Debian/Ubuntu/Linux Mint x64 package (.deb)
-          - RPM x64 package (.rpm)
-          - Instance creation and selection UI
-          - Minecraft release catalog
-          - Vanilla client/libraries/assets/native preparation pipeline
-          - Java discovery and cross-platform launcher data paths
-
-          ### Hotfixes
-          - Linux packages now include the native SkiaSharp/HarfBuzz libraries required by Avalonia
-          - Release CI now launches the extracted DEB under Xvfb before publishing it
+          ### Microsoft account status
+          The Microsoft/Xbox/XSTS authentication path is being prepared, but Minecraft Services requires third-party application registration approval/allowlisting. UN_Nexo will only ship Microsoft sign-in with its own approved client ID; it will not reuse or spoof another launcher's ID.
 
           ### Current limitations
-          - Microsoft/Xbox/Minecraft account authentication is still under development
-          - Play remains intentionally disabled until the final launch/auth pipeline is ready
+          - Play/launch pipeline is still under development
+          - Microsoft account sign-in is not enabled in this build yet
           - Fabric, Forge and NeoForge installers are not included yet
 
-          This is a pre-release intended for launcher and packaging testing.
+          Offline profiles are intended for local worlds, development and offline-mode servers; they are not a replacement for Minecraft ownership or authenticated online play.
           EOF
-
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
             gh release edit "$TAG" --title "UN_Nexo ${TAG}" --notes-file RELEASE_NOTES.md --prerelease
           else
-            gh release create "$TAG" release-assets/* \
-              --target "$GITHUB_SHA" \
-              --title "UN_Nexo ${TAG}" \
-              --notes-file RELEASE_NOTES.md \
-              --prerelease
+            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "UN_Nexo ${TAG}" --notes-file RELEASE_NOTES.md --prerelease
           fi
