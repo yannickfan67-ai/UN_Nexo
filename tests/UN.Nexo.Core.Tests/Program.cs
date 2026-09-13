@@ -82,33 +82,36 @@ internal static class Program
             await File.WriteAllTextAsync(Path.Combine(assetsRoot, "indexes", assetId + ".json"),
                 modern ? "{\"objects\":{}}" : "{\"virtual\":true,\"objects\":{}}");
 
-            var metadata = modern
-                ? $$"""
-                {
-                  "id":"{{version}}",
-                  "type":"release",
-                  "javaVersion":{"majorVersion":21},
-                  "downloads":{"client":{}},
-                  "assetIndex":{"id":"{{assetId}}"},
-                  "libraries":[],
-                  "mainClass":"net.minecraft.client.main.Main",
-                  "arguments":{
-                    "jvm":["-Djava.library.path=${natives_directory}","-cp","${classpath}","-Dnexo.launcher=${launcher_version}"],
-                    "game":["--username","${auth_player_name}","--version","${version_name}","--gameDir","${game_directory}","--assetsDir","${assets_root}","--assetIndex","${assets_index_name}","--uuid","${auth_uuid}","--accessToken","${auth_access_token}","--userType","${user_type}","--versionType","${version_type}"]
+            var metadataTemplate = modern
+                ? """
+                  {
+                    "id":"__VERSION__",
+                    "type":"release",
+                    "javaVersion":{"majorVersion":21},
+                    "downloads":{"client":{}},
+                    "assetIndex":{"id":"__ASSET_ID__"},
+                    "libraries":[],
+                    "mainClass":"net.minecraft.client.main.Main",
+                    "arguments":{
+                      "jvm":["-Djava.library.path=${natives_directory}","-cp","${classpath}","-Dnexo.launcher=${launcher_version}"],
+                      "game":["--username","${auth_player_name}","--version","${version_name}","--gameDir","${game_directory}","--assetsDir","${assets_root}","--assetIndex","${assets_index_name}","--uuid","${auth_uuid}","--accessToken","${auth_access_token}","--userType","${user_type}","--versionType","${version_type}"]
+                    }
                   }
-                }
-                """
-                : $$"""
-                {
-                  "id":"{{version}}",
-                  "type":"release",
-                  "downloads":{"client":{}},
-                  "assetIndex":{"id":"{{assetId}}"},
-                  "libraries":[],
-                  "mainClass":"net.minecraft.client.main.Main",
-                  "minecraftArguments":"--username ${auth_player_name} --version ${version_name} --gameDir \"${game_directory}\" --assetsDir ${game_assets} --assetIndex ${assets_index_name} --uuid ${auth_uuid} --accessToken ${auth_access_token} --userProperties ${user_properties} --userType ${user_type}"
-                }
-                """;
+                  """
+                : """
+                  {
+                    "id":"__VERSION__",
+                    "type":"release",
+                    "downloads":{"client":{}},
+                    "assetIndex":{"id":"__ASSET_ID__"},
+                    "libraries":[],
+                    "mainClass":"net.minecraft.client.main.Main",
+                    "minecraftArguments":"--username ${auth_player_name} --version ${version_name} --gameDir \"${game_directory}\" --assetsDir ${game_assets} --assetIndex ${assets_index_name} --uuid ${auth_uuid} --accessToken ${auth_access_token} --userProperties ${user_properties} --userType ${user_type}"
+                  }
+                  """;
+            var metadata = metadataTemplate
+                .Replace("__VERSION__", version, StringComparison.Ordinal)
+                .Replace("__ASSET_ID__", assetId, StringComparison.Ordinal);
             await File.WriteAllTextAsync(Path.Combine(versionRoot, version + ".json"), metadata);
 
             var java8 = Path.Combine(temp, "java8");
