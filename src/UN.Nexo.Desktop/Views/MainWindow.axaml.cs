@@ -13,6 +13,7 @@ public sealed partial class MainWindow : Window
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
+    private InstanceRepairWindow? _repairWindow;
 
     public MainWindow()
     {
@@ -98,6 +99,17 @@ public sealed partial class MainWindow : Window
                 .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Downloads")).index;
             nav.Children.Insert(downloadsIndex > 0 ? downloadsIndex : Math.Min(4, nav.Children.Count), runtime);
         }
+
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Repair")))
+        {
+            var repair = new Button { Content = "Repair" };
+            repair.Classes.Add("nav");
+            repair.Click += (_, _) => OpenRepair();
+            var settingsIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Settings")).index;
+            nav.Children.Insert(settingsIndex > 0 ? settingsIndex : nav.Children.Count, repair);
+        }
     }
 
     private void AddSessionOverlay()
@@ -136,6 +148,19 @@ public sealed partial class MainWindow : Window
         _runtimeSettingsWindow = new RuntimeSettingsWindow(_viewModel, _paths);
         _runtimeSettingsWindow.Closed += (_, _) => _runtimeSettingsWindow = null;
         _runtimeSettingsWindow.Show(this);
+    }
+
+    private void OpenRepair()
+    {
+        if (_repairWindow is not null)
+        {
+            _repairWindow.Activate();
+            return;
+        }
+
+        _repairWindow = new InstanceRepairWindow(_viewModel, _paths);
+        _repairWindow.Closed += (_, _) => _repairWindow = null;
+        _repairWindow.Show(this);
     }
 
     private async void OnOpened(object? sender, EventArgs e)
