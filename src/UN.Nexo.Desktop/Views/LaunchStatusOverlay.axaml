@@ -2,18 +2,18 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="UN.Nexo.Desktop.Views.LaunchStatusOverlay"
              IsVisible="{Binding IsGameRunning}"
-             IsHitTestVisible="False">
+             IsHitTestVisible="True">
   <Grid>
     <Border HorizontalAlignment="Right"
             VerticalAlignment="Top"
             Margin="0,18,18,0"
-            Width="370"
+            Width="430"
             Background="#F0121923"
             BorderBrush="#344357"
             BorderThickness="1"
             CornerRadius="13"
             Padding="15,12">
-      <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="7">
+      <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="7">
         <StackPanel Orientation="Horizontal" Spacing="8">
           <Border Width="8" Height="8" CornerRadius="4" Background="#6D5DFB" VerticalAlignment="Center" />
           <TextBlock Text="GAME SESSION"
@@ -25,7 +25,29 @@
                    Text="{Binding GameStatus}"
                    FontWeight="SemiBold"
                    TextWrapping="Wrap" />
-        <ProgressBar Grid.Row="2" IsIndeterminate="True" Height="2" />
+        <ProgressBar Grid.Row="2"
+                     IsVisible="{Binding IsGameStarting}"
+                     IsIndeterminate="True"
+                     Height="2" />
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+          <StackPanel>
+            <TextBlock Text="DEBUG"
+                       Foreground="#7F8A99"
+                       FontSize="9"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="{Binding LaunchDebugSummary}"
+                       Foreground="#9AA6B6"
+                       FontSize="10"
+                       TextWrapping="Wrap"
+                       MaxLines="2" />
+          </StackPanel>
+          <Button Grid.Column="1"
+                  Content="Open logs"
+                  Command="{Binding OpenDebugFolderCommand}"
+                  Padding="9,5"
+                  FontSize="10"
+                  VerticalAlignment="Center" />
+        </Grid>
       </Grid>
     </Border>
   </Grid>
