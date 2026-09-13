@@ -16,6 +16,7 @@ public sealed class JavaRuntimeProvisionService
     private readonly NexoPathService _paths;
     private readonly TimeSpan _transferIdleTimeout;
     private readonly Func<string, int, CancellationToken, Task<bool>> _runtimeValidator;
+    private readonly HashSet<string> _trustedThisSession = new(StringComparer.OrdinalIgnoreCase);
 
     public JavaRuntimeProvisionService(NexoPathService paths)
         : this(SharedClient, paths)
@@ -102,12 +103,6 @@ public sealed class JavaRuntimeProvisionService
                 if (File.Exists(spawnHelper))
                     EnsureUnixExecutable(spawnHelper);
 
-                if (!await _runtimeValidator(finalJavaPath, major, cancellationToken))
-                {
-                    try { Directory.Delete(targetRoot, recursive: true); } catch { }
-                    throw new InvalidDataException($"Downloaded Java {major} runtime failed its startup probe.");
-                }
-
                 var manifest = new ManagedRuntimeManifest(
                     major,
                     asset.Version,
@@ -120,6 +115,7 @@ public sealed class JavaRuntimeProvisionService
                     JsonSerializer.Serialize(manifest, JsonOptions),
                     cancellationToken);
 
+                _trustedThisSession.Add(targetRoot);
                 progress?.Report($"Java {major} runtime ready.");
                 return new JavaInstallation(
                     finalJavaPath,
@@ -183,9 +179,11 @@ public sealed class JavaRuntimeProvisionService
             return null;
 
         EnsureUnixExecutable(javaPath);
-        if (!await _runtimeValidator(javaPath, expectedMajor, cancellationToken))
+        if (!_trustedThisSession.Contains(targetRoot)
+            && !await _runtimeValidator(javaPath, expectedMajor, cancellationToken))
             return null;
 
+        _trustedThisSession.Add(targetRoot);
         return new JavaInstallation(
             javaPath,
             targetRoot,
