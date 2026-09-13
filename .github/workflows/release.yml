@@ -102,7 +102,7 @@ jobs:
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
             -d 'libc6 (>= 2.35)' -d libgcc-s1 -d libstdc++6 \
-            -d libfontconfig1 -d libfreetype6 -d fonts-noto-cjk \
+            -d libfontconfig1 -d fontconfig -d libfreetype6 -d fonts-noto-cjk \
             -d libx11-6 -d libx11-xcb1 -d libxcb1 -d libxext6 \
             -d libxi6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.deb" .
