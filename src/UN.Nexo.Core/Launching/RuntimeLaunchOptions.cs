@@ -113,7 +113,8 @@ public static class RuntimeLaunchOptions
 
     private static void ValidateJvmArgument(string value)
     {
-        if (!value.StartsWith('-', StringComparison.Ordinal) && !value.StartsWith('@'))
+        if (!value.StartsWith("-", StringComparison.Ordinal)
+            && !value.StartsWith("@", StringComparison.Ordinal))
             throw new ArgumentException($"Extra JVM argument '{value}' must be a JVM option.");
         if (value.StartsWith("-Xmx", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Use Nexo's memory setting instead of adding -Xmx manually.");
