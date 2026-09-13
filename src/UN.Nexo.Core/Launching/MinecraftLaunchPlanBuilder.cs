@@ -104,13 +104,21 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         RequireFile(indexPath, assetIndex);
         using var indexDocument = await ReadJsonAsync(indexPath, cancellationToken);
         var index = indexDocument.RootElement;
-        var virtualAssets = index.TryGetProperty("virtual", out var virtualElement)
-            && virtualElement.GetBoolean();
+        var legacyAssets = string.Equals(assetId, "legacy", StringComparison.OrdinalIgnoreCase)
+            || (root.TryGetProperty("assets", out var assetsElement)
+                && string.Equals(assetsElement.GetString(), "legacy", StringComparison.OrdinalIgnoreCase));
+        var virtualAssets = legacyAssets
+            || (index.TryGetProperty("virtual", out var virtualElement) && virtualElement.GetBoolean());
         var mapToResources = index.TryGetProperty("map_to_resources", out var resourcesElement)
             && resourcesElement.GetBoolean();
         var virtualRoot = virtualAssets
             ? Within(Path.Combine(assetsRoot, "virtual"), assetId) : assetsRoot;
         var resourceRoot = Within(gameRoot, "resources");
+        var gameAssetsRoot = mapToResources
+            ? resourceRoot
+            : virtualAssets
+                ? virtualRoot
+                : assetsRoot;
 
         if (index.TryGetProperty("objects", out var objects))
         {
@@ -151,7 +159,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             ["game_directory"] = gameRoot,
             ["assets_root"] = assetsRoot,
             ["assets_index_name"] = assetId,
-            ["game_assets"] = virtualRoot,
+            ["game_assets"] = gameAssetsRoot,
             ["natives_directory"] = nativesRoot,
             ["library_directory"] = librariesRoot,
             ["classpath"] = string.Join(Path.PathSeparator, classpath.Distinct(StringComparer.Ordinal)),

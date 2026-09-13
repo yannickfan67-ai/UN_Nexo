@@ -184,11 +184,37 @@ public sealed class JavaRuntimeProvisionService
             throw new InvalidOperationException($"No supported Java {major} runtime was returned by Adoptium.");
 
         var release = document.RootElement[0];
-        var binary = release.GetProperty("binary");
-        var package = binary.GetProperty("package");
-        var link = package.GetProperty("link").GetString();
-        var checksum = package.GetProperty("checksum").GetString();
-        var version = release.GetProperty("version_data").GetProperty("semver").GetString();
+        JsonElement binary = default;
+        if (release.TryGetProperty("binary", out var legacyBinary)
+            && legacyBinary.ValueKind == JsonValueKind.Object)
+        {
+            binary = legacyBinary;
+        }
+        else if (release.TryGetProperty("binaries", out var binaries)
+                 && binaries.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var candidate in binaries.EnumerateArray())
+            {
+                if (candidate.ValueKind == JsonValueKind.Object
+                    && candidate.TryGetProperty("package", out _))
+                {
+                    binary = candidate;
+                    break;
+                }
+            }
+        }
+
+        if (binary.ValueKind != JsonValueKind.Object
+            || !binary.TryGetProperty("package", out var package)
+            || package.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Adoptium returned no downloadable Java package.");
+
+        var link = package.TryGetProperty("link", out var linkElement) ? linkElement.GetString() : null;
+        var checksum = package.TryGetProperty("checksum", out var checksumElement) ? checksumElement.GetString() : null;
+        var version = release.TryGetProperty("version_data", out var versionData)
+                      && versionData.TryGetProperty("semver", out var semver)
+            ? semver.GetString()
+            : null;
         if (string.IsNullOrWhiteSpace(link)
             || !Uri.TryCreate(link, UriKind.Absolute, out var packageUri)
             || packageUri.Scheme != Uri.UriSchemeHttps)
