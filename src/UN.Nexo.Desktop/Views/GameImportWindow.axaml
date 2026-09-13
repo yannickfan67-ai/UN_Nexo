@@ -1,0 +1,97 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.GameImportWindow"
+        Title="Nexo Import Existing Game"
+        Width="920" Height="700"
+        MinWidth="780" MinHeight="600"
+        WindowStartupLocation="CenterOwner"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#8E9AAA" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="24" RowDefinitions="Auto,16,*,16,Auto">
+    <StackPanel>
+      <TextBlock Text="Import existing Minecraft" FontSize="30" FontWeight="SemiBold" />
+      <TextBlock Text="Scan first, preview exactly what Nexo found, then copy into an independent instance. The source directory is never modified." Classes="muted" Margin="0,5,0,0" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2">
+      <StackPanel Spacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Source directory" FontSize="19" FontWeight="SemiBold" />
+            <TextBlock Text="Choose .minecraft, or a game directory containing versions/. You can also paste a path directly." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+              <TextBox x:Name="SourcePathBox" Watermark="C:\Users\…\AppData\Roaming\.minecraft" />
+              <Button Grid.Column="1" Content="Browse…" Click="OnBrowseClicked" Padding="13,8" />
+              <Button Grid.Column="2" x:Name="ScanButton" Content="Scan" Click="OnScanClicked" Padding="13,8" />
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <Grid ColumnDefinitions="1.08*,*" ColumnSpacing="16">
+          <Border Classes="card">
+            <Grid RowDefinitions="Auto,10,*,10,Auto">
+              <StackPanel>
+                <TextBlock Text="Detected versions" FontSize="19" FontWeight="SemiBold" />
+                <TextBlock x:Name="ContentSummary" Text="Scan a directory to see versions and content." Classes="muted" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
+              </StackPanel>
+              <ListBox x:Name="VersionList" Grid.Row="2" Background="Transparent" BorderThickness="0" SelectionChanged="OnVersionSelectionChanged" MinHeight="240">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="6,6">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding SupportLabel}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBlock Grid.Row="4" x:Name="VersionDetail" Text="Nothing selected." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+
+          <Border Grid.Column="1" Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Import preview" FontSize="19" FontWeight="SemiBold" />
+              <TextBlock Text="New instance name" Classes="muted" FontSize="11" />
+              <TextBox x:Name="InstanceNameBox" Watermark="Imported Minecraft" />
+              <Border Background="#0E141C" CornerRadius="9" Padding="12">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="What is copied" FontWeight="SemiBold" />
+                  <TextBlock Text="Selected version + its Vanilla base, shared assets/libraries, worlds, mods, config, resource packs, shader packs, settings and other game data. Launcher account/credential files, logs and crash reports are excluded." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <TextBlock Text="Warnings" Classes="muted" FontSize="11" />
+              <TextBox x:Name="WarningsBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" Height="150" />
+              <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                <Button x:Name="ImportButton" Classes="primary" Content="Import as new instance" Click="OnImportClicked" IsEnabled="False" />
+                <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="OnCancelClicked" IsEnabled="False" />
+              </Grid>
+            </StackPanel>
+          </Border>
+        </Grid>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="4" Background="#101720" CornerRadius="10" Padding="12">
+      <TextBlock x:Name="OperationStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+    </Border>
+  </Grid>
+</Window>

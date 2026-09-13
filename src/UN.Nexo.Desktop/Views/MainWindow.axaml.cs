@@ -17,6 +17,7 @@ public sealed partial class MainWindow : Window
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
     private InstanceRepairWindow? _repairWindow;
     private InstanceBackupWindow? _backupWindow;
+    private GameImportWindow? _importWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
     public MainWindow()
@@ -112,6 +113,17 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(Math.Min(3, nav.Children.Count), servers);
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Import")))
+        {
+            var import = new Button { Content = "Import" };
+            import.Classes.Add("nav");
+            import.Click += (_, _) => OpenImport();
+            var instancesIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Instances")).index;
+            nav.Children.Insert(Math.Min(instancesIndex + 1, nav.Children.Count), import);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Runtime")))
         {
             var runtime = new Button { Content = "Runtime" };
@@ -179,6 +191,19 @@ public sealed partial class MainWindow : Window
         _serverHub = new ServerHubWindow(_viewModel);
         _serverHub.Closed += (_, _) => _serverHub = null;
         _serverHub.Show(this);
+    }
+
+    private void OpenImport()
+    {
+        if (_importWindow is not null)
+        {
+            _importWindow.Activate();
+            return;
+        }
+
+        _importWindow = new GameImportWindow(_viewModel, _paths);
+        _importWindow.Closed += (_, _) => _importWindow = null;
+        _importWindow.Show(this);
     }
 
     private void OpenRuntimeSettings()
