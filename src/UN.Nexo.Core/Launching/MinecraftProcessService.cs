@@ -143,10 +143,6 @@ public sealed class MinecraftProcessService
                 catch (System.ComponentModel.Win32Exception) when (process.HasExited) { }
             });
 
-            var startedMessage = $"Started game process {process.Id}";
-            Report(startedMessage);
-            await WriteLogAsync($"[launcher] {startedMessage} after {startTimer.ElapsedMilliseconds} ms");
-
             var lastOutputTimestamp = Stopwatch.GetTimestamp();
             var firstOutputSeen = 0;
             using var heartbeatCancellation = new CancellationTokenSource();
@@ -182,8 +178,6 @@ public sealed class MinecraftProcessService
                 }
             }
 
-            var heartbeatTask = HeartbeatAsync();
-
             async Task DrainAsync(StreamReader reader, string channel)
             {
                 while (await reader.ReadLineAsync() is { } line)
@@ -202,16 +196,60 @@ public sealed class MinecraftProcessService
                 }
             }
 
-            var stdout = DrainAsync(process.StandardOutput, "stdout");
-            var stderr = DrainAsync(process.StandardError, "stderr");
-            await process.WaitForExitAsync(CancellationToken.None);
-            await Task.WhenAll(stdout, stderr);
-            heartbeatCancellation.Cancel();
-            await heartbeatTask;
-            await WriteLogAsync($"[launcher] Exit code: {process.ExitCode} · lifetime {startTimer.Elapsed.TotalSeconds:0.000}s");
+            // A failed output consumer must stop Java immediately: otherwise its redirected
+            // pipe can fill while WaitForExitAsync waits forever for Java to finish.
+            void StopProcess()
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) when (process.HasExited) { }
+            }
 
-            cancellationToken.ThrowIfCancellationRequested();
-            return new MinecraftExitResult(process.ExitCode, logPath);
+            async Task SuperviseAsync(Task task)
+            {
+                try { await task; }
+                catch
+                {
+                    StopProcess();
+                    throw;
+                }
+            }
+
+            Task stdout = Task.CompletedTask;
+            Task stderr = Task.CompletedTask;
+            Task heartbeatTask = Task.CompletedTask;
+            try
+            {
+                var startedMessage = $"Started game process {process.Id}";
+                Report(startedMessage);
+                await WriteLogAsync($"[launcher] {startedMessage} after {startTimer.ElapsedMilliseconds} ms");
+
+                stdout = SuperviseAsync(DrainAsync(process.StandardOutput, "stdout"));
+                stderr = SuperviseAsync(DrainAsync(process.StandardError, "stderr"));
+                heartbeatTask = SuperviseAsync(HeartbeatAsync());
+                await process.WaitForExitAsync(CancellationToken.None);
+                await Task.WhenAll(stdout, stderr);
+                heartbeatCancellation.Cancel();
+                await heartbeatTask;
+                await WriteLogAsync($"[launcher] Exit code: {process.ExitCode} · lifetime {startTimer.Elapsed.TotalSeconds:0.000}s");
+
+                cancellationToken.ThrowIfCancellationRequested();
+                return new MinecraftExitResult(process.ExitCode, logPath);
+            }
+            finally
+            {
+                heartbeatCancellation.Cancel();
+                StopProcess();
+                await process.WaitForExitAsync(CancellationToken.None);
+                // Observe every worker before disposing the log, lock and process. Preserve
+                // the original failure already propagated by the try block.
+                try { await Task.WhenAll(stdout, stderr, heartbeatTask); }
+                catch { }
+            }
         }
         finally
         {
