@@ -38,6 +38,8 @@ jobs:
         run: dotnet run --project tests/UN.Nexo.ServerStatus.Tests/UN.Nexo.ServerStatus.Tests.csproj -c Release
       - name: Instance lifecycle regression checks
         run: dotnet run --project tests/UN.Nexo.InstanceLifecycle.Tests/UN.Nexo.InstanceLifecycle.Tests.csproj -c Release
+      - name: Game directory import regression checks
+        run: dotnet run --project tests/UN.Nexo.Import.Tests/UN.Nexo.Import.Tests.csproj -c Release
       - name: Stability regression checks
         run: dotnet run --project tests/UN.Nexo.Stability.Tests/UN.Nexo.Stability.Tests.csproj -c Release
       - name: Instance repair regression checks
