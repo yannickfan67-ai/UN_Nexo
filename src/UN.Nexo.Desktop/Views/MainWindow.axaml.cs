@@ -2,6 +2,7 @@ using System.Reflection;
 using Avalonia.Controls;
 using Avalonia.LogicalTree;
 using UN.Nexo.Core.Services;
+using UN.Nexo.Desktop.Diagnostics;
 using UN.Nexo.Desktop.ViewModels;
 
 namespace UN.Nexo.Desktop.Views;
@@ -19,26 +20,34 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        LauncherStartupTrace.Write("[startup] MainWindow.InitializeComponent begin");
         InitializeComponent();
+        LauncherStartupTrace.Write("[startup] MainWindow.InitializeComponent complete");
 
         _paths = new NexoPathService();
         var downloadSources = new DownloadSourceService();
-        var httpClient = new HttpClient
+        var downloadHttpClient = new HttpClient
         {
             Timeout = TimeSpan.FromMinutes(10)
+        };
+        var manifestHttpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(12)
         };
         var launcherVersion = typeof(MainWindow).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "dev";
         Title = $"UN_Nexo {launcherVersion}";
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
+        downloadHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
+        manifestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         ApplyRuntimeVersionLabel(launcherVersion);
 
-        _installer = new MinecraftVanillaInstallService(httpClient, _paths, downloadSources);
+        LauncherStartupTrace.Write("[startup] Creating launcher services");
+        _installer = new MinecraftVanillaInstallService(downloadHttpClient, _paths, downloadSources);
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(_paths),
             _paths,
-            new MinecraftVersionManifestService(httpClient, downloadSources),
+            new MinecraftVersionManifestService(manifestHttpClient, downloadSources),
             new InstanceStoreService(_paths),
             _installer,
             new AccountStoreService(_paths),
@@ -49,13 +58,22 @@ public sealed partial class MainWindow : Window
         AddUtilityNavigation();
         AddSessionOverlay();
         Opened += OnOpened;
+        LauncherStartupTrace.Write("[startup] MainWindow services and visual helpers ready");
     }
 
     public Task InitializeAsync()
-        => _initializationTask ??= _viewModel.InitializeAsync();
+    {
+        if (_initializationTask is null)
+        {
+            LauncherStartupTrace.Write("[startup] MainWindow.InitializeAsync task created");
+            _initializationTask = _viewModel.InitializeAsync();
+        }
+        return _initializationTask;
+    }
 
     public async Task RevealAsync()
     {
+        LauncherStartupTrace.Write("[startup] MainWindow reveal animation begin");
         const int frames = 9;
         for (var frame = 1; frame <= frames; frame++)
         {
@@ -63,6 +81,7 @@ public sealed partial class MainWindow : Window
             await Task.Delay(18);
         }
         Opacity = 1;
+        LauncherStartupTrace.Write("[startup] MainWindow reveal animation complete");
     }
 
     private void ApplyRuntimeVersionLabel(string launcherVersion)
@@ -195,6 +214,15 @@ public sealed partial class MainWindow : Window
     private async void OnOpened(object? sender, EventArgs e)
     {
         Opened -= OnOpened;
-        await InitializeAsync();
+        LauncherStartupTrace.Write("[startup] MainWindow Opened event");
+        try
+        {
+            await InitializeAsync();
+            LauncherStartupTrace.Write("[startup] MainWindow Opened initialization await completed");
+        }
+        catch (Exception ex)
+        {
+            LauncherStartupTrace.Failure("MainWindow Opened initialization", ex);
+        }
     }
 }
