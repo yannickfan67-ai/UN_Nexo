@@ -1,7 +1,6 @@
 using System.Reflection;
-using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Layout;
+using Avalonia.LogicalTree;
 using UN.Nexo.Core.Services;
 using UN.Nexo.Desktop.ViewModels;
 
@@ -28,6 +27,7 @@ public sealed partial class MainWindow : Window
             ?? "dev";
         Title = $"UN_Nexo {launcherVersion}";
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
+        ApplyRuntimeVersionLabel(launcherVersion);
 
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(),
@@ -40,7 +40,8 @@ public sealed partial class MainWindow : Window
             downloadSources);
 
         DataContext = _viewModel;
-        AddOverlays();
+        AddServerNavigation();
+        AddSessionOverlay();
         Opened += OnOpened;
     }
 
@@ -58,7 +59,32 @@ public sealed partial class MainWindow : Window
         Opacity = 1;
     }
 
-    private void AddOverlays()
+    private void ApplyRuntimeVersionLabel(string launcherVersion)
+    {
+        var label = this.GetLogicalDescendants()
+            .OfType<TextBlock>()
+            .FirstOrDefault(item => string.Equals(item.Text, "v0.4.0-dev", StringComparison.Ordinal));
+        if (label is not null)
+            label.Text = $"v{launcherVersion}";
+    }
+
+    private void AddServerNavigation()
+    {
+        var nav = this.GetLogicalDescendants()
+            .OfType<StackPanel>()
+            .FirstOrDefault(panel =>
+                panel.Children.OfType<Button>().Any(button => Equals(button.Content, "Home"))
+                && panel.Children.OfType<Button>().Any(button => Equals(button.Content, "Instances")));
+        if (nav is null || nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Servers")))
+            return;
+
+        var servers = new Button { Content = "Servers" };
+        servers.Classes.Add("nav");
+        servers.Click += (_, _) => OpenServerHub();
+        nav.Children.Insert(Math.Min(3, nav.Children.Count), servers);
+    }
+
+    private void AddSessionOverlay()
     {
         if (Content is not Control shell)
             return;
@@ -66,19 +92,6 @@ public sealed partial class MainWindow : Window
         Content = null;
         var layers = new Grid();
         layers.Children.Add(shell);
-
-        var servers = new Button
-        {
-            Content = "Servers",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Margin = new Thickness(0, 0, 22, 22),
-            Padding = new Thickness(16, 10),
-            MinWidth = 100
-        };
-        servers.Classes.Add("primary");
-        servers.Click += (_, _) => OpenServerHub();
-        layers.Children.Add(servers);
         layers.Children.Add(new LaunchStatusOverlay());
         Content = layers;
     }
