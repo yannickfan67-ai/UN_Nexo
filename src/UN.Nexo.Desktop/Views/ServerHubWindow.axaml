@@ -1,0 +1,93 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.ServerHubWindow"
+        Title="Nexo Server Hub"
+        Width="780" Height="560"
+        MinWidth="680" MinHeight="500"
+        WindowStartupLocation="CenterOwner"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#8E9AAA" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="24" RowDefinitions="Auto,16,*,16,Auto">
+    <Grid ColumnDefinitions="*,Auto">
+      <StackPanel>
+        <TextBlock Text="Server Hub" FontSize="30" FontWeight="SemiBold" />
+        <TextBlock Text="Save servers and launch directly into multiplayer." Classes="muted" Margin="0,5,0,0" />
+      </StackPanel>
+      <Border Grid.Column="1" Background="#151D2A" CornerRadius="10" Padding="12,8" VerticalAlignment="Center">
+        <TextBlock x:Name="SelectionSummary" Text="Checking current instance…" Classes="muted" FontSize="11" />
+      </Border>
+    </Grid>
+
+    <Grid Grid.Row="2" ColumnDefinitions="280,*" ColumnSpacing="16">
+      <Border Classes="card">
+        <Grid RowDefinitions="Auto,10,*,10,Auto">
+          <TextBlock Text="Saved servers" FontSize="17" FontWeight="SemiBold" />
+          <ListBox x:Name="ServerList" Grid.Row="2" Background="Transparent" BorderThickness="0" SelectionChanged="OnServerSelectionChanged">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="6,5">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Text="{Binding Address}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <Button x:Name="RemoveButton" Grid.Row="4" Content="Remove selected" Click="OnRemoveClicked" IsEnabled="False" />
+        </Grid>
+      </Border>
+
+      <StackPanel Grid.Column="1" Spacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="10">
+            <TextBlock Text="Add or connect" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="Name" Classes="muted" FontSize="11" />
+            <TextBox x:Name="ServerNameBox" />
+            <TextBlock Text="Address" Classes="muted" FontSize="11" />
+            <TextBox x:Name="ServerAddressBox" Text="localhost:25565" />
+            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10">
+              <Button Content="Save server" Click="OnSaveClicked" Padding="14,9" />
+              <Button Grid.Column="1" Classes="primary" Content="Launch & connect" Click="OnLaunchClicked" />
+            </Grid>
+            <TextBlock x:Name="ServerStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Background="#101720">
+          <StackPanel Spacing="7">
+            <TextBlock Text="Compatibility" FontWeight="SemiBold" />
+            <TextBlock Text="Minecraft 1.20+ uses Quick Play when the installed version metadata advertises it. Older versions use the legacy server/port launch arguments." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <TextBlock Text="Local profiles can only join servers that accept that login mode. Authenticated public servers will require Microsoft sign-in after Nexo receives its own approved application registration." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Background="#101720">
+          <StackPanel Spacing="7">
+            <TextBlock Text="Friend-to-friend rooms" FontWeight="SemiBold" />
+            <TextBlock Text="The next networking step is Terracotta / EasyTier interoperability instead of inventing another incompatible P2P protocol. Server Hub is the foundation for that room-code flow." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+
+    <TextBlock Grid.Row="4" Text="Server favorites are stored locally in your Nexo data directory." Classes="muted" FontSize="11" />
+  </Grid>
+</Window>
