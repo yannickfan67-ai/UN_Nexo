@@ -65,7 +65,7 @@
             <TextBox x:Name="ServerAddressBox" Text="localhost:25565" />
             <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10">
               <Button Content="Save server" Click="OnSaveClicked" Padding="14,9" />
-              <Button Grid.Column="1" Classes="primary" Content="Launch & connect" Click="OnLaunchClicked" />
+              <Button Grid.Column="1" Classes="primary" Content="Launch &amp; connect" Click="OnLaunchClicked" />
             </Grid>
             <TextBlock x:Name="ServerStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
           </StackPanel>
