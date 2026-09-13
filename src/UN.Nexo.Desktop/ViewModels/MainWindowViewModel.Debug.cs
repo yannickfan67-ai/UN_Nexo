@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UN.Nexo.Core.Launching;
+using UN.Nexo.Core.Models;
+using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Desktop.ViewModels;
 
@@ -13,6 +15,12 @@ public partial class MainWindowViewModel
     [ObservableProperty] private bool launchDebugEnabled = true;
     [ObservableProperty] private string launchDebugSummary = "Debug trace enabled · launch phases and Java process health will be recorded.";
     [ObservableProperty] private string lastLaunchTracePath = string.Empty;
+    [ObservableProperty] private bool hasLaunchDiagnostic;
+    [ObservableProperty] private string launchDiagnosticTitle = string.Empty;
+    [ObservableProperty] private string launchDiagnosticSummary = string.Empty;
+    [ObservableProperty] private string launchDiagnosticEvidence = string.Empty;
+    [ObservableProperty] private string launchDiagnosticSuggestion = string.Empty;
+    [ObservableProperty] private string lastMinecraftLogPath = string.Empty;
 
     public string LauncherVersion
     {
@@ -30,6 +38,7 @@ public partial class MainWindowViewModel
         }
     }
 
+    private readonly MinecraftCrashDiagnosisService _crashDiagnosis = new();
     private StreamWriter? _launchTraceWriter;
     private string? _lastTracedGameLine;
     private bool _debugProcessStarted;
@@ -83,6 +92,7 @@ public partial class MainWindowViewModel
             IsGameStarting = false;
             LaunchDebugSummary = value;
             CloseDebugTrace();
+            ApplyTerminalDiagnosis(value);
             return;
         }
 
@@ -115,7 +125,8 @@ public partial class MainWindowViewModel
         }
         else if (line.StartsWith("Log: ", StringComparison.Ordinal))
         {
-            LaunchDebugSummary = $"Minecraft process log · {line[5..]}";
+            LastMinecraftLogPath = line[5..].Trim();
+            LaunchDebugSummary = $"Minecraft process log · {LastMinecraftLogPath}";
         }
     }
 
@@ -124,7 +135,11 @@ public partial class MainWindowViewModel
     {
         try
         {
-            var directory = GetDebugDirectory();
+            var directory = !string.IsNullOrWhiteSpace(LastMinecraftLogPath)
+                ? Path.GetDirectoryName(LastMinecraftLogPath)
+                : null;
+            if (string.IsNullOrWhiteSpace(directory))
+                directory = GetDebugDirectory();
             Directory.CreateDirectory(directory);
             var info = new ProcessStartInfo
             {
@@ -141,9 +156,72 @@ public partial class MainWindowViewModel
         }
     }
 
+    [RelayCommand]
+    private void DismissLaunchDiagnostic() => HasLaunchDiagnostic = false;
+
+    private void ApplyTerminalDiagnosis(string terminalStatus)
+    {
+        CrashDiagnosis diagnosis;
+        var retainedOutput = string.Join(Environment.NewLine, _gameLogLines);
+
+        if (terminalStatus.StartsWith("Stopped ", StringComparison.OrdinalIgnoreCase))
+        {
+            diagnosis = _crashDiagnosis.Analyze(null, retainedOutput, wasStopped: true);
+        }
+        else if (terminalStatus.StartsWith("Launch failed:", StringComparison.OrdinalIgnoreCase))
+        {
+            var launchError = terminalStatus["Launch failed:".Length..].Trim();
+            diagnosis = _crashDiagnosis.Analyze(null, retainedOutput, launchError);
+        }
+        else if (terminalStatus.Contains("exited normally", StringComparison.OrdinalIgnoreCase))
+        {
+            diagnosis = _crashDiagnosis.Analyze(0, retainedOutput);
+        }
+        else if (TryParseExitCodeFromStatus(terminalStatus, out var exitCode))
+        {
+            diagnosis = _crashDiagnosis.Analyze(exitCode, retainedOutput);
+        }
+        else
+        {
+            diagnosis = _crashDiagnosis.Analyze(null, retainedOutput, terminalStatus);
+        }
+
+        LaunchDiagnosticTitle = diagnosis.Title;
+        LaunchDiagnosticSummary = diagnosis.Summary;
+        LaunchDiagnosticEvidence = diagnosis.Evidence;
+        LaunchDiagnosticSuggestion = diagnosis.SuggestedAction;
+        HasLaunchDiagnostic = true;
+        LaunchDebugSummary = diagnosis.Title;
+    }
+
+    private void ClearLaunchDiagnostic()
+    {
+        HasLaunchDiagnostic = false;
+        LaunchDiagnosticTitle = string.Empty;
+        LaunchDiagnosticSummary = string.Empty;
+        LaunchDiagnosticEvidence = string.Empty;
+        LaunchDiagnosticSuggestion = string.Empty;
+        LastMinecraftLogPath = string.Empty;
+    }
+
+    private static bool TryParseExitCodeFromStatus(string status, out int exitCode)
+    {
+        const string marker = "exited with code ";
+        var index = status.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            exitCode = 0;
+            return false;
+        }
+
+        var text = status[(index + marker.Length)..].Trim().TrimEnd('.');
+        return int.TryParse(text, out exitCode);
+    }
+
     private void StartDebugTrace()
     {
         CloseDebugTrace();
+        ClearLaunchDiagnostic();
         var directory = GetDebugDirectory();
         Directory.CreateDirectory(directory);
         var instanceId = SelectedInstance?.Id ?? "no-instance";
