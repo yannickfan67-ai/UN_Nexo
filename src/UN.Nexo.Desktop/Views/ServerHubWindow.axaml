@@ -2,8 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="UN.Nexo.Desktop.Views.ServerHubWindow"
         Title="Nexo Server Hub"
-        Width="780" Height="560"
-        MinWidth="680" MinHeight="500"
+        Width="940" Height="700"
+        MinWidth="780" MinHeight="580"
         WindowStartupLocation="CenterOwner"
         Background="#0B0F14">
   <Window.Styles>
@@ -30,7 +30,7 @@
     <Grid ColumnDefinitions="*,Auto">
       <StackPanel>
         <TextBlock Text="Server Hub" FontSize="30" FontWeight="SemiBold" />
-        <TextBlock Text="Save servers and launch directly into multiplayer." Classes="muted" Margin="0,5,0,0" />
+        <TextBlock Text="Check status, save servers and bind each favorite to the right instance." Classes="muted" Margin="0,5,0,0" />
       </StackPanel>
       <Border Grid.Column="1" Background="#151D2A" CornerRadius="10" Padding="12,8" VerticalAlignment="Center">
         <TextBlock x:Name="SelectionSummary" Text="Checking current instance…" Classes="muted" FontSize="11" />
@@ -55,39 +55,108 @@
         </Grid>
       </Border>
 
-      <StackPanel Grid.Column="1" Spacing="16">
-        <Border Classes="card">
-          <StackPanel Spacing="10">
-            <TextBlock Text="Add or connect" FontSize="18" FontWeight="SemiBold" />
-            <TextBlock Text="Name" Classes="muted" FontSize="11" />
-            <TextBox x:Name="ServerNameBox" />
-            <TextBlock Text="Address" Classes="muted" FontSize="11" />
-            <TextBox x:Name="ServerAddressBox" Text="localhost:25565" />
-            <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="10">
-              <Button Content="Save server" Click="OnSaveClicked" Padding="14,9" />
-              <Button Grid.Column="1" Classes="primary" Content="Launch &amp; connect" Click="OnLaunchClicked" />
-            </Grid>
-            <TextBlock x:Name="ServerStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-          </StackPanel>
-        </Border>
+      <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="16" Margin="0,0,6,0">
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Add or connect" FontSize="18" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                <StackPanel Spacing="5">
+                  <TextBlock Text="Name" Classes="muted" FontSize="11" />
+                  <TextBox x:Name="ServerNameBox" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="5">
+                  <TextBlock Text="Address" Classes="muted" FontSize="11" />
+                  <TextBox x:Name="ServerAddressBox" Text="localhost:25565" />
+                </StackPanel>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,Auto,Auto,*" ColumnSpacing="10">
+                <Button Content="Save server" Click="OnSaveClicked" Padding="14,9" />
+                <Button x:Name="RefreshStatusButton" Grid.Column="1" Content="Refresh status" Click="OnRefreshStatusClicked" Padding="14,9" />
+                <Button Grid.Column="2" Classes="primary" Content="Launch &amp; connect" Click="OnLaunchClicked" />
+              </Grid>
+              <TextBlock x:Name="ServerStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
 
-        <Border Classes="card" Background="#101720">
-          <StackPanel Spacing="7">
-            <TextBlock Text="Compatibility" FontWeight="SemiBold" />
-            <TextBlock Text="Minecraft 1.20+ uses Quick Play when the installed version metadata advertises it. Older versions use the legacy server/port launch arguments." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-            <TextBlock Text="Local profiles can only join servers that accept that login mode. Authenticated public servers will require Microsoft sign-in after Nexo receives its own approved application registration." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-          </StackPanel>
-        </Border>
+          <Border Classes="card" Background="#101720">
+            <StackPanel Spacing="11">
+              <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Spacing="2">
+                  <TextBlock Text="Live status" FontSize="18" FontWeight="SemiBold" />
+                  <TextBlock x:Name="StatusDetailText" Text="Select a saved server or enter an address, then refresh status." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock x:Name="StatusStateText" Grid.Column="1" Text="Not checked" FontWeight="SemiBold" VerticalAlignment="Center" />
+              </Grid>
 
-        <Border Classes="card" Background="#101720">
-          <StackPanel Spacing="7">
-            <TextBlock Text="Friend-to-friend rooms" FontWeight="SemiBold" />
-            <TextBlock Text="The next networking step is Terracotta / EasyTier interoperability instead of inventing another incompatible P2P protocol. Server Hub is the foundation for that room-code flow." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-          </StackPanel>
-        </Border>
-      </StackPanel>
+              <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                <Border Background="#0B1119" CornerRadius="9" Padding="11,8">
+                  <StackPanel>
+                    <TextBlock Text="LATENCY" Classes="muted" FontSize="9" FontWeight="SemiBold" />
+                    <TextBlock x:Name="LatencyText" Text="—" FontSize="17" FontWeight="SemiBold" Margin="0,3,0,0" />
+                  </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Background="#0B1119" CornerRadius="9" Padding="11,8">
+                  <StackPanel>
+                    <TextBlock Text="PLAYERS" Classes="muted" FontSize="9" FontWeight="SemiBold" />
+                    <TextBlock x:Name="PlayersText" Text="—" FontSize="17" FontWeight="SemiBold" Margin="0,3,0,0" />
+                  </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Background="#0B1119" CornerRadius="9" Padding="11,8">
+                  <StackPanel>
+                    <TextBlock Text="VERSION" Classes="muted" FontSize="9" FontWeight="SemiBold" />
+                    <TextBlock x:Name="VersionText" Text="—" FontSize="12" FontWeight="SemiBold" Margin="0,3,0,0" TextWrapping="Wrap" MaxLines="2" />
+                  </StackPanel>
+                </Border>
+              </Grid>
+
+              <StackPanel Spacing="3">
+                <TextBlock Text="MOTD" Classes="muted" FontSize="9" FontWeight="SemiBold" />
+                <TextBlock x:Name="MotdText" Text="—" TextWrapping="Wrap" MaxLines="4" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card" Background="#101720">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Default instance" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="Choose which local instance this favorite should use. The link is stored with the favorite and is checked against the server protocol before launch." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <ComboBox x:Name="DefaultInstanceBox" SelectionChanged="OnDefaultInstanceSelectionChanged" HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="1" Text="{Binding VersionId}" Classes="muted" FontSize="11" Margin="12,0,0,0" />
+                    </Grid>
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <TextBlock x:Name="CompatibilityText" Text="Refresh status to compare the selected instance protocol." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="SaveDefaultInstanceButton" Content="Save default instance" Click="OnSaveDefaultInstanceClicked" IsEnabled="False" Padding="12,8" />
+                <Button x:Name="ClearDefaultInstanceButton" Content="Clear link" Click="OnClearDefaultInstanceClicked" IsEnabled="False" Padding="12,8" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card" Background="#101720">
+            <StackPanel Spacing="7">
+              <TextBlock Text="Compatibility" FontWeight="SemiBold" />
+              <TextBlock Text="Nexo compares the selected instance against the server protocol when both are known. Unknown versions stay unknown instead of being guessed from the displayed version name." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <TextBlock Text="Local profiles can only join servers that accept that login mode. Authenticated public servers still require Microsoft sign-in after Nexo receives its own approved application registration." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card" Background="#101720">
+            <StackPanel Spacing="7">
+              <TextBlock Text="Friend-to-friend rooms" FontWeight="SemiBold" />
+              <TextBlock Text="The next networking step remains Terracotta / EasyTier interoperability instead of inventing another incompatible P2P protocol. Server Hub is the foundation for that room-code flow." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
     </Grid>
 
-    <TextBlock Grid.Row="4" Text="Server favorites are stored locally in your Nexo data directory." Classes="muted" FontSize="11" />
+    <TextBlock Grid.Row="4" Text="Status checks use a bounded timeout and can be cancelled by switching servers. Favorites are stored locally in your Nexo data directory." Classes="muted" FontSize="11" />
   </Grid>
 </Window>

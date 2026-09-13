@@ -4,4 +4,5 @@ public sealed record ServerFavorite(
     string Id,
     string Name,
     string Address,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? DefaultInstanceId = null);

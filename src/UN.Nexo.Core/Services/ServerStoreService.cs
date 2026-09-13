@@ -76,6 +76,34 @@ public sealed class ServerStoreService
         }
     }
 
+    public async Task<ServerFavorite?> SetDefaultInstanceAsync(
+        string id,
+        string? instanceId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(id))
+            throw new ArgumentException("Server id is required.", nameof(id));
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var items = (await GetAllUnlockedAsync(cancellationToken)).ToList();
+            var index = items.FindIndex(item => item.Id.Equals(id, StringComparison.Ordinal));
+            if (index < 0)
+                return null;
+
+            var normalizedInstanceId = string.IsNullOrWhiteSpace(instanceId) ? null : instanceId.Trim();
+            var updated = items[index] with { DefaultInstanceId = normalizedInstanceId };
+            items[index] = updated;
+            await SaveUnlockedAsync(items, cancellationToken);
+            return updated;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task RemoveAsync(string id, CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);
