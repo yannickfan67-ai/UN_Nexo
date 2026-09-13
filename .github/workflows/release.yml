@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
-      - name: Publish Linux x64 single-file build
+      - name: Publish Linux x64 build
         shell: bash
         run: |
           set -euo pipefail
@@ -57,7 +57,7 @@ jobs:
       - name: Install package tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y ruby ruby-dev build-essential rpm
+          sudo apt-get install -y ruby ruby-dev build-essential rpm xvfb
           sudo gem install --no-document fpm
       - name: Build DEB and RPM packages
         shell: bash
@@ -73,7 +73,11 @@ jobs:
           mkdir -p package-root/usr/share/applications
           mkdir -p release
 
-          install -m 0755 publish/linux-x64/UN_Nexo package-root/usr/lib/un-nexo/UN_Nexo
+          # Avalonia/Skia uses native sidecar libraries on Linux. Package the
+          # complete publish output rather than only the managed apphost.
+          cp -a publish/linux-x64/. package-root/usr/lib/un-nexo/
+          find package-root/usr/lib/un-nexo -name '*.pdb' -delete
+          chmod 0755 package-root/usr/lib/un-nexo/UN_Nexo
 
           cat > package-root/usr/bin/un-nexo <<'EOF'
           #!/bin/sh
@@ -90,6 +94,7 @@ jobs:
           Terminal=false
           Categories=Game;Utility;
           StartupNotify=true
+          StartupWMClass=UN_Nexo
           EOF
 
           fpm -s dir -t deb \
@@ -115,6 +120,25 @@ jobs:
             -C package-root \
             -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" \
             .
+      - name: Smoke test packaged DEB UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          rm -rf smoke-root smoke-data
+          mkdir -p smoke-root smoke-data
+          dpkg-deb -x "release/UN_Nexo-${VERSION}-linux-x64.deb" smoke-root
+
+          set +e
+          timeout 8s xvfb-run -a env XDG_DATA_HOME="$PWD/smoke-data" \
+            "$PWD/smoke-root/usr/lib/un-nexo/UN_Nexo" >package-smoke.log 2>&1
+          code=$?
+          set -e
+
+          if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then
+            cat package-smoke.log
+            exit "$code"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
@@ -144,10 +168,10 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          First packaged development release of UN_Nexo.
+          Packaged development release of UN_Nexo.
 
           ### Included
-          - Windows x64 self-contained single-file executable
+          - Windows x64 self-contained executable
           - Debian/Ubuntu/Linux Mint x64 package (.deb)
           - RPM x64 package (.rpm)
           - Instance creation and selection UI
@@ -155,12 +179,16 @@ jobs:
           - Vanilla client/libraries/assets/native preparation pipeline
           - Java discovery and cross-platform launcher data paths
 
+          ### Hotfixes
+          - Linux packages now include the native SkiaSharp/HarfBuzz libraries required by Avalonia
+          - Release CI now launches the extracted DEB under Xvfb before publishing it
+
           ### Current limitations
-          - Microsoft/Xbox/Minecraft account authentication is not implemented yet
-          - The final game launch pipeline is still under development, so Play remains intentionally disabled
+          - Microsoft/Xbox/Minecraft account authentication is still under development
+          - Play remains intentionally disabled until the final launch/auth pipeline is ready
           - Fabric, Forge and NeoForge installers are not included yet
 
-          This is a pre-release intended for testing the launcher UI, environment detection and Vanilla instance preparation.
+          This is a pre-release intended for launcher and packaging testing.
           EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
