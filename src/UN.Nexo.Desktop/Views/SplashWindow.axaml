@@ -1,0 +1,47 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.SplashWindow"
+        Title="UN_Nexo"
+        Width="480" Height="270"
+        CanResize="False"
+        ShowInTaskbar="False"
+        SystemDecorations="None"
+        WindowStartupLocation="CenterScreen"
+        Background="#0B0F14">
+  <Border Background="#0E141C"
+          BorderBrush="#283443"
+          BorderThickness="1"
+          CornerRadius="18"
+          Padding="34">
+    <Grid RowDefinitions="*,Auto">
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="10">
+        <Border Width="68" Height="68" CornerRadius="18"
+                Background="#6D5DFB"
+                HorizontalAlignment="Center">
+          <TextBlock Text="N"
+                     FontSize="38"
+                     FontWeight="Bold"
+                     Foreground="White"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center" />
+        </Border>
+        <TextBlock Text="UN_Nexo"
+                   FontSize="27"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center" />
+        <TextBlock Text="Preparing accounts, Java and your Minecraft library…"
+                   Foreground="#8E9AAA"
+                   FontSize="12"
+                   HorizontalAlignment="Center" />
+      </StackPanel>
+
+      <StackPanel Grid.Row="1" Spacing="9">
+        <ProgressBar IsIndeterminate="True" Height="3" />
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="STARTING NEXO" Foreground="#8E9AAA" FontSize="10" FontWeight="SemiBold" />
+          <TextBlock x:Name="VersionText" Grid.Column="1" Text="dev" Foreground="#657286" FontSize="10" />
+        </Grid>
+      </StackPanel>
+    </Grid>
+  </Border>
+</Window>
