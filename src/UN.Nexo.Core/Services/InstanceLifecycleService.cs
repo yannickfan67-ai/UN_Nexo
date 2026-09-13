@@ -35,6 +35,7 @@ public sealed class InstanceLifecycleService
         var sourceRoot = _paths.GetInstanceDirectory(source.Id);
         if (!Directory.Exists(sourceRoot))
             throw new DirectoryNotFoundException($"Instance directory is missing: {sourceRoot}");
+        RejectReparsePoint(sourceRoot);
 
         var newId = Guid.NewGuid().ToString("N");
         var destinationRoot = _paths.GetInstanceDirectory(newId);
@@ -50,13 +51,14 @@ public sealed class InstanceLifecycleService
 
         try
         {
-            var estimatedBytes = MeasureDirectory(sourceRoot, path => ShouldCopyClonePath(sourceRoot, path, includeWorlds));
+            var estimatedBytes = MeasureCloneBytes(sourceRoot, sourceRoot, includeWorlds);
             EnsureFreeSpace(stagingParent, estimatedBytes + FreeSpaceReserveBytes);
 
-            await CopyDirectoryAsync(
+            await CopyCloneTreeAsync(
                 sourceRoot,
                 stagingRoot,
-                path => ShouldCopyClonePath(sourceRoot, path, includeWorlds),
+                sourceRoot,
+                includeWorlds,
                 cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -94,6 +96,7 @@ public sealed class InstanceLifecycleService
         var savesRoot = Path.Combine(_paths.GetInstanceGameDirectory(instance.Id), "saves");
         if (!Directory.Exists(savesRoot))
             throw new InvalidOperationException("This instance has no saves directory yet.");
+        RejectReparsePoint(savesRoot);
 
         var worlds = Directory.EnumerateDirectories(savesRoot)
             .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
@@ -104,7 +107,7 @@ public sealed class InstanceLifecycleService
         foreach (var world in worlds)
             RejectReparsePoint(world);
 
-        var totalBytes = worlds.Sum(world => MeasureDirectory(world, _ => true));
+        var totalBytes = worlds.Sum(MeasureSafeDirectoryBytes);
         var backupRoot = GetBackupRoot(instance.Id);
         Directory.CreateDirectory(backupRoot);
         EnsureFreeSpace(backupRoot, totalBytes + FreeSpaceReserveBytes);
@@ -195,7 +198,7 @@ public sealed class InstanceLifecycleService
             }
             catch (Exception ex) when (ex is InvalidDataException or IOException or JsonException)
             {
-                // Corrupt/incomplete backups are ignored instead of breaking the entire list.
+                // Corrupt/incomplete backups are ignored instead of breaking the whole list.
             }
         }
 
@@ -222,6 +225,8 @@ public sealed class InstanceLifecycleService
             throw new FileNotFoundException("The selected backup file no longer exists.", backupPath);
 
         var inspected = await ReadBackupAsync(backupPath, cancellationToken);
+        if (!inspected.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
+            throw new InvalidOperationException("The backup file was replaced and now belongs to a different instance.");
         var world = inspected.Worlds.FirstOrDefault(item => item.Name.Equals(worldName, StringComparison.Ordinal));
         if (world is null)
             throw new InvalidOperationException("The selected world is not present in this backup.");
@@ -254,7 +259,7 @@ public sealed class InstanceLifecycleService
                     continue;
 
                 var target = ResolveChild(stagedWorld, relative.Replace('/', Path.DirectorySeparatorChar));
-                if (entry.FullName.EndsWith('/', StringComparison.Ordinal))
+                if (entry.FullName.EndsWith("/", StringComparison.Ordinal))
                 {
                     Directory.CreateDirectory(target);
                     continue;
@@ -281,6 +286,7 @@ public sealed class InstanceLifecycleService
             string? safetyCopy = null;
             if (Directory.Exists(destinationWorld))
             {
+                RejectReparsePoint(destinationWorld);
                 var safetyRoot = Path.Combine(
                     instanceRoot,
                     "restore-safety",
@@ -343,19 +349,15 @@ public sealed class InstanceLifecycleService
     {
         long totalBytes = 0;
         var fileCount = 0;
-        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
-            RejectReparsePoint(directory);
-
-        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+        foreach (var file in EnumerateFilesSafe(sourceRoot))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            RejectReparsePoint(file);
             var relative = Path.GetRelativePath(sourceRoot, file).Replace(Path.DirectorySeparatorChar, '/');
             if (relative.Contains("../", StringComparison.Ordinal) || relative.StartsWith("..", StringComparison.Ordinal))
                 throw new InvalidDataException("A world file escaped its save directory.");
 
             var info = new FileInfo(file);
-            totalBytes += info.Length;
+            totalBytes = checked(totalBytes + info.Length);
             fileCount++;
             var entry = archive.CreateEntry($"{archivePrefix}/{relative}", CompressionLevel.Optimal);
             await using var input = new FileStream(
@@ -372,31 +374,34 @@ public sealed class InstanceLifecycleService
         return (totalBytes, fileCount);
     }
 
-    private async Task CopyDirectoryAsync(
+    private async Task CopyCloneTreeAsync(
+        string currentSource,
+        string currentDestination,
         string sourceRoot,
-        string destinationRoot,
-        Func<string, bool> shouldCopy,
+        bool includeWorlds,
         CancellationToken cancellationToken)
     {
-        foreach (var directory in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+        cancellationToken.ThrowIfCancellationRequested();
+        RejectReparsePoint(currentSource);
+        Directory.CreateDirectory(currentDestination);
+
+        foreach (var directory in Directory.EnumerateDirectories(currentSource))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!shouldCopy(directory))
+            if (!ShouldCopyClonePath(sourceRoot, directory, includeWorlds))
                 continue;
             RejectReparsePoint(directory);
-            var relative = Path.GetRelativePath(sourceRoot, directory);
-            Directory.CreateDirectory(ResolveChild(destinationRoot, relative));
+            var target = ResolveChild(currentDestination, Path.GetFileName(directory));
+            await CopyCloneTreeAsync(directory, target, sourceRoot, includeWorlds, cancellationToken);
         }
 
-        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(currentSource))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!shouldCopy(file))
+            if (!ShouldCopyClonePath(sourceRoot, file, includeWorlds))
                 continue;
             RejectReparsePoint(file);
-            var relative = Path.GetRelativePath(sourceRoot, file);
-            var target = ResolveChild(destinationRoot, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            var target = ResolveChild(currentDestination, Path.GetFileName(file));
             await using var input = new FileStream(
                 file,
                 FileMode.Open,
@@ -432,6 +437,50 @@ public sealed class InstanceLifecycleService
         return true;
     }
 
+    private long MeasureCloneBytes(string current, string sourceRoot, bool includeWorlds)
+    {
+        RejectReparsePoint(current);
+        long total = 0;
+        foreach (var directory in Directory.EnumerateDirectories(current))
+        {
+            if (!ShouldCopyClonePath(sourceRoot, directory, includeWorlds))
+                continue;
+            total = checked(total + MeasureCloneBytes(directory, sourceRoot, includeWorlds));
+        }
+        foreach (var file in Directory.EnumerateFiles(current))
+        {
+            if (!ShouldCopyClonePath(sourceRoot, file, includeWorlds))
+                continue;
+            RejectReparsePoint(file);
+            total = checked(total + new FileInfo(file).Length);
+        }
+        return total;
+    }
+
+    private static long MeasureSafeDirectoryBytes(string root)
+    {
+        long total = 0;
+        foreach (var file in EnumerateFilesSafe(root))
+            total = checked(total + new FileInfo(file).Length);
+        return total;
+    }
+
+    private static IEnumerable<string> EnumerateFilesSafe(string root)
+    {
+        RejectReparsePoint(root);
+        foreach (var file in Directory.EnumerateFiles(root))
+        {
+            RejectReparsePoint(file);
+            yield return file;
+        }
+        foreach (var directory in Directory.EnumerateDirectories(root))
+        {
+            RejectReparsePoint(directory);
+            foreach (var file in EnumerateFilesSafe(directory))
+                yield return file;
+        }
+    }
+
     private async Task RewriteInstallStateAsync(
         string instanceRoot,
         GameInstance clone,
@@ -447,11 +496,24 @@ public sealed class InstanceLifecycleService
             var node = JsonNode.Parse(json)?.AsObject();
             if (node is null)
                 return;
-            node["id"] = clone.Id;
-            node["name"] = clone.Name;
+
+            if (node.ContainsKey("Id"))
+                node["Id"] = clone.Id;
+            if (node.ContainsKey("id"))
+                node["id"] = clone.Id;
+            if (!node.ContainsKey("Id") && !node.ContainsKey("id"))
+                node["id"] = clone.Id;
+
+            if (node.ContainsKey("Name"))
+                node["Name"] = clone.Name;
+            if (node.ContainsKey("name"))
+                node["name"] = clone.Name;
+            if (!node.ContainsKey("Name") && !node.ContainsKey("name"))
+                node["name"] = clone.Name;
+
             await File.WriteAllTextAsync(path, node.ToJsonString(_json), cancellationToken);
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
             // A stale state file should not make an otherwise valid clone fail.
         }
@@ -494,41 +556,29 @@ public sealed class InstanceLifecycleService
         };
     }
 
-    private static long MeasureDirectory(string root, Func<string, bool> shouldCount)
-    {
-        long total = 0;
-        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
-        {
-            if (shouldCount(directory))
-                RejectReparsePoint(directory);
-        }
-        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
-        {
-            if (!shouldCount(file))
-                continue;
-            RejectReparsePoint(file);
-            total = checked(total + new FileInfo(file).Length);
-        }
-        return total;
-    }
-
     private static void EnsureFreeSpace(string path, long requiredBytes)
     {
+        var root = Path.GetPathRoot(Path.GetFullPath(path));
+        if (string.IsNullOrWhiteSpace(root))
+            return;
+
+        DriveInfo drive;
         try
         {
-            var root = Path.GetPathRoot(Path.GetFullPath(path));
-            if (string.IsNullOrWhiteSpace(root))
+            drive = new DriveInfo(root);
+            if (!drive.IsReady)
                 return;
-            var drive = new DriveInfo(root);
-            if (drive.IsReady && drive.AvailableFreeSpace < requiredBytes)
-                throw new IOException(
-                    $"Not enough free space. Need about {requiredBytes / (1024 * 1024)} MiB, " +
-                    $"available {drive.AvailableFreeSpace / (1024 * 1024)} MiB.");
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
         {
             // Some virtual filesystems do not expose DriveInfo. Atomic staging still protects originals.
+            return;
         }
+
+        if (drive.AvailableFreeSpace < requiredBytes)
+            throw new IOException(
+                $"Not enough free space. Need about {requiredBytes / (1024 * 1024)} MiB, " +
+                $"available {drive.AvailableFreeSpace / (1024 * 1024)} MiB.");
     }
 
     private static string ResolveChild(string root, string relative)
