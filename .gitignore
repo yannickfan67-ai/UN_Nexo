@@ -1,0 +1,26 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider / ReSharper
+_ReSharper*/
+*.DotSettings.user
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs / local data
+*.log
+.nexo/

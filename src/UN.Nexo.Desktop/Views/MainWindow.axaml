@@ -1,0 +1,105 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.MainWindow"
+        Title="UN_Nexo"
+        Width="1180" Height="720"
+        MinWidth="900" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Button.nav">
+      <Setter Property="HorizontalContentAlignment" Value="Left" />
+      <Setter Property="Padding" Value="14,10" />
+      <Setter Property="Margin" Value="0,3" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="18" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#8E9AAA" />
+    </Style>
+  </Window.Styles>
+
+  <Grid ColumnDefinitions="250,*">
+    <Border Grid.Column="0" Background="#0E141C" BorderBrush="#1D2732" BorderThickness="0,0,1,0" Padding="18">
+      <Grid RowDefinitions="Auto,28,*,Auto">
+        <StackPanel>
+          <TextBlock Text="UN_Nexo" FontSize="26" FontWeight="SemiBold" />
+          <TextBlock Text="Minecraft Launcher" Classes="muted" Margin="0,2,0,0" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2">
+          <Button Classes="nav" Content="⌂   Home" />
+          <Button Classes="nav" Content="▣   Instances" IsEnabled="False" />
+          <Button Classes="nav" Content="↓   Downloads" IsEnabled="False" />
+          <Button Classes="nav" Content="⚙   Settings" IsEnabled="False" />
+        </StackPanel>
+
+        <Border Grid.Row="3" Background="#111923" CornerRadius="10" Padding="12">
+          <StackPanel>
+            <TextBlock Text="v0.1.0-dev" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding LauncherStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Column="1">
+      <StackPanel Margin="34" Spacing="18" MaxWidth="960" HorizontalAlignment="Stretch">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel>
+            <TextBlock Text="Good morning." FontSize="32" FontWeight="SemiBold" />
+            <TextBlock Text="Nexo is checking the machine before the first launch." Classes="muted" Margin="0,6,0,0" />
+          </StackPanel>
+          <Button Grid.Column="1" Content="Refresh environment" Command="{Binding RefreshEnvironmentCommand}" Padding="16,10" VerticalAlignment="Center" />
+        </Grid>
+
+        <Border Classes="card">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel>
+              <TextBlock Text="Minecraft" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding MinecraftDirectory}" Classes="muted" TextTrimming="CharacterEllipsis" Margin="0,6,0,0" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+              <TextBlock Text="Latest release" Classes="muted" FontSize="12" />
+              <TextBlock Text="{Binding LatestRelease}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Right" />
+              <TextBlock Text="Snapshot: {Binding LatestSnapshot}" Classes="muted" FontSize="12" HorizontalAlignment="Right" />
+            </StackPanel>
+          </Grid>
+        </Border>
+
+        <Grid ColumnDefinitions="*,*" ColumnSpacing="18">
+          <Border Classes="card">
+            <StackPanel>
+              <TextBlock Text="Java runtime" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding JavaSummary}" Margin="0,10,0,0" />
+              <TextBlock Text="{Binding JavaDetail}" Classes="muted" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Column="1" Classes="card">
+            <StackPanel>
+              <TextBlock Text="Instances" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding InstanceSummary}" Margin="0,10,0,0" />
+              <TextBlock Text="{Binding InstanceRoot}" Classes="muted" TextWrapping="Wrap" Margin="0,6,0,0" />
+            </StackPanel>
+          </Border>
+        </Grid>
+
+        <Border Classes="card">
+          <StackPanel>
+            <TextBlock Text="Development milestone" FontSize="18" FontWeight="SemiBold" />
+            <TextBlock Text="Environment detection is live. Next: version installation, asset/library downloads, Microsoft authentication and the launch pipeline." Classes="muted" TextWrapping="Wrap" Margin="0,8,0,0" />
+            <ProgressBar Minimum="0" Maximum="100" Value="22" Height="7" Margin="0,16,0,0" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>
