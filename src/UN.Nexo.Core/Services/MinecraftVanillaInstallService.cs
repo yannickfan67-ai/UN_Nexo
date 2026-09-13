@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -11,6 +12,11 @@ public sealed class MinecraftVanillaInstallService
     private readonly NexoPathService _paths;
     private readonly DownloadSourceService _downloadSources;
     private readonly TimeSpan _transferIdleTimeout;
+    private readonly object _activityGate = new();
+    private CancellationTokenSource? _activeInstallCancellation;
+
+    public event Action<InstallProgress>? ProgressChanged;
+    public event Action<bool>? InstallActivityChanged;
 
     public MinecraftVanillaInstallService(
         HttpClient httpClient,
@@ -26,11 +32,64 @@ public sealed class MinecraftVanillaInstallService
             throw new ArgumentOutOfRangeException(nameof(transferIdleTimeout), "Transfer idle timeout must be positive.");
     }
 
+    public bool IsInstalling
+    {
+        get
+        {
+            lock (_activityGate)
+                return _activeInstallCancellation is not null;
+        }
+    }
+
+    public bool CancelCurrentInstall()
+    {
+        lock (_activityGate)
+        {
+            if (_activeInstallCancellation is null)
+                return false;
+            _activeInstallCancellation.Cancel();
+            return true;
+        }
+    }
+
     public async Task InstallAsync(
         GameInstance instance,
         MinecraftVersionInfo version,
         IProgress<InstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
+    {
+        CancellationTokenSource activityCancellation;
+        lock (_activityGate)
+        {
+            if (_activeInstallCancellation is not null)
+                throw new InvalidOperationException("Another Minecraft file preparation task is already running.");
+
+            activityCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            _activeInstallCancellation = activityCancellation;
+        }
+
+        PublishActivity(true);
+        try
+        {
+            await InstallCoreAsync(instance, version, progress, activityCancellation.Token);
+        }
+        finally
+        {
+            lock (_activityGate)
+            {
+                if (ReferenceEquals(_activeInstallCancellation, activityCancellation))
+                    _activeInstallCancellation = null;
+            }
+            activityCancellation.Dispose();
+            PublishActivity(false);
+        }
+    }
+
+    private async Task InstallCoreAsync(
+        GameInstance instance,
+        MinecraftVersionInfo version,
+        IProgress<InstallProgress>? progress,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(version.Url))
             throw new InvalidOperationException("The selected Minecraft version has no metadata URL.");
@@ -47,10 +106,10 @@ public sealed class MinecraftVanillaInstallService
         Directory.CreateDirectory(Path.Combine(assetsRoot, "objects"));
         Directory.CreateDirectory(nativesRoot);
 
-        progress?.Report(new InstallProgress("Version metadata", 0, 1, version.Id));
+        Report(progress, new InstallProgress("Version metadata", 0, 1, version.Id));
         var versionJsonPath = Path.Combine(versionRoot, $"{version.Id}.json");
-        await DownloadFileAsync(version.Url, versionJsonPath, version.Sha1, cancellationToken);
-        progress?.Report(new InstallProgress("Version metadata", 1, 1, version.Id));
+        await DownloadFileAsync(version.Url, versionJsonPath, version.Sha1, "Version metadata", 0, 1, progress, cancellationToken);
+        Report(progress, new InstallProgress("Version metadata", 1, 1, version.Id, Detail: "Version metadata ready"));
 
         await using var versionStream = File.OpenRead(versionJsonPath);
         using var versionDocument = await JsonDocument.ParseAsync(versionStream, cancellationToken: cancellationToken);
@@ -59,25 +118,25 @@ public sealed class MinecraftVanillaInstallService
         if (root.TryGetProperty("downloads", out var downloads)
             && downloads.TryGetProperty("client", out var client))
         {
-            progress?.Report(new InstallProgress("Minecraft client", 0, 1, version.Id));
+            Report(progress, new InstallProgress("Minecraft client", 0, 1, version.Id));
             var clientUrl = client.GetProperty("url").GetString() ?? throw new InvalidDataException("Client URL missing.");
             var clientSha1 = client.TryGetProperty("sha1", out var clientSha) ? clientSha.GetString() : null;
-            await DownloadFileAsync(clientUrl, Path.Combine(versionRoot, $"{version.Id}.jar"), clientSha1, cancellationToken);
-            progress?.Report(new InstallProgress("Minecraft client", 1, 1, version.Id));
+            await DownloadFileAsync(clientUrl, Path.Combine(versionRoot, $"{version.Id}.jar"), clientSha1, "Minecraft client", 0, 1, progress, cancellationToken);
+            Report(progress, new InstallProgress("Minecraft client", 1, 1, version.Id, Detail: "Client JAR ready"));
         }
 
         var libraryJobs = CollectLibraryDownloads(root, librariesRoot, nativesRoot);
         var libraryCompleted = 0;
-        progress?.Report(new InstallProgress("Libraries", 0, libraryJobs.Count));
+        Report(progress, new InstallProgress("Libraries", 0, libraryJobs.Count));
         foreach (var job in libraryJobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await DownloadFileAsync(job.Url, job.Path, job.Sha1, cancellationToken);
+            await DownloadFileAsync(job.Url, job.Path, job.Sha1, "Libraries", libraryCompleted, libraryJobs.Count, progress, cancellationToken);
             if (job.ExtractTo is not null)
                 ExtractNativeArchive(job.Path, job.ExtractTo, job.Excludes);
 
             libraryCompleted++;
-            progress?.Report(new InstallProgress("Libraries", libraryCompleted, libraryJobs.Count, Path.GetFileName(job.Path)));
+            Report(progress, new InstallProgress("Libraries", libraryCompleted, libraryJobs.Count, Path.GetFileName(job.Path)));
         }
 
         if (root.TryGetProperty("assetIndex", out var assetIndex))
@@ -87,9 +146,9 @@ public sealed class MinecraftVanillaInstallService
             var assetSha1 = assetIndex.TryGetProperty("sha1", out var indexSha) ? indexSha.GetString() : null;
             var indexPath = Path.Combine(assetsRoot, "indexes", $"{assetId}.json");
 
-            progress?.Report(new InstallProgress("Asset index", 0, 1, assetId));
-            await DownloadFileAsync(assetUrl, indexPath, assetSha1, cancellationToken);
-            progress?.Report(new InstallProgress("Asset index", 1, 1, assetId));
+            Report(progress, new InstallProgress("Asset index", 0, 1, assetId));
+            await DownloadFileAsync(assetUrl, indexPath, assetSha1, "Asset index", 0, 1, progress, cancellationToken);
+            Report(progress, new InstallProgress("Asset index", 1, 1, assetId, Detail: "Asset index ready"));
 
             await DownloadAssetsAsync(indexPath, assetsRoot, progress, cancellationToken);
         }
@@ -107,7 +166,7 @@ public sealed class MinecraftVanillaInstallService
         var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
         await File.WriteAllTextAsync(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
-        progress?.Report(new InstallProgress("Ready", 1, 1, version.Id));
+        Report(progress, new InstallProgress("Ready", 1, 1, version.Id, Detail: "All required Vanilla files are ready"));
     }
 
     private async Task DownloadAssetsAsync(
@@ -134,7 +193,7 @@ public sealed class MinecraftVanillaInstallService
 
         var assetHashes = hashes.ToArray();
         var completed = 0;
-        progress?.Report(new InstallProgress("Assets", 0, assetHashes.Length));
+        Report(progress, new InstallProgress("Assets", 0, assetHashes.Length));
 
         await Parallel.ForEachAsync(
             assetHashes,
@@ -144,9 +203,10 @@ public sealed class MinecraftVanillaInstallService
                 var prefix = hash[..2];
                 var target = Path.Combine(assetsRoot, "objects", prefix, hash);
                 var url = $"https://resources.download.minecraft.net/{prefix}/{hash}";
-                await DownloadFileAsync(url, target, hash, token);
+                var before = Volatile.Read(ref completed);
+                await DownloadFileAsync(url, target, hash, "Assets", before, assetHashes.Length, progress, token);
                 var value = Interlocked.Increment(ref completed);
-                progress?.Report(new InstallProgress("Assets", value, assetHashes.Length, hash));
+                Report(progress, new InstallProgress("Assets", value, assetHashes.Length, hash));
             });
     }
 
@@ -293,20 +353,46 @@ public sealed class MinecraftVanillaInstallService
         }
     }
 
-    private async Task DownloadFileAsync(string url, string path, string? expectedSha1, CancellationToken cancellationToken)
+    private async Task DownloadFileAsync(
+        string url,
+        string path,
+        string? expectedSha1,
+        string stage,
+        int completed,
+        int total,
+        IProgress<InstallProgress>? progress,
+        CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var item = Path.GetFileName(path);
 
         if (File.Exists(path) && await HashMatchesAsync(path, expectedSha1, cancellationToken))
+        {
+            Report(progress, new InstallProgress(stage, completed, total, item, "Cache", Detail: "Verified existing file"));
             return;
+        }
 
         var temporaryPath = path + ".part";
         Exception? lastException = null;
+        var candidates = _downloadSources.GetCandidates(url);
 
-        foreach (var candidate in _downloadSources.GetCandidates(url))
+        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
         {
+            var candidate = candidates[candidateIndex];
+            var source = SourceLabel(candidate);
+            var fallback = candidateIndex > 0;
+
             if (File.Exists(temporaryPath))
                 File.Delete(temporaryPath);
+
+            Report(progress, new InstallProgress(
+                stage,
+                completed,
+                total,
+                item,
+                source,
+                IsFallback: fallback,
+                Detail: fallback ? "Retrying with fallback source" : "Connecting…"));
 
             try
             {
@@ -314,32 +400,73 @@ public sealed class MinecraftVanillaInstallService
                 if (!response.IsSuccessStatusCode)
                 {
                     lastException = new HttpRequestException($"HTTP {(int)response.StatusCode} from {new Uri(candidate).Host}.");
+                    Report(progress, new InstallProgress(stage, completed, total, item, source, IsFallback: fallback, Detail: lastException.Message));
                     continue;
                 }
 
+                var contentLength = response.Content.Headers.ContentLength;
                 await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
                 await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true))
                 {
-                    await CopyWithIdleTimeoutAsync(input, output, candidate, cancellationToken);
+                    await CopyWithIdleTimeoutAsync(
+                        input,
+                        output,
+                        candidate,
+                        (bytes, bytesPerSecond) => Report(progress, new InstallProgress(
+                            stage,
+                            completed,
+                            total,
+                            item,
+                            source,
+                            bytes,
+                            contentLength,
+                            bytesPerSecond,
+                            fallback,
+                            fallback ? "Downloading from fallback source" : "Downloading")),
+                        cancellationToken);
                 }
 
                 if (!await HashMatchesAsync(temporaryPath, expectedSha1, cancellationToken))
                 {
                     File.Delete(temporaryPath);
                     lastException = new InvalidDataException($"SHA-1 verification failed from {new Uri(candidate).Host}.");
+                    Report(progress, new InstallProgress(stage, completed, total, item, source, IsFallback: fallback, Detail: lastException.Message));
                     continue;
                 }
 
                 File.Move(temporaryPath, path, overwrite: true);
+                Report(progress, new InstallProgress(
+                    stage,
+                    completed,
+                    total,
+                    item,
+                    source,
+                    contentLength ?? new FileInfo(path).Length,
+                    contentLength,
+                    0,
+                    fallback,
+                    "Verified"));
                 return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
                 throw;
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or TimeoutException)
             {
                 lastException = ex;
+                Report(progress, new InstallProgress(
+                    stage,
+                    completed,
+                    total,
+                    item,
+                    source,
+                    IsFallback: fallback,
+                    Detail: candidateIndex + 1 < candidates.Count
+                        ? $"{ex.Message} Switching source…"
+                        : ex.Message));
             }
         }
 
@@ -353,9 +480,14 @@ public sealed class MinecraftVanillaInstallService
         Stream input,
         Stream output,
         string candidate,
+        Action<long, double> progress,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[128 * 1024];
+        var downloaded = 0L;
+        var stopwatch = Stopwatch.StartNew();
+        var lastReport = TimeSpan.Zero;
+
         while (true)
         {
             using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -373,9 +505,19 @@ public sealed class MinecraftVanillaInstallService
             }
 
             if (read == 0)
+            {
+                progress(downloaded, downloaded / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001));
                 return;
+            }
 
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            downloaded += read;
+
+            if (stopwatch.Elapsed - lastReport >= TimeSpan.FromMilliseconds(200))
+            {
+                progress(downloaded, downloaded / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001));
+                lastReport = stopwatch.Elapsed;
+            }
         }
     }
 
@@ -389,6 +531,40 @@ public sealed class MinecraftVanillaInstallService
         var hash = await sha1.ComputeHashAsync(stream, cancellationToken);
         var actual = Convert.ToHexString(hash).ToLowerInvariant();
         return string.Equals(actual, expectedSha1, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SourceLabel(string candidate)
+    {
+        var host = new Uri(candidate).Host;
+        if (host.Contains("bmclapi", StringComparison.OrdinalIgnoreCase))
+            return "BMCLAPI";
+        if (host.EndsWith("minecraft.net", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith("mojang.com", StringComparison.OrdinalIgnoreCase))
+            return "Official";
+        return host;
+    }
+
+    private void Report(IProgress<InstallProgress>? progress, InstallProgress value)
+    {
+        progress?.Report(value);
+        try
+        {
+            ProgressChanged?.Invoke(value);
+        }
+        catch
+        {
+        }
+    }
+
+    private void PublishActivity(bool active)
+    {
+        try
+        {
+            InstallActivityChanged?.Invoke(active);
+        }
+        catch
+        {
+        }
     }
 
     private sealed record DownloadJob(

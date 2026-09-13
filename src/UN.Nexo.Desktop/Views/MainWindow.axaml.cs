@@ -10,10 +10,12 @@ public sealed partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _viewModel;
     private readonly NexoPathService _paths;
+    private readonly MinecraftVanillaInstallService _installer;
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
     private InstanceRepairWindow? _repairWindow;
+    private DownloadManagerWindow? _downloadManagerWindow;
 
     public MainWindow()
     {
@@ -32,12 +34,13 @@ public sealed partial class MainWindow : Window
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         ApplyRuntimeVersionLabel(launcherVersion);
 
+        _installer = new MinecraftVanillaInstallService(httpClient, _paths, downloadSources);
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(_paths),
             _paths,
             new MinecraftVersionManifestService(httpClient, downloadSources),
             new InstanceStoreService(_paths),
-            new MinecraftVanillaInstallService(httpClient, _paths, downloadSources),
+            _installer,
             new AccountStoreService(_paths),
             new LauncherSettingsService(_paths),
             downloadSources);
@@ -100,6 +103,16 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(downloadsIndex > 0 ? downloadsIndex : Math.Min(4, nav.Children.Count), runtime);
         }
 
+        var downloads = nav.Children
+            .OfType<Button>()
+            .FirstOrDefault(button => Equals(button.Content, "Downloads"));
+        if (downloads is not null)
+        {
+            downloads.IsHitTestVisible = true;
+            downloads.Opacity = 1;
+            downloads.Click += (_, _) => OpenDownloads();
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Repair")))
         {
             var repair = new Button { Content = "Repair" };
@@ -148,6 +161,19 @@ public sealed partial class MainWindow : Window
         _runtimeSettingsWindow = new RuntimeSettingsWindow(_viewModel, _paths);
         _runtimeSettingsWindow.Closed += (_, _) => _runtimeSettingsWindow = null;
         _runtimeSettingsWindow.Show(this);
+    }
+
+    private void OpenDownloads()
+    {
+        if (_downloadManagerWindow is not null)
+        {
+            _downloadManagerWindow.Activate();
+            return;
+        }
+
+        _downloadManagerWindow = new DownloadManagerWindow(_installer);
+        _downloadManagerWindow.Closed += (_, _) => _downloadManagerWindow = null;
+        _downloadManagerWindow.Show(this);
     }
 
     private void OpenRepair()
