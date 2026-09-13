@@ -39,7 +39,7 @@
         <ProgressBar IsIndeterminate="True" Height="3" />
         <Grid ColumnDefinitions="*,Auto">
           <TextBlock Text="STARTING NEXO" Foreground="#8E9AAA" FontSize="10" FontWeight="SemiBold" />
-          <TextBlock Grid.Column="1" Text="0.4" Foreground="#657286" FontSize="10" />
+          <TextBlock x:Name="VersionText" Grid.Column="1" Text="dev" Foreground="#657286" FontSize="10" />
         </Grid>
       </StackPanel>
     </Grid>
