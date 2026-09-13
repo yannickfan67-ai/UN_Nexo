@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -127,6 +128,11 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             }
         }
 
+        var launcherVersion = typeof(MinecraftLaunchPlanBuilder).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(MinecraftLaunchPlanBuilder).Assembly.GetName().Version?.ToString()
+            ?? "dev";
+
         var substitutions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["auth_player_name"] = account.DisplayName,
@@ -148,7 +154,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             ["classpath"] = string.Join(Path.PathSeparator, classpath.Distinct(StringComparer.Ordinal)),
             ["classpath_separator"] = Path.PathSeparator.ToString(),
             ["launcher_name"] = "UN_Nexo",
-            ["launcher_version"] = "0.4.0-dev"
+            ["launcher_version"] = launcherVersion
         };
 
         string Expand(string value)
