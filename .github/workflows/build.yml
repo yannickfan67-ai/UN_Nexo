@@ -25,6 +25,8 @@ jobs:
         run: dotnet restore UN_Nexo.sln
       - name: Build
         run: dotnet build UN_Nexo.sln -c Release --no-restore
+      - name: Core regression checks
+        run: dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release --no-build
 
   linux-desktop-smoke:
     runs-on: ubuntu-latest

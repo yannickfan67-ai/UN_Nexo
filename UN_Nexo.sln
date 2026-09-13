@@ -6,6 +6,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UN.Nexo.Core", "src\UN.Nexo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UN.Nexo.Desktop", "src\UN.Nexo.Desktop\UN.Nexo.Desktop.csproj", "{36BD25C0-43EA-4C96-B641-E1BC583D0D2A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UN.Nexo.Core.Tests", "tests\UN.Nexo.Core.Tests\UN.Nexo.Core.Tests.csproj", "{66C5D7A9-4D9E-4A01-A38D-2EAF1E1DEB61}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,5 +22,9 @@ Global
 		{36BD25C0-43EA-4C96-B641-E1BC583D0D2A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{36BD25C0-43EA-4C96-B641-E1BC583D0D2A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{36BD25C0-43EA-4C96-B641-E1BC583D0D2A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{66C5D7A9-4D9E-4A01-A38D-2EAF1E1DEB61}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{66C5D7A9-4D9E-4A01-A38D-2EAF1E1DEB61}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{66C5D7A9-4D9E-4A01-A38D-2EAF1E1DEB61}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{66C5D7A9-4D9E-4A01-A38D-2EAF1E1DEB61}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -2,6 +2,15 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class NexoPathService
 {
+    private readonly string? _dataRootOverride;
+
+    public NexoPathService(string? dataRootOverride = null)
+    {
+        _dataRootOverride = string.IsNullOrWhiteSpace(dataRootOverride)
+            ? null
+            : Path.GetFullPath(dataRootOverride);
+    }
+
     public string GetMinecraftDirectory()
     {
         if (OperatingSystem.IsWindows())
@@ -19,6 +28,9 @@ public sealed class NexoPathService
 
     public string GetDataRoot()
     {
+        if (_dataRootOverride is not null)
+            return _dataRootOverride;
+
         if (OperatingSystem.IsWindows())
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
