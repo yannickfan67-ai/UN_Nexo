@@ -217,8 +217,8 @@ jobs:
             local attempt state
             for attempt in 1 2 3 4 5; do
               state="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${id}" \
-                --jq '[.tag_name, (.draft|tostring), (.prerelease|tostring)] | @tsv' 2>/dev/null || true)"
-              if [ "$state" = "${TAG}\tfalse\ttrue" ]; then
+                --jq "select(.tag_name == \"${TAG}\" and .draft == false and .prerelease == true) | .id" 2>/dev/null || true)"
+              if [ "$state" = "$id" ]; then
                 return 0
               fi
               sleep $((attempt * 2))
