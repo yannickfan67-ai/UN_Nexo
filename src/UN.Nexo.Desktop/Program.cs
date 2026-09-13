@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Media;
 using UN.Nexo.Desktop.Diagnostics;
 
 namespace UN.Nexo.Desktop;
@@ -39,5 +40,19 @@ internal static class Program
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont();
+            .WithInterFont()
+            .ConfigureFonts(fontManager =>
+            {
+                fontManager.AddFontCollection(new NexoCjkFontCollection());
+            })
+            .With(new FontManagerOptions
+            {
+                FontFallbacks =
+                [
+                    new FontFallback
+                    {
+                        FontFamily = new FontFamily("fonts:NexoCjk#Noto Sans CJK SC")
+                    }
+                ]
+            });
 }

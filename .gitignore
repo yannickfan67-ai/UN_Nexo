@@ -3,6 +3,9 @@ bin/
 obj/
 artifacts/
 
+# Build-acquired third-party assets
+src/UN.Nexo.Desktop/Assets/Fonts/NotoSansCJKsc-Regular.otf
+
 # IDE
 .vs/
 .vscode/

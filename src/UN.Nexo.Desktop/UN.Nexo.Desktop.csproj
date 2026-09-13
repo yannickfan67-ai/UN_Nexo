@@ -6,6 +6,8 @@
     <RootNamespace>UN.Nexo.Desktop</RootNamespace>
     <ApplicationIcon Condition="Exists('Assets/nexo.ico')">Assets/nexo.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <NexoCjkFontPath>$(MSBuildProjectDirectory)/Assets/Fonts/NotoSansCJKsc-Regular.otf</NexoCjkFontPath>
+    <NexoCjkFontUrl>https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf</NexoCjkFontUrl>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,4 +21,18 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets/Fonts/NotoSansCJKsc-Regular.otf" />
+  </ItemGroup>
+
+  <Target Name="EnsureBundledNotoCjkFont" BeforeTargets="PrepareForBuild" Condition="!Exists('$(NexoCjkFontPath)')">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/Assets/Fonts" />
+    <Message Importance="high" Text="Downloading pinned Noto Sans CJK SC fallback font for the self-contained UI…" />
+    <DownloadFile SourceUrl="$(NexoCjkFontUrl)"
+                  DestinationFolder="$(MSBuildProjectDirectory)/Assets/Fonts"
+                  DestinationFileName="NotoSansCJKsc-Regular.otf"
+                  SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(NexoCjkFontPath)')" Text="Failed to acquire the bundled Noto Sans CJK SC fallback font." />
+  </Target>
 </Project>
