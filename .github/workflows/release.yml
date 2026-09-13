@@ -163,30 +163,33 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Server Hub and multiplayer launch
-          - Adds a first-class Servers entry with persistent local server favorites
-          - Validates host, custom port and bracketed IPv6 addresses before launch
-          - Uses Minecraft Quick Play multiplayer arguments when the installed version advertises support
-          - Falls back to legacy server/port launch arguments for older Minecraft versions such as 1.8.9
-          - Keeps local profiles explicit: authenticated online-mode servers still require future Microsoft sign-in support
+          ### Runtime controls and diagnostics
+          - Replaces the fixed 2 GB heap with Auto or explicit game-memory settings
+          - Adds validated extra JVM arguments without invoking a shell
+          - Prevents accidental overrides of launcher-managed `-Xmx`, classpath and `-jar` options
+          - Applies the same runtime settings to normal Play and Server Hub launches
+          - Adds a Runtime & Diagnostics window with detected Java installations and the selected instance's required Java major
+          - Adds quick access to the selected instance's game directory and launcher logs
+          - Keeps runtime settings in a separate `runtime-settings.json` file so existing instance metadata remains compatible
 
-          ### Font and Linux compatibility
-          - Bundles Avalonia Inter so Nexo does not depend on the host having a usable default Latin UI font
-          - Debian/Mint packages require Noto CJK fonts for Chinese/Japanese/Korean fallback coverage
-          - RPM packages declare the matching Noto CJK font family dependency
-          - Release CI verifies the final DEB can resolve Noto Sans CJK and launches the packaged UI under Xvfb
-          - Launcher, window and Minecraft metadata version strings now follow the built application version
-
-          ### Included launcher capabilities
-          - Prepared Vanilla instances can launch with a local profile
+          ### Existing launcher capabilities
+          - Prepared Vanilla instances can launch with local profiles
           - Automatic Minecraft-required Java-major selection
           - Modern and legacy launch metadata, including 1.21.4 and 1.8.9-style arguments
-          - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
+          - Server Hub favorites with modern Quick Play and legacy direct-connect launch paths
           - Official/BMCLAPI downloads with official fallback and SHA-1 verification
+          - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
+
+          ### Font and Linux compatibility
+          - Bundles Avalonia Inter for a reliable baseline UI font
+          - Debian/Mint packages require Noto CJK and full fontconfig support
+          - Release CI installs the final DEB in a clean Ubuntu 24.04 container, validates Noto CJK resolution and launches the packaged UI under Xvfb
+          - Windows and Linux packages remain self-contained for the .NET runtime
 
           ### Current limitations
           - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
-          - Friend-to-friend room-code/P2P networking is not included yet; Terracotta/EasyTier/Scaffolding interoperability is the planned direction
+          - Runtime overrides are currently global; per-instance memory/JVM overrides and automatic Java acquisition are planned
+          - Friend-to-friend room-code/P2P networking is not included yet
           - Fabric, Forge and NeoForge installers are not included yet
           - HTTP Range resume and mod/resource-pack/shader management are not implemented yet
           - Real Linux Mint/Cinnamon game-menu validation is still an on-device acceptance check
