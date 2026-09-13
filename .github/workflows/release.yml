@@ -200,9 +200,37 @@ jobs:
 
           This is a development pre-release. Local profiles do not replace Minecraft ownership or authenticated online play.
           EOF
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release-assets/* --clobber
-            gh release edit "$TAG" --title "UN_Nexo ${TAG}" --notes-file RELEASE_NOTES.md --prerelease
+
+          retry() {
+            local attempt=1
+            while ! "$@"; do
+              if [ "$attempt" -ge 5 ]; then
+                echo "Command failed after $attempt attempts: $*" >&2
+                return 1
+              fi
+              sleep $((attempt * 3))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          RELEASE_ID="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"${TAG}\") | .id" | head -n1 || true)"
+          NOTES="$(cat RELEASE_NOTES.md)"
+
+          if [ -n "$RELEASE_ID" ]; then
+            # Recover drafts left behind by a transient create/edit API failure.
+            retry gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="UN_Nexo ${TAG}" \
+              -f body="$NOTES" \
+              -F prerelease=true \
+              -F draft=false >/dev/null
+            retry gh release upload "$TAG" release-assets/* --clobber
           else
-            gh release create "$TAG" release-assets/* --target "$GITHUB_SHA" --title "UN_Nexo ${TAG}" --notes-file RELEASE_NOTES.md --prerelease
+            retry gh release create "$TAG" release-assets/* \
+              --target "$GITHUB_SHA" \
+              --title "UN_Nexo ${TAG}" \
+              --notes-file RELEASE_NOTES.md \
+              --prerelease
           fi
