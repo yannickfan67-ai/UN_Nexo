@@ -18,6 +18,8 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool isInstallBusy;
     [ObservableProperty] private bool isHomeVisible = true;
     [ObservableProperty] private bool isInstancesVisible;
+    [ObservableProperty] private bool hasSelectedInstance;
+    [ObservableProperty] private bool hasSelectedVersion;
     [ObservableProperty] private string launcherStatus = "Ready";
     [ObservableProperty] private string minecraftDirectory = "Detecting…";
     [ObservableProperty] private string instanceRoot = "Detecting…";
@@ -26,6 +28,7 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string latestRelease = "Unknown";
     [ObservableProperty] private string latestSnapshot = "Unknown";
     [ObservableProperty] private string instanceSummary = "0 instances";
+    [ObservableProperty] private string catalogStatus = "Loading version catalog…";
     [ObservableProperty] private string newInstanceName = "New Minecraft";
     [ObservableProperty] private MinecraftVersionInfo? selectedVersion;
     [ObservableProperty] private GameInstance? selectedInstance;
@@ -51,6 +54,29 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     public Task InitializeAsync() => RefreshEnvironmentAsync();
+
+    partial void OnSelectedVersionChanged(MinecraftVersionInfo? value)
+    {
+        HasSelectedVersion = value is not null;
+        if (value is not null
+            && (NewInstanceName == "New Minecraft" || NewInstanceName.StartsWith("Minecraft ", StringComparison.Ordinal)))
+            NewInstanceName = $"Minecraft {value.Id}";
+    }
+
+    partial void OnSelectedInstanceChanged(GameInstance? value)
+    {
+        HasSelectedInstance = value is not null;
+        if (value is null)
+        {
+            InstallProgressValue = 0;
+            InstallProgressText = "Not installed";
+            return;
+        }
+
+        var prepared = File.Exists(Path.Combine(_paths.GetInstanceDirectory(value.Id), "install-state.json"));
+        InstallProgressValue = prepared ? 100 : 0;
+        InstallProgressText = prepared ? "Vanilla files prepared" : "Not installed";
+    }
 
     [RelayCommand]
     private void ShowHome()
@@ -78,6 +104,9 @@ public partial class MainWindowViewModel : ObservableObject
         InstanceRoot = _paths.GetInstancesRoot();
         _paths.EnsureDirectories();
 
+        var previousInstanceId = SelectedInstance?.Id;
+        var previousVersionId = SelectedVersion?.Id;
+
         try
         {
             var javaTask = _javaDiscovery.DiscoverAsync();
@@ -99,21 +128,34 @@ public partial class MainWindowViewModel : ObservableObject
             AvailableVersions.Clear();
             if (catalog is not null)
             {
-                foreach (var version in catalog.Versions.Where(v => v.Type is "release" or "snapshot").Take(120))
+                var releases = catalog.Versions.Where(v => v.Type.Equals("release", StringComparison.OrdinalIgnoreCase)).ToArray();
+                var recentSnapshots = catalog.Versions
+                    .Where(v => v.Type.Equals("snapshot", StringComparison.OrdinalIgnoreCase))
+                    .Take(40)
+                    .ToArray();
+
+                foreach (var version in releases.Concat(recentSnapshots))
                     AvailableVersions.Add(version);
 
                 LatestRelease = catalog.Latest.LatestRelease;
                 LatestSnapshot = catalog.Latest.LatestSnapshot;
-                SelectedVersion ??= AvailableVersions.FirstOrDefault(v => v.Id == catalog.Latest.LatestRelease)
+                CatalogStatus = $"{releases.Length} releases · {recentSnapshots.Length} recent snapshots";
+
+                SelectedVersion = AvailableVersions.FirstOrDefault(v => v.Id == previousVersionId)
+                    ?? AvailableVersions.FirstOrDefault(v => v.Id == catalog.Latest.LatestRelease)
                     ?? AvailableVersions.FirstOrDefault();
             }
             else
             {
                 LatestRelease = "Offline";
                 LatestSnapshot = "Offline";
+                CatalogStatus = "Version catalog unavailable · check network and refresh";
+                SelectedVersion = null;
             }
 
-            SelectedInstance ??= Instances.FirstOrDefault();
+            SelectedInstance = Instances.FirstOrDefault(v => v.Id == previousInstanceId)
+                ?? Instances.FirstOrDefault();
+
             JavaSummary = java.Count == 0 ? "No Java found" : $"{java.Count} Java installation{(java.Count == 1 ? string.Empty : "s")}";
             JavaDetail = java.Count == 0
                 ? "No Java runtime detected. Nexo will support per-instance runtime selection."
@@ -124,6 +166,7 @@ public partial class MainWindowViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            CatalogStatus = "Version catalog unavailable";
             LauncherStatus = $"Scan failed: {ex.Message}";
         }
         finally
@@ -147,7 +190,6 @@ public partial class MainWindowViewModel : ObservableObject
             Instances.Add(instance);
             SelectedInstance = instance;
             InstanceSummary = $"{Instances.Count} instance{(Instances.Count == 1 ? string.Empty : "s")}";
-            NewInstanceName = $"Minecraft {SelectedVersion.Id}";
             LauncherStatus = $"Created {instance.Name}";
         }
         catch (Exception ex)
