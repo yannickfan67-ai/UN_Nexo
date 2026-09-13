@@ -10,12 +10,20 @@ public sealed class MinecraftVanillaInstallService
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
     private readonly DownloadSourceService _downloadSources;
+    private readonly TimeSpan _transferIdleTimeout;
 
-    public MinecraftVanillaInstallService(HttpClient httpClient, NexoPathService paths, DownloadSourceService downloadSources)
+    public MinecraftVanillaInstallService(
+        HttpClient httpClient,
+        NexoPathService paths,
+        DownloadSourceService downloadSources,
+        TimeSpan? transferIdleTimeout = null)
     {
         _httpClient = httpClient;
         _paths = paths;
         _downloadSources = downloadSources;
+        _transferIdleTimeout = transferIdleTimeout ?? TimeSpan.FromSeconds(30);
+        if (_transferIdleTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(transferIdleTimeout), "Transfer idle timeout must be positive.");
     }
 
     public async Task InstallAsync(
@@ -312,7 +320,7 @@ public sealed class MinecraftVanillaInstallService
                 await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
                 await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true))
                 {
-                    await input.CopyToAsync(output, cancellationToken);
+                    await CopyWithIdleTimeoutAsync(input, output, candidate, cancellationToken);
                 }
 
                 if (!await HashMatchesAsync(temporaryPath, expectedSha1, cancellationToken))
@@ -325,7 +333,11 @@ public sealed class MinecraftVanillaInstallService
                 File.Move(temporaryPath, path, overwrite: true);
                 return;
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or TimeoutException)
             {
                 lastException = ex;
             }
@@ -335,6 +347,36 @@ public sealed class MinecraftVanillaInstallService
             File.Delete(temporaryPath);
 
         throw lastException ?? new HttpRequestException($"No download source was available for {Path.GetFileName(path)}.");
+    }
+
+    private async Task CopyWithIdleTimeoutAsync(
+        Stream input,
+        Stream output,
+        string candidate,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[128 * 1024];
+        while (true)
+        {
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            idle.CancelAfter(_transferIdleTimeout);
+
+            int read;
+            try
+            {
+                read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), idle.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Download from {new Uri(candidate).Host} made no progress for {_transferIdleTimeout.TotalSeconds:0.#} seconds.");
+            }
+
+            if (read == 0)
+                return;
+
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
     }
 
     private static async Task<bool> HashMatchesAsync(string path, string? expectedSha1, CancellationToken cancellationToken)
