@@ -18,7 +18,8 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         CancellationToken cancellationToken = default)
     {
         if (!instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
-            && !instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
+            && !instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase)
+            && !instance.Loader.Equals("forge", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
                 $"Loader '{instance.Loader}' cannot be launched in this build yet.");
         if (!account.IsOffline)
