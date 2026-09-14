@@ -9,17 +9,11 @@ public sealed class MinecraftRuntimeInspector(NexoPathService paths)
         GameInstance instance,
         CancellationToken cancellationToken = default)
     {
-        var metadataPath = Path.Combine(
-            paths.GetInstanceGameDirectory(instance.Id),
-            "versions", instance.VersionId, instance.VersionId + ".json");
-        if (!File.Exists(metadataPath))
-            return null;
-
         try
         {
-            await using var stream = File.OpenRead(metadataPath);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var root = document.RootElement;
+            using var resolved = await new MinecraftVersionMetadataResolver()
+                .ResolveAsync(paths.GetInstanceGameDirectory(instance.Id), instance.VersionId, cancellationToken);
+            var root = resolved.Document.RootElement;
             return root.TryGetProperty("javaVersion", out var javaVersion)
                 && javaVersion.TryGetProperty("majorVersion", out var major)
                 ? major.GetInt32()
@@ -30,6 +24,10 @@ public sealed class MinecraftRuntimeInspector(NexoPathService paths)
             return null;
         }
         catch (IOException)
+        {
+            return null;
+        }
+        catch (InvalidDataException)
         {
             return null;
         }

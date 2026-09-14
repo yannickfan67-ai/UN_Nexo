@@ -17,8 +17,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         IEnumerable<JavaInstallation> installations,
         CancellationToken cancellationToken = default)
     {
-        if (!instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Only Vanilla instances can be launched in this build.");
+        if (!instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
+            && !instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Loader '{instance.Loader}' cannot be launched in this build yet.");
         if (!account.IsOffline)
             throw new InvalidOperationException(
                 "Microsoft sign-in is not available yet. Select an offline profile for local play.");
@@ -26,25 +28,21 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             || !Guid.TryParse(account.Uuid, out var uuid))
             throw new InvalidDataException("The selected offline profile is invalid.");
         if (RuntimeInformation.OSArchitecture != Architecture.X64)
-            throw new PlatformNotSupportedException("Vanilla launch currently requires x64.");
+            throw new PlatformNotSupportedException("Minecraft launch currently requires x64.");
 
         var instanceRoot = Within(paths.GetInstancesRoot(), instance.Id);
-        RequireFile(Path.Combine(instanceRoot, "install-state.json"));
         var gameRoot = Within(instanceRoot, "game");
-        var versionRoot = Within(Path.Combine(gameRoot, "versions"), instance.VersionId);
-        var metadataPath = Within(versionRoot, instance.VersionId + ".json");
-        RequireFile(metadataPath);
-
-        using var metadataDocument = await ReadJsonAsync(metadataPath, cancellationToken);
-        var root = metadataDocument.RootElement;
-        if (root.TryGetProperty("inheritsFrom", out _))
-            throw new InvalidDataException("Inherited versions are not supported yet.");
+        using var resolved = await new MinecraftVersionMetadataResolver()
+            .ResolveAsync(gameRoot, instance.VersionId, cancellationToken);
+        var root = resolved.Document.RootElement;
         if (!string.Equals(root.GetProperty("id").GetString(), instance.VersionId,
                 StringComparison.Ordinal))
-            throw new InvalidDataException("Instance and version metadata do not match.");
+            throw new InvalidDataException("Instance and resolved version metadata do not match.");
 
         var requiredJava = root.TryGetProperty("javaVersion", out var javaVersion)
-            ? javaVersion.GetProperty("majorVersion").GetInt32() : 8;
+            && javaVersion.TryGetProperty("majorVersion", out var majorVersion)
+            ? majorVersion.GetInt32()
+            : 8;
         var java = installations
             .Where(item => item.Is64Bit && File.Exists(item.JavaPath))
             .OrderBy(item => JavaMajor(item.Version) == requiredJava ? 0 : 1)
@@ -56,7 +54,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         }
 
         var librariesRoot = Within(gameRoot, "libraries");
-        var nativesRoot = Within(gameRoot, Path.Combine("natives", instance.VersionId));
+        var nativesRoot = Within(gameRoot, Path.Combine("natives", resolved.ClientVersionId));
         Directory.CreateDirectory(nativesRoot);
         var classpath = new List<string>();
 
@@ -67,22 +65,34 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!MinecraftRules.Allows(library))
                     continue;
-                if (!library.TryGetProperty("downloads", out var downloads))
-                    throw new InvalidDataException("A library has no download metadata.");
 
-                if (downloads.TryGetProperty("artifact", out var artifact))
+                var artifactAdded = false;
+                if (library.TryGetProperty("downloads", out var downloads)
+                    && downloads.TryGetProperty("artifact", out var artifact))
                 {
                     var artifactPath = artifact.GetProperty("path").GetString()
                         ?? throw new InvalidDataException("A library artifact has no path.");
                     var file = Within(librariesRoot, artifactPath);
                     RequireFile(file, artifact);
                     classpath.Add(file);
+                    artifactAdded = true;
+                }
+
+                if (!artifactAdded
+                    && library.TryGetProperty("name", out var libraryName)
+                    && !string.IsNullOrWhiteSpace(libraryName.GetString()))
+                {
+                    var relative = MavenArtifactPath.FromCoordinate(libraryName.GetString()!);
+                    var file = Within(librariesRoot, relative);
+                    RequireFile(file);
+                    classpath.Add(file);
                 }
 
                 var classifier = MinecraftRules.NativeClassifier(library);
                 if (classifier is null)
                     continue;
-                if (!downloads.TryGetProperty("classifiers", out var classifiers)
+                if (!library.TryGetProperty("downloads", out downloads)
+                    || !downloads.TryGetProperty("classifiers", out var classifiers)
                     || !classifiers.TryGetProperty(classifier, out var nativeArtifact))
                     throw new InvalidDataException("A native library is missing its classifier.");
 
@@ -92,12 +102,19 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             }
         }
 
-        var clientPath = Within(versionRoot, instance.VersionId + ".jar");
-        RequireFile(clientPath, root.GetProperty("downloads").GetProperty("client"));
+        var clientVersionRoot = Within(
+            Path.Combine(gameRoot, "versions"),
+            resolved.ClientVersionId);
+        var clientPath = Within(clientVersionRoot, resolved.ClientVersionId + ".jar");
+        if (!root.TryGetProperty("downloads", out var rootDownloads)
+            || !rootDownloads.TryGetProperty("client", out var clientMetadata))
+            throw new InvalidDataException("Resolved version metadata has no Minecraft client download.");
+        RequireFile(clientPath, clientMetadata);
         classpath.Add(clientPath);
 
         var assetsRoot = Within(gameRoot, "assets");
-        var assetIndex = root.GetProperty("assetIndex");
+        if (!root.TryGetProperty("assetIndex", out var assetIndex))
+            throw new InvalidDataException("Resolved version metadata has no asset index.");
         var assetId = assetIndex.GetProperty("id").GetString()
             ?? throw new InvalidDataException("Asset index has no id.");
         var indexPath = Within(Path.Combine(assetsRoot, "indexes"), assetId + ".json");
@@ -112,7 +129,8 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         var mapToResources = index.TryGetProperty("map_to_resources", out var resourcesElement)
             && resourcesElement.GetBoolean();
         var virtualRoot = virtualAssets
-            ? Within(Path.Combine(assetsRoot, "virtual"), assetId) : assetsRoot;
+            ? Within(Path.Combine(assetsRoot, "virtual"), assetId)
+            : assetsRoot;
         var resourceRoot = Within(gameRoot, "resources");
         var gameAssetsRoot = mapToResources
             ? resourceRoot
@@ -129,7 +147,8 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                     ?? throw new InvalidDataException("Asset has no hash.");
                 if (!Regex.IsMatch(hash, "^[a-fA-F0-9]{40}$"))
                     throw new InvalidDataException("Asset hash is invalid.");
-                var objectPath = Within(Path.Combine(assetsRoot, "objects"),
+                var objectPath = Within(
+                    Path.Combine(assetsRoot, "objects"),
                     Path.Combine(hash[..2], hash));
                 RequireFile(objectPath, property.Value);
                 if (virtualAssets)
@@ -143,6 +162,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? typeof(MinecraftLaunchPlanBuilder).Assembly.GetName().Version?.ToString()
             ?? "dev";
+        var versionType = root.TryGetProperty("type", out var typeElement)
+            ? typeElement.GetString() ?? "release"
+            : "release";
 
         var substitutions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -154,8 +176,8 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             ["user_properties"] = "{}",
             ["clientid"] = "0",
             ["auth_xuid"] = "0",
-            ["version_name"] = instance.VersionId,
-            ["version_type"] = root.GetProperty("type").GetString() ?? "release",
+            ["version_name"] = resolved.LaunchVersionId,
+            ["version_type"] = versionType,
             ["game_directory"] = gameRoot,
             ["assets_root"] = assetsRoot,
             ["assets_index_name"] = assetId,
@@ -213,7 +235,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             arguments.AddRange(SplitLegacy(legacyArguments.GetString() ?? string.Empty).Select(Expand));
 
         return new MinecraftLaunchPlan(
-            java.JavaPath, gameRoot, arguments,
+            java.JavaPath,
+            gameRoot,
+            arguments,
             Within(instanceRoot, "launcher-logs"));
     }
 
@@ -223,7 +247,8 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         if (!int.TryParse(parts[0], out var major))
             return 0;
         return major == 1 && parts.Length > 1 && int.TryParse(parts[1], out var legacy)
-            ? legacy : major;
+            ? legacy
+            : major;
     }
 
     internal static string Within(string directory, string relative)
@@ -232,9 +257,11 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             throw new InvalidDataException("Invalid relative game path.");
         var root = Path.GetFullPath(directory) + Path.DirectorySeparatorChar;
         var result = Path.GetFullPath(Path.Combine(
-            directory, relative.Replace('/', Path.DirectorySeparatorChar)));
+            directory,
+            relative.Replace('/', Path.DirectorySeparatorChar)));
         if (!result.StartsWith(root, OperatingSystem.IsWindows()
-                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal))
             throw new InvalidDataException("Game metadata path escapes its directory.");
         return result;
     }
@@ -243,13 +270,17 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
     {
         var info = new FileInfo(file);
         if (!info.Exists || info.Length == 0
-            || (metadata.HasValue && metadata.Value.TryGetProperty("size", out var size)
+            || (metadata.HasValue
+                && metadata.Value.TryGetProperty("size", out var size)
                 && info.Length != size.GetInt64()))
             throw new FileNotFoundException(
-                $"Missing or incomplete file: {file}. Run Prepare Vanilla files again.", file);
+                $"Missing or incomplete file: {file}. Run Prepare instance files again.",
+                file);
     }
 
-    private static async Task<JsonDocument> ReadJsonAsync(string file, CancellationToken cancellationToken)
+    private static async Task<JsonDocument> ReadJsonAsync(
+        string file,
+        CancellationToken cancellationToken)
     {
         await using var stream = File.OpenRead(file);
         return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
@@ -310,7 +341,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                 }
             }
             else
+            {
                 current.Append(character);
+            }
         }
 
         if (quote != '\0')
