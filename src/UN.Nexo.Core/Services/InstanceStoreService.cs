@@ -38,11 +38,24 @@ public sealed class InstanceStoreService
         return result.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public async Task<GameInstance> CreateAsync(string name, string versionId, string loader = "vanilla", CancellationToken cancellationToken = default)
+    public async Task<GameInstance> CreateAsync(
+        string name,
+        string versionId,
+        string loader = "vanilla",
+        string? baseVersionId = null,
+        string? loaderVersion = null,
+        CancellationToken cancellationToken = default)
     {
         _paths.EnsureDirectories();
         var id = Guid.NewGuid().ToString("N");
-        var instance = new GameInstance(id, name.Trim(), versionId.Trim(), loader.Trim(), DateTimeOffset.UtcNow);
+        var instance = new GameInstance(
+            id,
+            name.Trim(),
+            versionId.Trim(),
+            loader.Trim(),
+            DateTimeOffset.UtcNow,
+            string.IsNullOrWhiteSpace(baseVersionId) ? null : baseVersionId.Trim(),
+            string.IsNullOrWhiteSpace(loaderVersion) ? null : loaderVersion.Trim());
         var directory = Path.Combine(_paths.GetInstancesRoot(), id);
         Directory.CreateDirectory(directory);
 
