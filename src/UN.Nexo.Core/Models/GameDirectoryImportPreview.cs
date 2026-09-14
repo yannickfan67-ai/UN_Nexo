@@ -15,7 +15,11 @@ public sealed record ImportVersionCandidate(
 
     public string SupportLabel => IsSupportedLoader
         ? "Launchable in this build"
-        : "Importable; loader launch support is not available yet";
+        : Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase)
+            ? "Importable and launchable after Fabric preparation"
+            : Loader.Equals("forge", StringComparison.OrdinalIgnoreCase)
+                ? "Importable; Forge launch support is still in progress"
+                : "Importable; loader launch support is not available yet";
 }
 
 public sealed record GameDirectoryImportPreview(
