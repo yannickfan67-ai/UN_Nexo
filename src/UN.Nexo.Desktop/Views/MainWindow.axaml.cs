@@ -12,12 +12,17 @@ public sealed partial class MainWindow : Window
     private readonly MainWindowViewModel _viewModel;
     private readonly NexoPathService _paths;
     private readonly MinecraftVanillaInstallService _installer;
+    private readonly MinecraftVersionManifestService _manifest;
+    private readonly InstanceStoreService _instances;
+    private readonly FabricMetaService _fabricMeta;
+    private readonly FabricInstallService _fabricInstaller;
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
     private InstanceRepairWindow? _repairWindow;
     private InstanceBackupWindow? _backupWindow;
     private GameImportWindow? _importWindow;
+    private FabricManagerWindow? _fabricWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
     public MainWindow()
@@ -46,11 +51,19 @@ public sealed partial class MainWindow : Window
 
         LauncherStartupTrace.Write("[startup] Creating launcher services");
         _installer = new MinecraftVanillaInstallService(downloadHttpClient, _paths, downloadSources);
+        _manifest = new MinecraftVersionManifestService(manifestHttpClient, downloadSources);
+        _instances = new InstanceStoreService(_paths);
+        _fabricMeta = new FabricMetaService(manifestHttpClient);
+        _fabricInstaller = new FabricInstallService(
+            downloadHttpClient,
+            _paths,
+            _installer,
+            _fabricMeta);
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(_paths),
             _paths,
-            new MinecraftVersionManifestService(manifestHttpClient, downloadSources),
-            new InstanceStoreService(_paths),
+            _manifest,
+            _instances,
             _installer,
             new AccountStoreService(_paths),
             new LauncherSettingsService(_paths),
@@ -113,15 +126,26 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(Math.Min(3, nav.Children.Count), servers);
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Fabric")))
+        {
+            var fabric = new Button { Content = "Fabric" };
+            fabric.Classes.Add("nav");
+            fabric.Click += (_, _) => OpenFabric();
+            var instancesIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Instances")).index;
+            nav.Children.Insert(Math.Min(instancesIndex + 1, nav.Children.Count), fabric);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Import")))
         {
             var import = new Button { Content = "Import" };
             import.Classes.Add("nav");
             import.Click += (_, _) => OpenImport();
-            var instancesIndex = nav.Children
+            var fabricIndex = nav.Children
                 .Select((child, index) => (child, index))
-                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Instances")).index;
-            nav.Children.Insert(Math.Min(instancesIndex + 1, nav.Children.Count), import);
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Fabric")).index;
+            nav.Children.Insert(Math.Min(fabricIndex + 1, nav.Children.Count), import);
         }
 
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Runtime")))
@@ -191,6 +215,25 @@ public sealed partial class MainWindow : Window
         _serverHub = new ServerHubWindow(_viewModel);
         _serverHub.Closed += (_, _) => _serverHub = null;
         _serverHub.Show(this);
+    }
+
+    private void OpenFabric()
+    {
+        if (_fabricWindow is not null)
+        {
+            _fabricWindow.Activate();
+            return;
+        }
+
+        _fabricWindow = new FabricManagerWindow(
+            _viewModel,
+            _manifest,
+            _instances,
+            _fabricMeta,
+            _fabricInstaller,
+            _installer);
+        _fabricWindow.Closed += (_, _) => _fabricWindow = null;
+        _fabricWindow.Show(this);
     }
 
     private void OpenImport()
