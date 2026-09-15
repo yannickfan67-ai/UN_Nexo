@@ -194,7 +194,7 @@ public sealed class FabricInstallService(
                 var sha1 = artifact.TryGetProperty("sha1", out var sha) ? sha.GetString() : null;
                 result.Add(new LibraryDownload(
                     url,
-                    Path.Combine(librariesRoot, relative.Replace('/', Path.DirectorySeparatorChar)),
+                    MinecraftLaunchPlanBuilder.Within(librariesRoot, relative),
                     sha1));
                 continue;
             }
@@ -210,7 +210,7 @@ public sealed class FabricInstallService(
             var urlPath = relativePath.Replace(Path.DirectorySeparatorChar, '/');
             result.Add(new LibraryDownload(
                 baseUrl.TrimEnd('/') + "/" + urlPath,
-                Path.Combine(librariesRoot, relativePath),
+                MinecraftLaunchPlanBuilder.Within(librariesRoot, relativePath),
                 null));
         }
 
