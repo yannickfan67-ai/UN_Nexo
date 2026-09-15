@@ -9,6 +9,7 @@ namespace UN.Nexo.Core.Services;
 public sealed partial class AccountStoreService
 {
     private readonly NexoPathService _paths;
+    private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public AccountStoreService(NexoPathService paths)
@@ -16,7 +17,43 @@ public sealed partial class AccountStoreService
         _paths = paths;
     }
 
-    public async Task<IReadOnlyList<LauncherAccount>> GetAllAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<LauncherAccount>> GetAllAsync(CancellationToken cancellationToken = default)
+        => ReadAccountsAsync(tolerateReadErrors: true, cancellationToken);
+
+    public async Task<LauncherAccount> CreateOfflineAsync(string username, CancellationToken cancellationToken = default)
+    {
+        var normalized = username.Trim();
+        if (!OfflineNameRegex().IsMatch(normalized))
+            throw new ArgumentException("Offline name must be 3-16 characters using letters, numbers or underscore.", nameof(username));
+
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+            var existing = accounts.FirstOrDefault(x => x.IsOffline && x.DisplayName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+                return existing;
+
+            var account = new LauncherAccount(
+                $"offline:{normalized.ToLowerInvariant()}",
+                "offline",
+                normalized,
+                CreateOfflineUuid(normalized),
+                DateTimeOffset.UtcNow);
+
+            accounts.Add(account);
+            await SaveAtomicAsync(accounts, cancellationToken);
+            return account;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<LauncherAccount>> ReadAccountsAsync(
+        bool tolerateReadErrors,
+        CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
         var path = GetAccountsPath();
@@ -28,44 +65,43 @@ public sealed partial class AccountStoreService
             await using var stream = File.OpenRead(path);
             return await JsonSerializer.DeserializeAsync<List<LauncherAccount>>(stream, _jsonOptions, cancellationToken) ?? [];
         }
-        catch (JsonException)
+        catch (JsonException) when (tolerateReadErrors)
         {
             return [];
         }
-        catch (IOException)
+        catch (IOException) when (tolerateReadErrors)
         {
             return [];
         }
     }
 
-    public async Task<LauncherAccount> CreateOfflineAsync(string username, CancellationToken cancellationToken = default)
-    {
-        var normalized = username.Trim();
-        if (!OfflineNameRegex().IsMatch(normalized))
-            throw new ArgumentException("Offline name must be 3-16 characters using letters, numbers or underscore.", nameof(username));
-
-        var accounts = (await GetAllAsync(cancellationToken)).ToList();
-        var existing = accounts.FirstOrDefault(x => x.IsOffline && x.DisplayName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
-        if (existing is not null)
-            return existing;
-
-        var account = new LauncherAccount(
-            $"offline:{normalized.ToLowerInvariant()}",
-            "offline",
-            normalized,
-            CreateOfflineUuid(normalized),
-            DateTimeOffset.UtcNow);
-
-        accounts.Add(account);
-        await SaveAsync(accounts, cancellationToken);
-        return account;
-    }
-
-    private async Task SaveAsync(IReadOnlyList<LauncherAccount> accounts, CancellationToken cancellationToken)
+    private async Task SaveAtomicAsync(IReadOnlyList<LauncherAccount> accounts, CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
-        await using var stream = File.Create(GetAccountsPath());
-        await JsonSerializer.SerializeAsync(stream, accounts, _jsonOptions, cancellationToken);
+        var path = GetAccountsPath();
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var stream = new FileStream(
+                temp,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                16 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await JsonSerializer.SerializeAsync(stream, accounts, _jsonOptions, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            TryDeleteFile(temp);
+            throw;
+        }
     }
 
     private string GetAccountsPath() => Path.Combine(_paths.GetDataRoot(), "accounts.json");
@@ -77,6 +113,19 @@ public sealed partial class AccountStoreService
         digest[8] = (byte)((digest[8] & 0x3F) | 0x80);
         var hex = Convert.ToHexString(digest).ToLowerInvariant();
         return $"{hex[..8]}-{hex[8..12]}-{hex[12..16]}-{hex[16..20]}-{hex[20..32]}";
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+            // Best-effort cleanup only.
+        }
     }
 
     [GeneratedRegex("^[A-Za-z0-9_]{3,16}$", RegexOptions.CultureInvariant)]
