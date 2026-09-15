@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  test-core:
+  test-release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     steps:
@@ -17,11 +17,25 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
-      - name: Run launch and download regression checks
-        run: dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release
-      - name: Run stability regression checks
+      - name: Restore
+        run: dotnet restore UN_Nexo.sln
+      - name: Build
+        run: dotnet build UN_Nexo.sln -c Release --no-restore
+      - name: Core regression checks
+        run: dotnet run --project tests/UN.Nexo.Core.Tests/UN.Nexo.Core.Tests.csproj -c Release --no-build
+      - name: Diagnostics regression checks
+        run: dotnet run --project tests/UN.Nexo.Diagnostics.Tests/UN.Nexo.Diagnostics.Tests.csproj -c Release
+      - name: Server status regression checks
+        run: dotnet run --project tests/UN.Nexo.ServerStatus.Tests/UN.Nexo.ServerStatus.Tests.csproj -c Release
+      - name: Instance lifecycle regression checks
+        run: dotnet run --project tests/UN.Nexo.InstanceLifecycle.Tests/UN.Nexo.InstanceLifecycle.Tests.csproj -c Release
+      - name: Game directory import regression checks
+        run: dotnet run --project tests/UN.Nexo.Import.Tests/UN.Nexo.Import.Tests.csproj -c Release
+      - name: Fabric inheritance regression checks
+        run: dotnet run --project tests/UN.Nexo.Fabric.Tests/UN.Nexo.Fabric.Tests.csproj -c Release
+      - name: Stability regression checks
         run: dotnet run --project tests/UN.Nexo.Stability.Tests/UN.Nexo.Stability.Tests.csproj -c Release
-      - name: Run instance repair regression checks
+      - name: Instance repair regression checks
         run: dotnet run --project tests/UN.Nexo.Repair.Tests/UN.Nexo.Repair.Tests.csproj -c Release
 
   build-windows:
@@ -122,7 +136,6 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '\r\n' < VERSION)"
           DEB="UN_Nexo-${VERSION}-linux-x64.deb"
-          echo "Declared dependencies:"
           dpkg-deb -f "release/$DEB" Depends
           docker run --rm -v "$PWD/release:/packages:ro" ubuntu:24.04 bash -lc \
             "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libxtst6 | grep -q 'install ok installed' && ldconfig -p | grep -q 'libXtst.so.6' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
@@ -147,7 +160,7 @@ jobs:
 
   publish-release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
-    needs: [test-core, build-windows, build-linux-packages]
+    needs: [test-release, build-windows, build-linux-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -167,124 +180,44 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Instance check and repair
-          - Adds a dedicated Repair utility for the selected Vanilla instance
-          - Checks install state, version metadata, client JAR, libraries, asset index and objects, extracted natives, required Java and Linux libXtst
-          - Verifies Mojang SHA-1 metadata and rejects unsafe metadata paths or malformed hashes
-          - Reuses verified files and reacquires only missing or corrupt Vanilla components
-          - Rebuilds historical virtual assets and current pre-1.6 resource mappings after object repair
-          - Keeps worlds, mods, resource packs, screenshots and ordinary game configuration outside the repair write set
+          ### Fabric and instance management
+          - Adds launch support for inherited Minecraft version profiles and Fabric Loader/KnotClient.
+          - Adds a Fabric Manager that queries compatible loader versions, creates isolated Fabric instances, and prepares imported Fabric profiles.
+          - Keeps loader libraries, mods and game data scoped to the selected Nexo instance.
 
-          ### Reliability carried forward
-          - Bounds stalled response bodies and falls back from an idle mirror to the official Minecraft source
-          - Preserves explicit user cancellation instead of silently retrying it
-          - Validates cached Nexo-managed Java before reuse and reacquires damaged runtimes
-          - Preserves launch failure, stop and exit results instead of immediately overwriting them with Ready
-          - Adds the Linux libXtst runtime dependency needed by Java 8 / LWJGL 2 launch paths
-          - Release CI now runs launch/download, stability and repair regressions before publishing
+          ### Import, backup and recovery
+          - Imports existing .minecraft/game directories through a scan-and-preview flow while leaving the source untouched.
+          - Adds independent instance cloning plus manual world backup and restore with staging and restore-safety copies.
+          - Rejects incomplete or size-mismatched world backup archives before replacing the active save.
 
-          ### Compatibility carried forward
-          - Automatic SHA-256-verified Eclipse Temurin acquisition when the required Java major is missing
-          - Modern 1.21.4, legacy 1.8.9 and real Minecraft 1.5.2 launch paths
-          - Minecraft 1.5.2 pre-1.6 resource mapping plus LaunchWrapper and LWJGL 2 compatibility
-          - Official/BMCLAPI downloads with official fallback and hash verification
-          - Server Hub favorites with modern Quick Play and legacy direct-connect launch paths
-          - Persistent launch tracing and Java process heartbeat diagnostics
+          ### Server and diagnostics improvements
+          - Adds live Java server status, latency, player counts, protocol-aware compatibility hints and default-instance links in Server Hub.
+          - Adds persistent crash diagnosis, sanitized diagnostic previews and bounded ZIP diagnostic export.
+          - Bundles a CJK fallback font so portable/Linux builds do not depend solely on host CJK fonts.
 
-          ### Font and Linux compatibility
-          - Bundles Avalonia Inter for a reliable baseline UI font
-          - Debian/Mint packages require Noto CJK, full fontconfig support and libXtst
-          - Release CI installs the final DEB in a clean Ubuntu 24.04 container, validates libXtst and Noto CJK resolution, and launches the packaged UI under Xvfb
-          - Windows and Linux packages remain self-contained for the .NET runtime
+          ### Runtime and reliability hardening
+          - Blocks JVM argument-file, classpath, heap-limit and alternate module/JAR entry-point bypasses of launcher-managed options.
+          - Preserves startup tracing, bounded network operations, repair checks, Java runtime validation and download fallback behavior.
+          - Release CI now runs Core, Diagnostics, Server Status, Instance Lifecycle, Import, Fabric, Stability and Repair regressions before publishing.
+          - Windows and Linux packages remain self-contained for the .NET runtime; Linux DEB packaging is installed and UI-smoke-tested under Xvfb.
 
           ### Current limitations
-          - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved application registration
-          - Repair currently targets Vanilla instance contents; loader-specific repair will arrive with loader support
-          - Runtime overrides are currently global; per-instance memory/JVM overrides are not implemented yet
-          - Friend-to-friend room-code/P2P networking is not included yet
-          - Fabric, Forge and NeoForge installers are not included yet
-          - HTTP Range resume and mod/resource-pack/shader management are not implemented yet
-          - Real Linux Mint/Cinnamon game-menu validation is still an on-device acceptance check
+          - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved Microsoft application registration.
+          - Forge support is still under development and is not included in this release.
+          - Sodium/Iris compatibility installation is not included yet.
+          - Per-instance runtime overrides and friend-to-friend room-code/P2P networking are not implemented yet.
+          - Real Linux Mint/Cinnamon game-menu behavior remains an on-device acceptance check.
 
-          This is a development pre-release. Local profiles do not replace Minecraft ownership or authenticated online play.
+          This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
           EOF
 
-          retry() {
-            local attempt=1
-            while ! "$@"; do
-              if [ "$attempt" -ge 5 ]; then
-                echo "Command failed after $attempt attempts: $*" >&2
-                return 1
-              fi
-              sleep $((attempt * 3))
-              attempt=$((attempt + 1))
-            done
-          }
-
-          find_release_id() {
-            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"${TAG}\") | .id" 2>/dev/null | head -n1 || true
-          }
-
-          release_is_public() {
-            local id="$1"
-            local attempt state
-            for attempt in 1 2 3 4 5; do
-              state="$(gh api "repos/${GITHUB_REPOSITORY}/releases/${id}" \
-                --jq "select(.tag_name == \"${TAG}\" and .draft == false and .prerelease == true) | .id" 2>/dev/null || true)"
-              if [ "$state" = "$id" ]; then
-                return 0
-              fi
-              sleep $((attempt * 2))
-            done
-            return 1
-          }
-
-          assets_are_present() {
-            local id="$1"
-            local names expected
-            names="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${id}/assets?per_page=100" \
-              --jq '.[].name' 2>/dev/null || true)"
-            for expected in release-assets/*; do
-              basename "$expected"
-            done | while read -r expected; do
-              echo "$names" | grep -Fxq "$expected" || exit 1
-            done
-          }
-
-          RELEASE_ID="$(find_release_id)"
-          NOTES="$(cat RELEASE_NOTES.md)"
-
-          if [ -n "$RELEASE_ID" ]; then
-            if ! retry gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
-              -f tag_name="$TAG" \
-              -f target_commitish="$GITHUB_SHA" \
-              -f name="UN_Nexo ${TAG}" \
-              -f body="$NOTES" \
-              -F prerelease=true \
-              -F draft=false >/dev/null; then
-              if ! release_is_public "$RELEASE_ID"; then
-                exit 1
-              fi
-              echo "Release API response failed, but GitHub confirms the release is public."
-            fi
-
-            if ! retry gh release upload "$TAG" release-assets/* --clobber; then
-              if ! assets_are_present "$RELEASE_ID"; then
-                exit 1
-              fi
-              echo "Upload response failed, but every expected asset is present."
-            fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "UN_Nexo $TAG" --notes-file RELEASE_NOTES.md --prerelease
+            gh release upload "$TAG" release-assets/* --clobber
           else
-            if ! retry gh release create "$TAG" release-assets/* \
+            gh release create "$TAG" release-assets/* \
               --target "$GITHUB_SHA" \
-              --title "UN_Nexo ${TAG}" \
+              --title "UN_Nexo $TAG" \
               --notes-file RELEASE_NOTES.md \
-              --prerelease; then
-              RELEASE_ID="$(find_release_id)"
-              if [ -z "$RELEASE_ID" ] || ! release_is_public "$RELEASE_ID" || ! assets_are_present "$RELEASE_ID"; then
-                exit 1
-              fi
-              echo "Create response failed, but GitHub confirms the public release and all assets."
-            fi
+              --prerelease
           fi
