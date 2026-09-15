@@ -31,12 +31,14 @@ internal static class Program
             Directory.CreateDirectory(worldA);
             Directory.CreateDirectory(worldB);
             await File.WriteAllTextAsync(Path.Combine(worldA, "level.dat"), "original-A");
+            await File.WriteAllTextAsync(Path.Combine(worldA, "region.mca"), "region-data");
             await File.WriteAllTextAsync(Path.Combine(worldB, "state.bin"), "original-B");
 
             await TestCloneWithoutWorldsAsync(lifecycle, paths, source);
             await TestCloneWithWorldsAsync(lifecycle, paths, source);
             var backup = await TestBackupAsync(lifecycle, source);
             await TestRestoreSafetyAsync(lifecycle, paths, source, backup);
+            await TestIncompleteRestorePreservesCurrentWorldAsync(lifecycle, paths, source, backup);
             await TestCancelledCloneLeavesNoInstanceAsync(lifecycle, store, source);
             await TestMaliciousRestorePreservesCurrentWorldAsync(lifecycle, paths, source, backup);
 
@@ -206,6 +208,42 @@ internal static class Program
             "Failed restore must leave the active world untouched.");
         Require(!File.Exists(Path.Combine(paths.GetInstanceDirectory(source.Id), "outside.txt")),
             "Zip traversal must not write outside staging.");
+    }
+
+    private static async Task TestIncompleteRestorePreservesCurrentWorldAsync(
+        InstanceLifecycleService lifecycle, NexoPathService paths,
+        GameInstance source, WorldBackupInfo goodBackup)
+    {
+        var world = goodBackup.Worlds.Single(item => item.Name == "World A");
+        var level = Path.Combine(paths.GetInstanceGameDirectory(source.Id), "saves", world.Name, "level.dat");
+        foreach (var mode in new[] { "missing-file", "wrong-size" })
+        {
+            await File.WriteAllTextAsync(level, "current-world-must-survive");
+            var damagedPath = Path.Combine(Path.GetDirectoryName(goodBackup.FilePath)!, mode + ".zip");
+            File.Copy(goodBackup.FilePath, damagedPath);
+            using (var archive = ZipFile.Open(damagedPath, ZipArchiveMode.Update))
+            {
+                var entryName = world.ArchivePrefix + "/region.mca";
+                archive.GetEntry(entryName)!.Delete();
+                if (mode == "wrong-size")
+                {
+                    var entry = archive.CreateEntry(entryName);
+                    await using var writer = new StreamWriter(entry.Open());
+                    await writer.WriteAsync("x");
+                }
+            }
+            try
+            {
+                await lifecycle.RestoreWorldAsync(source, goodBackup with { FilePath = damagedPath }, world.Name);
+                throw new InvalidOperationException(mode + " backup unexpectedly restored.");
+            }
+            catch (InvalidDataException) { }
+            Require(await File.ReadAllTextAsync(level) == "current-world-must-survive",
+                "Incomplete backup must leave the active world untouched.");
+            var staging = Path.Combine(paths.GetInstanceDirectory(source.Id), ".restore-staging");
+            Require(!Directory.Exists(staging) || !Directory.EnumerateFileSystemEntries(staging).Any(),
+                "Rejected restore must clean its staging directory.");
+        }
     }
 
     private static void Require(bool condition, string message)

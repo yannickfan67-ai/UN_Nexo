@@ -230,6 +230,9 @@ public sealed class InstanceLifecycleService
         var world = inspected.Worlds.FirstOrDefault(item => item.Name.Equals(worldName, StringComparison.Ordinal));
         if (world is null)
             throw new InvalidOperationException("The selected world is not present in this backup.");
+        if (world.FileCount < 0 || world.UncompressedBytes < 0
+            || world.UncompressedBytes > long.MaxValue - FreeSpaceReserveBytes)
+            throw new InvalidDataException("The backup contains invalid world file totals.");
 
         var instanceRoot = _paths.GetInstanceDirectory(instance.Id);
         var savesRoot = Path.Combine(_paths.GetInstanceGameDirectory(instance.Id), "saves");
@@ -239,13 +242,14 @@ public sealed class InstanceLifecycleService
         var stagingRoot = Path.Combine(instanceRoot, ".restore-staging", Guid.NewGuid().ToString("N"));
         var stagedWorld = Path.Combine(stagingRoot, "world");
         Directory.CreateDirectory(stagedWorld);
-        EnsureFreeSpace(instanceRoot, world.UncompressedBytes + FreeSpaceReserveBytes);
 
         try
         {
+            EnsureFreeSpace(instanceRoot, world.UncompressedBytes + FreeSpaceReserveBytes);
             using var archive = ZipFile.OpenRead(backupPath);
             var prefix = world.ArchivePrefix.TrimEnd('/') + "/";
-            var extractedAny = false;
+            var extractedFiles = 0;
+            long extractedBytes = 0;
             foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -265,6 +269,10 @@ public sealed class InstanceLifecycleService
                     continue;
                 }
 
+                if (extractedFiles >= world.FileCount
+                    || entry.Length > world.UncompressedBytes - extractedBytes)
+                    throw new InvalidDataException("The backup exceeds its declared world file totals.");
+
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                 await using var input = entry.Open();
                 await using var output = new FileStream(
@@ -275,11 +283,13 @@ public sealed class InstanceLifecycleService
                     128 * 1024,
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
                 await input.CopyToAsync(output, cancellationToken);
-                extractedAny = true;
+                extractedFiles++;
+                extractedBytes = checked(extractedBytes + output.Length);
             }
 
-            if (!extractedAny && world.FileCount > 0)
-                throw new InvalidDataException("The backup does not contain the expected world files.");
+            // Validate before moving the current world into restore-safety.
+            if (extractedFiles != world.FileCount || extractedBytes != world.UncompressedBytes)
+                throw new InvalidDataException("The backup world files do not match the manifest totals.");
 
             cancellationToken.ThrowIfCancellationRequested();
 
