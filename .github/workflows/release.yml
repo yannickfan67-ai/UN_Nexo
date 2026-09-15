@@ -180,6 +180,9 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
+          ### Security fix in 0.7.1-dev
+          - Rejects imported Fabric `downloads.artifact.path` values that escape the selected instance's `game/libraries` directory, including traversal and rooted paths, before any HTTP request or file write.
+
           ### Fabric and instance management
           - Adds launch support for inherited Minecraft version profiles and Fabric Loader/KnotClient.
           - Adds a Fabric Manager that queries compatible loader versions, creates isolated Fabric instances, and prepares imported Fabric profiles.
