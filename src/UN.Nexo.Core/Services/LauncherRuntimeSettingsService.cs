@@ -7,6 +7,7 @@ namespace UN.Nexo.Core.Services;
 public sealed class LauncherRuntimeSettingsService
 {
     private readonly NexoPathService _paths;
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -50,17 +51,35 @@ public sealed class LauncherRuntimeSettingsService
     {
         RuntimeLaunchOptions.Validate(settings);
         _paths.EnsureDirectories();
-        var path = GetSettingsPath();
-        var temporary = path + ".tmp";
+        await _saveGate.WaitAsync(cancellationToken);
+        string? temporary = null;
         try
         {
-            await using (var stream = File.Create(temporary))
+            var path = GetSettingsPath();
+            temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            await using (var stream = new FileStream(
+                temporary,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                16 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
                 await JsonSerializer.SerializeAsync(stream, settings, _jsonOptions, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, path, overwrite: true);
+            temporary = null;
         }
         finally
         {
-            try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+            if (temporary is not null)
+            {
+                try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+            }
+            _saveGate.Release();
         }
     }
 
