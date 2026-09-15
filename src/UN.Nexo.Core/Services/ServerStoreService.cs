@@ -24,9 +24,7 @@ public sealed class ServerStoreService
 
         try
         {
-            await using var stream = File.OpenRead(path);
-            var items = await JsonSerializer.DeserializeAsync<List<ServerFavorite>>(stream, _json, cancellationToken)
-                ?? [];
+            var items = await ReadExistingAsync(cancellationToken);
             return items
                 .Where(item => !string.IsNullOrWhiteSpace(item.Id))
                 .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
@@ -55,7 +53,7 @@ public sealed class ServerStoreService
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var items = (await GetAllUnlockedAsync(cancellationToken)).ToList();
+            var items = (await ReadExistingAsync(cancellationToken)).ToList();
             var existing = items.FirstOrDefault(item =>
                 item.Address.Equals(target.Authority, StringComparison.OrdinalIgnoreCase));
             var favorite = existing is null
@@ -87,7 +85,7 @@ public sealed class ServerStoreService
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var items = (await GetAllUnlockedAsync(cancellationToken)).ToList();
+            var items = (await ReadExistingAsync(cancellationToken)).ToList();
             var index = items.FindIndex(item => item.Id.Equals(id, StringComparison.Ordinal));
             if (index < 0)
                 return null;
@@ -109,7 +107,7 @@ public sealed class ServerStoreService
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            var items = (await GetAllUnlockedAsync(cancellationToken))
+            var items = (await ReadExistingAsync(cancellationToken))
                 .Where(item => !item.Id.Equals(id, StringComparison.Ordinal))
                 .ToList();
             await SaveUnlockedAsync(items, cancellationToken);
@@ -120,37 +118,59 @@ public sealed class ServerStoreService
         }
     }
 
-    private async Task<IReadOnlyList<ServerFavorite>> GetAllUnlockedAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<ServerFavorite>> ReadExistingAsync(CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
         var path = GetPath();
         if (!File.Exists(path))
             return [];
-        try
-        {
-            await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<List<ServerFavorite>>(stream, _json, cancellationToken)
-                ?? [];
-        }
-        catch (JsonException)
-        {
-            return [];
-        }
-        catch (IOException)
-        {
-            return [];
-        }
+
+        await using var stream = File.OpenRead(path);
+        return await JsonSerializer.DeserializeAsync<List<ServerFavorite>>(stream, _json, cancellationToken)
+            ?? [];
     }
 
     private async Task SaveUnlockedAsync(IReadOnlyList<ServerFavorite> items, CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
         var path = GetPath();
-        var temp = path + ".tmp";
-        await using (var stream = File.Create(temp))
-            await JsonSerializer.SerializeAsync(stream, items, _json, cancellationToken);
-        File.Move(temp, path, overwrite: true);
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var stream = new FileStream(
+                temp,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                16 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await JsonSerializer.SerializeAsync(stream, items, _json, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            TryDeleteFile(temp);
+            throw;
+        }
     }
 
     private string GetPath() => Path.Combine(_paths.GetDataRoot(), "servers.json");
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+            // Best-effort cleanup only.
+        }
+    }
 }
