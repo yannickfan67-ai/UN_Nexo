@@ -224,6 +224,21 @@ internal static class Program
         Throws<ArgumentException>(
             () => RuntimeLaunchOptions.ParseExtraJvmArguments("-cp hacked.jar"),
             "Classpath override should be blocked");
+        foreach (var option in new[]
+        {
+            "@options.txt", "\"@options with spaces.txt\"",
+            "--class-path=hacked.jar", "-Djava.class.path=hacked.jar",
+            "-XX:MaxHeapSize=8G", "-XX:Flags=options.txt",
+            "-XX:VMOptionsFile=options.txt", "--module=other/main", "-m"
+        })
+        {
+            Throws<ArgumentException>(
+                () => RuntimeLaunchOptions.ParseExtraJvmArguments(option),
+                $"Launcher-managed option bypass must be rejected: {option}");
+        }
+        Contains(RuntimeLaunchOptions.ParseExtraJvmArguments(
+            "--add-opens=java.base/java.lang=ALL-UNNAMED -Dexample.class.path=custom"),
+            "--add-opens=java.base/java.lang=ALL-UNNAMED", "Valid equals-form JVM option");
         return Task.CompletedTask;
     }
 

@@ -7,7 +7,8 @@ public static class RuntimeLaunchOptions
 {
     private static readonly string[] BlockedJvmOptions =
     [
-        "-jar", "-cp", "-classpath", "--class-path"
+        "-jar", "-cp", "-classpath", "--class-path", "-Djava.class.path",
+        "-m", "--module"
     ];
 
     public static int RecommendMemoryMb(long availableBytes)
@@ -113,12 +114,19 @@ public static class RuntimeLaunchOptions
 
     private static void ValidateJvmArgument(string value)
     {
-        if (!value.StartsWith("-", StringComparison.Ordinal)
-            && !value.StartsWith("@", StringComparison.Ordinal))
+        // Files are expanded by Java after Nexo's validation and can contain
+        // heap/classpath overrides or an entirely different entry point.
+        if (value.StartsWith("@", StringComparison.Ordinal)
+            || value.StartsWith("-XX:Flags=", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("-XX:VMOptionsFile=", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("JVM option files are not supported. Enter JVM options directly so Nexo can validate them.");
+        if (!value.StartsWith("-", StringComparison.Ordinal))
             throw new ArgumentException($"Extra JVM argument '{value}' must be a JVM option.");
-        if (value.StartsWith("-Xmx", StringComparison.OrdinalIgnoreCase))
+        if (value.StartsWith("-Xmx", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("-XX:MaxHeapSize=", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Use Nexo's memory setting instead of adding -Xmx manually.");
-        if (BlockedJvmOptions.Any(option => string.Equals(value, option, StringComparison.OrdinalIgnoreCase)))
+        if (BlockedJvmOptions.Any(option => string.Equals(value, option, StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith(option + "=", StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"'{value}' is managed by the launcher and cannot be overridden here.");
     }
 }
