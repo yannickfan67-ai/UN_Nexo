@@ -131,13 +131,14 @@ public static class MinecraftProtocolCompatibility
                 $"Server protocol {status.ProtocolVersion}. Select an instance to compare compatibility.");
         }
 
-        if (!TryGetProtocol(instance.VersionId, out var instanceProtocol))
+        var minecraftVersionId = instance.MinecraftVersionId;
+        if (!TryGetProtocol(minecraftVersionId, out var instanceProtocol))
         {
             return new ProtocolCompatibilityResult(
                 ProtocolCompatibilityState.Unknown,
                 null,
                 status.ProtocolVersion,
-                $"Server protocol {status.ProtocolVersion}. Nexo does not know the protocol for {instance.VersionId}, so it will not guess from the version label.");
+                $"Server protocol {status.ProtocolVersion}. Nexo does not know the protocol for {minecraftVersionId}, so it will not guess from the version label.");
         }
 
         if (instanceProtocol == status.ProtocolVersion)
@@ -146,13 +147,13 @@ public static class MinecraftProtocolCompatibility
                 ProtocolCompatibilityState.Match,
                 instanceProtocol,
                 status.ProtocolVersion,
-                $"Protocol match · {instance.VersionId} uses {instanceProtocol}.");
+                $"Protocol match · {minecraftVersionId} uses {instanceProtocol}.");
         }
 
         return new ProtocolCompatibilityResult(
             ProtocolCompatibilityState.Mismatch,
             instanceProtocol,
             status.ProtocolVersion,
-            $"Protocol mismatch · {instance.VersionId} uses {instanceProtocol}, server reports {status.ProtocolVersion}. Choose another instance before connecting.");
+            $"Protocol mismatch · {minecraftVersionId} uses {instanceProtocol}, server reports {status.ProtocolVersion}. Choose another instance before connecting.");
     }
 }
