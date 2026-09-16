@@ -53,8 +53,8 @@ public sealed class NexoPathService
 
     public string GetInstanceDirectory(string instanceId)
     {
-        if (!Guid.TryParseExact(instanceId, "N", out _)
-            || instanceId.Any(static character => character is >= 'A' and <= 'F'))
+        if (!Guid.TryParseExact(instanceId, "N", out var parsedId)
+            || !string.Equals(parsedId.ToString("N"), instanceId, StringComparison.Ordinal))
         {
             throw new ArgumentException("Instance ID must be a canonical lowercase GUID without separators.", nameof(instanceId));
         }
