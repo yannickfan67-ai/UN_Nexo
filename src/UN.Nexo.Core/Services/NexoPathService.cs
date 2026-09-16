@@ -52,7 +52,22 @@ public sealed class NexoPathService
     public string GetRuntimesRoot() => Path.Combine(GetDataRoot(), "runtimes");
 
     public string GetInstanceDirectory(string instanceId)
-        => Path.Combine(GetInstancesRoot(), instanceId);
+    {
+        if (string.IsNullOrWhiteSpace(instanceId))
+            throw new ArgumentException("Instance ID is required.", nameof(instanceId));
+
+        var instancesRoot = Path.GetFullPath(GetInstancesRoot());
+        var candidate = Path.GetFullPath(Path.Combine(instancesRoot, instanceId));
+        var rootWithSeparator = Path.EndsInDirectorySeparator(instancesRoot)
+            ? instancesRoot
+            : instancesRoot + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        if (!candidate.StartsWith(rootWithSeparator, comparison))
+            throw new ArgumentException("Instance path must remain inside the managed instances directory.", nameof(instanceId));
+
+        return candidate;
+    }
 
     public string GetInstanceGameDirectory(string instanceId)
         => Path.Combine(GetInstanceDirectory(instanceId), "game");
