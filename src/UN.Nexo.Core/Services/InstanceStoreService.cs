@@ -23,6 +23,23 @@ public sealed class InstanceStoreService
 
         foreach (var directory in Directory.EnumerateDirectories(_paths.GetInstancesRoot()))
         {
+            try
+            {
+                // An instance directory is a storage boundary, not an arbitrary filesystem link.
+                // Reject symlinks/junctions/reparse points before opening metadata so discovery
+                // cannot turn an external directory into a managed instance.
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    continue;
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                continue;
+            }
+
             var directoryId = Path.GetFileName(directory.TrimEnd(
                 Path.DirectorySeparatorChar,
                 Path.AltDirectorySeparatorChar));
