@@ -75,7 +75,7 @@ internal static class PathKeyedLock
         }
     }
 
-    private sealed class Entry(string key)
+    internal sealed class Entry(string key)
     {
         public string Key { get; } = key;
         public SemaphoreSlim Semaphore { get; } = new(1, 1);
