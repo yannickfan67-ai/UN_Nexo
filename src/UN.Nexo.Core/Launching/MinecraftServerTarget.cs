@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
 
 namespace UN.Nexo.Core.Launching;
 
@@ -29,6 +31,10 @@ public sealed record MinecraftServerTarget(string Host, int Port)
                 throw new FormatException("Invalid IPv6 server address.");
 
             host = text[1..closing];
+            if (!IPAddress.TryParse(host, out var address)
+                || address.AddressFamily != AddressFamily.InterNetworkV6)
+                throw new FormatException("Bracketed server addresses must contain an IPv6 literal.");
+
             var remainder = text[(closing + 1)..];
             if (remainder.Length > 0)
             {
