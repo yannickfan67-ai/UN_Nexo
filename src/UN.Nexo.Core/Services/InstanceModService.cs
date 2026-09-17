@@ -50,7 +50,11 @@ public sealed class InstanceModService
         var modsDirectory = GetModsDirectory(instanceId);
         Directory.CreateDirectory(modsDirectory);
         var destinationPath = ResolveManagedPath(modsDirectory, fileName, allowDisabled: false);
+        var disabledPath = ResolveManagedPath(modsDirectory, fileName + DisabledSuffix, allowDisabled: true);
         var temporaryPath = destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
+
+        if (!replaceExisting && (File.Exists(destinationPath) || File.Exists(disabledPath)))
+            throw new IOException($"A mod named '{fileName}' is already installed in this instance.");
 
         try
         {
@@ -74,6 +78,8 @@ public sealed class InstanceModService
             }
 
             File.Move(temporaryPath, destinationPath, replaceExisting);
+            if (File.Exists(disabledPath))
+                File.Delete(disabledPath);
             return CreateModel(destinationPath);
         }
         finally
