@@ -9,7 +9,6 @@ namespace UN.Nexo.Core.Services;
 public sealed partial class AccountStoreService
 {
     private readonly NexoPathService _paths;
-    private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public AccountStoreService(NexoPathService paths)
@@ -26,7 +25,8 @@ public sealed partial class AccountStoreService
         if (!OfflineNameRegex().IsMatch(normalized))
             throw new ArgumentException("Offline name must be 3-16 characters using letters, numbers or underscore.", nameof(username));
 
-        await _gate.WaitAsync(cancellationToken);
+        var gate = SettingsSaveGate.ForPath(GetAccountsPath());
+        await gate.WaitAsync(cancellationToken);
         try
         {
             var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
@@ -47,7 +47,7 @@ public sealed partial class AccountStoreService
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 
