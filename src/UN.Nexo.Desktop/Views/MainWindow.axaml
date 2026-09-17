@@ -90,7 +90,7 @@
               <TextBlock Text="{Binding GameStatus}" TextWrapping="Wrap" />
               <TextBlock Text="Offline profiles support local worlds and offline-mode servers. Java is selected automatically for the instance version." Classes="muted" FontSize="12" TextWrapping="Wrap" />
               <TextBox Text="{Binding GameLog, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
-                       Height="180" FontFamily="monospace" FontSize="11"
+                       Height="180" FontSize="11"
                        ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
             </StackPanel>
           </Border>
