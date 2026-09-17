@@ -43,44 +43,36 @@ public sealed class LauncherSettingsService
         ArgumentNullException.ThrowIfNull(settings);
         _paths.EnsureDirectories();
         var path = GetSettingsPath();
-        var writeGate = SettingsSaveGate.ForPath(path);
-        await writeGate.WaitAsync(cancellationToken);
+        using var writeLease = await PathKeyedLock.AcquireAsync(path, cancellationToken);
+        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            try
+            await using (var stream = new FileStream(
+                             temporary,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             16 * 1024,
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await using (var stream = new FileStream(
-                                 temporary,
-                                 FileMode.CreateNew,
-                                 FileAccess.Write,
-                                 FileShare.None,
-                                 16 * 1024,
-                                 FileOptions.Asynchronous | FileOptions.WriteThrough))
-                {
-                    await JsonSerializer.SerializeAsync(stream, settings, _jsonOptions, cancellationToken);
-                    await stream.FlushAsync(cancellationToken);
-                }
+                await JsonSerializer.SerializeAsync(stream, settings, _jsonOptions, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+            }
 
-                cancellationToken.ThrowIfCancellationRequested();
-                File.Move(temporary, path, overwrite: true);
-            }
-            finally
-            {
-                try
-                {
-                    if (File.Exists(temporary))
-                        File.Delete(temporary);
-                }
-                catch
-                {
-                    // Best-effort temporary-file cleanup only.
-                }
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, path, overwrite: true);
         }
         finally
         {
-            writeGate.Release();
+            try
+            {
+                if (File.Exists(temporary))
+                    File.Delete(temporary);
+            }
+            catch
+            {
+                // Best-effort temporary-file cleanup only.
+            }
         }
     }
 
