@@ -8,6 +8,7 @@ var root = Path.Combine(Path.GetTempPath(), "un-nexo-fabric-tests-" + Guid.NewGu
 Directory.CreateDirectory(root);
 try
 {
+    await UN.Nexo.Fabric.Tests.InstanceModServiceRegression.RunAsync();
     await RunInheritedLaunchRegressionAsync(root);
     await RunInheritanceLoopRegressionAsync(root);
     await RunFabricMetaRegressionAsync();
