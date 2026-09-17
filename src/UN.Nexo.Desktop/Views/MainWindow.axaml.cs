@@ -23,6 +23,7 @@ public sealed partial class MainWindow : Window
     private InstanceBackupWindow? _backupWindow;
     private GameImportWindow? _importWindow;
     private FabricManagerWindow? _fabricWindow;
+    private ModManagerWindow? _modWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
     public MainWindow()
@@ -137,15 +138,26 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(Math.Min(instancesIndex + 1, nav.Children.Count), fabric);
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Mods")))
+        {
+            var mods = new Button { Content = "Mods" };
+            mods.Classes.Add("nav");
+            mods.Click += (_, _) => OpenMods();
+            var fabricIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Fabric")).index;
+            nav.Children.Insert(Math.Min(fabricIndex + 1, nav.Children.Count), mods);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Import")))
         {
             var import = new Button { Content = "Import" };
             import.Classes.Add("nav");
             import.Click += (_, _) => OpenImport();
-            var fabricIndex = nav.Children
+            var modsIndex = nav.Children
                 .Select((child, index) => (child, index))
-                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Fabric")).index;
-            nav.Children.Insert(Math.Min(fabricIndex + 1, nav.Children.Count), import);
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Mods")).index;
+            nav.Children.Insert(Math.Min(modsIndex + 1, nav.Children.Count), import);
         }
 
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Runtime")))
@@ -234,6 +246,19 @@ public sealed partial class MainWindow : Window
             _installer);
         _fabricWindow.Closed += (_, _) => _fabricWindow = null;
         _fabricWindow.Show(this);
+    }
+
+    private void OpenMods()
+    {
+        if (_modWindow is not null)
+        {
+            _modWindow.Activate();
+            return;
+        }
+
+        _modWindow = new ModManagerWindow(_viewModel, _paths);
+        _modWindow.Closed += (_, _) => _modWindow = null;
+        _modWindow.Show(this);
     }
 
     private void OpenImport()
