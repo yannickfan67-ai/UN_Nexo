@@ -28,8 +28,11 @@ public static class MavenArtifactPath
             ValidateSegment(part, coordinate);
         ValidateSegment(extension, coordinate);
 
-        var groupPath = string.Join(Path.DirectorySeparatorChar,
-            group.Split('.', StringSplitOptions.RemoveEmptyEntries));
+        var groupParts = group.Split('.');
+        foreach (var groupPart in groupParts)
+            ValidateSegment(groupPart, coordinate);
+        var groupPath = string.Join(Path.DirectorySeparatorChar, groupParts);
+
         var fileName = $"{artifact}-{version}";
         if (!string.IsNullOrWhiteSpace(classifier))
             fileName += $"-{classifier}";
