@@ -1,15 +1,10 @@
-using System.Runtime.CompilerServices;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Fabric.Tests;
 
 internal static class InstanceModServiceRegression
 {
-    [ModuleInitializer]
-    internal static void Run()
-        => Task.Run(RunAsync).GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var root = Path.Combine(Path.GetTempPath(), "un-nexo-mod-tests-" + Guid.NewGuid().ToString("N"));
         var sourceRoot = Path.Combine(root, "sources");
