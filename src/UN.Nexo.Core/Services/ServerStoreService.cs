@@ -7,7 +7,6 @@ namespace UN.Nexo.Core.Services;
 public sealed class ServerStoreService
 {
     private readonly NexoPathService _paths;
-    private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public ServerStoreService(NexoPathService paths)
@@ -50,7 +49,8 @@ public sealed class ServerStoreService
         if (normalizedName.Length > 80)
             throw new ArgumentException("Server name is too long.", nameof(name));
 
-        await _gate.WaitAsync(cancellationToken);
+        var gate = SettingsSaveGate.ForPath(GetPath());
+        await gate.WaitAsync(cancellationToken);
         try
         {
             var items = (await ReadExistingAsync(cancellationToken)).ToList();
@@ -70,7 +70,7 @@ public sealed class ServerStoreService
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 
@@ -82,7 +82,8 @@ public sealed class ServerStoreService
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("Server id is required.", nameof(id));
 
-        await _gate.WaitAsync(cancellationToken);
+        var gate = SettingsSaveGate.ForPath(GetPath());
+        await gate.WaitAsync(cancellationToken);
         try
         {
             var items = (await ReadExistingAsync(cancellationToken)).ToList();
@@ -98,13 +99,14 @@ public sealed class ServerStoreService
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 
     public async Task RemoveAsync(string id, CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken);
+        var gate = SettingsSaveGate.ForPath(GetPath());
+        await gate.WaitAsync(cancellationToken);
         try
         {
             var items = (await ReadExistingAsync(cancellationToken))
@@ -114,7 +116,7 @@ public sealed class ServerStoreService
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 
