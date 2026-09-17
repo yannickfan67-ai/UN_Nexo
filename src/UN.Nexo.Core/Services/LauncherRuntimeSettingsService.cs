@@ -53,8 +53,7 @@ public sealed class LauncherRuntimeSettingsService
         RuntimeLaunchOptions.Validate(settings);
         _paths.EnsureDirectories();
         var path = GetSettingsPath();
-        var saveGate = SettingsSaveGate.ForPath(path);
-        await saveGate.WaitAsync(cancellationToken);
+        using var saveLease = await PathKeyedLock.AcquireAsync(path, cancellationToken);
         string? temporary = null;
         try
         {
@@ -81,7 +80,6 @@ public sealed class LauncherRuntimeSettingsService
             {
                 try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
             }
-            saveGate.Release();
         }
     }
 
