@@ -7,7 +7,7 @@ internal static class InstanceModServiceRegression
 {
     [ModuleInitializer]
     internal static void Run()
-        => RunAsync().GetAwaiter().GetResult();
+        => Task.Run(RunAsync).GetAwaiter().GetResult();
 
     private static async Task RunAsync()
     {
