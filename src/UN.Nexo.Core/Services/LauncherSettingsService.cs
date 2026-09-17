@@ -7,7 +7,6 @@ public sealed class LauncherSettingsService
 {
     private readonly NexoPathService _paths;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     public LauncherSettingsService(NexoPathService paths)
     {
@@ -37,14 +36,17 @@ public sealed class LauncherSettingsService
         }
     }
 
+    // SaveAsync accepts a complete snapshot. Saves targeting the same canonical file are
+    // serialized process-wide; if callers submit stale snapshots, the last writer wins.
     public async Task SaveAsync(LauncherSettings settings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
         _paths.EnsureDirectories();
-        await _writeGate.WaitAsync(cancellationToken);
+        var path = GetSettingsPath();
+        var writeGate = SettingsSaveGate.ForPath(path);
+        await writeGate.WaitAsync(cancellationToken);
         try
         {
-            var path = GetSettingsPath();
             var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
@@ -78,7 +80,7 @@ public sealed class LauncherSettingsService
         }
         finally
         {
-            _writeGate.Release();
+            writeGate.Release();
         }
     }
 
