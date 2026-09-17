@@ -1,10 +1,12 @@
+using System.Runtime.CompilerServices;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Core.Tests;
 
 internal static class MavenArtifactPathRegression
 {
-    public static void Run()
+    [ModuleInitializer]
+    internal static void Run()
     {
         var expected = Path.Combine("com", "example", "lib", "1.0", "lib-1.0.jar");
         if (MavenArtifactPath.FromCoordinate("com.example:lib:1.0") != expected)
