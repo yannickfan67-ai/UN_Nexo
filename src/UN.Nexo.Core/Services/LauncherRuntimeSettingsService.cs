@@ -7,7 +7,6 @@ namespace UN.Nexo.Core.Services;
 public sealed class LauncherRuntimeSettingsService
 {
     private readonly NexoPathService _paths;
-    private readonly SemaphoreSlim _saveGate = new(1, 1);
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -47,15 +46,18 @@ public sealed class LauncherRuntimeSettingsService
         }
     }
 
+    // SaveAsync accepts a complete snapshot. Saves targeting the same canonical file are
+    // serialized process-wide; if callers submit stale snapshots, the last writer wins.
     public async Task SaveAsync(LauncherRuntimeSettings settings, CancellationToken cancellationToken = default)
     {
         RuntimeLaunchOptions.Validate(settings);
         _paths.EnsureDirectories();
-        await _saveGate.WaitAsync(cancellationToken);
+        var path = GetSettingsPath();
+        var saveGate = SettingsSaveGate.ForPath(path);
+        await saveGate.WaitAsync(cancellationToken);
         string? temporary = null;
         try
         {
-            var path = GetSettingsPath();
             temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             await using (var stream = new FileStream(
                 temporary,
@@ -79,7 +81,7 @@ public sealed class LauncherRuntimeSettingsService
             {
                 try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
             }
-            _saveGate.Release();
+            saveGate.Release();
         }
     }
 
