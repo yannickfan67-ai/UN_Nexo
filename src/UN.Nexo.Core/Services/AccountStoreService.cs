@@ -25,30 +25,22 @@ public sealed partial class AccountStoreService
         if (!OfflineNameRegex().IsMatch(normalized))
             throw new ArgumentException("Offline name must be 3-16 characters using letters, numbers or underscore.", nameof(username));
 
-        var gate = SettingsSaveGate.ForPath(GetAccountsPath());
-        await gate.WaitAsync(cancellationToken);
-        try
-        {
-            var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
-            var existing = accounts.FirstOrDefault(x => x.IsOffline && x.DisplayName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-                return existing;
+        using var lease = await PathKeyedLock.AcquireAsync(GetAccountsPath(), cancellationToken);
+        var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+        var existing = accounts.FirstOrDefault(x => x.IsOffline && x.DisplayName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+            return existing;
 
-            var account = new LauncherAccount(
-                $"offline:{normalized.ToLowerInvariant()}",
-                "offline",
-                normalized,
-                CreateOfflineUuid(normalized),
-                DateTimeOffset.UtcNow);
+        var account = new LauncherAccount(
+            $"offline:{normalized.ToLowerInvariant()}",
+            "offline",
+            normalized,
+            CreateOfflineUuid(normalized),
+            DateTimeOffset.UtcNow);
 
-            accounts.Add(account);
-            await SaveAtomicAsync(accounts, cancellationToken);
-            return account;
-        }
-        finally
-        {
-            gate.Release();
-        }
+        accounts.Add(account);
+        await SaveAtomicAsync(accounts, cancellationToken);
+        return account;
     }
 
     private async Task<IReadOnlyList<LauncherAccount>> ReadAccountsAsync(
