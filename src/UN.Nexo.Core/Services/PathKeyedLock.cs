@@ -88,7 +88,7 @@ internal static class PathKeyedLock
     {
         private Entry? _entry;
 
-        private Lease(Entry entry) => _entry = entry;
+        internal Lease(Entry entry) => _entry = entry;
 
         public void Dispose()
         {
