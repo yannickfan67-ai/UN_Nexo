@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
@@ -5,6 +6,8 @@ namespace UN.Nexo.Core.Services;
 public sealed class InstanceModService
 {
     private const string DisabledSuffix = ".disabled";
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> MutationGates = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly NexoPathService _paths;
 
     public InstanceModService(NexoPathService paths) => _paths = paths;
@@ -32,55 +35,83 @@ public sealed class InstanceModService
         if (!fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Only .jar files can be installed as mods.");
         ValidateManagedFileName(fileName, false);
 
-        var modsDirectory = VerifyModsDirectory(instanceId, create: true)!;
-        var destinationPath = ResolveManagedPath(modsDirectory, fileName, false);
-        var disabledPath = ResolveManagedPath(modsDirectory, fileName + DisabledSuffix, true);
-        var temporaryPath = destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
-        if (!replaceExisting && (File.Exists(destinationPath) || File.Exists(disabledPath))) throw new IOException($"A mod named '{fileName}' is already installed in this instance.");
-
+        var gate = GetMutationGate(instanceId, fileName);
+        await gate.WaitAsync(cancellationToken);
         try
         {
-            await using (var source = new FileStream(fullSourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
-            await using (var destination = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            var modsDirectory = VerifyModsDirectory(instanceId, create: true)!;
+            var destinationPath = ResolveManagedPath(modsDirectory, fileName, false);
+            var disabledPath = ResolveManagedPath(modsDirectory, fileName + DisabledSuffix, true);
+            var temporaryPath = destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
+            if (!replaceExisting && (File.Exists(destinationPath) || File.Exists(disabledPath))) throw new IOException($"A mod named '{fileName}' is already installed in this instance.");
+
+            try
             {
-                await source.CopyToAsync(destination, cancellationToken);
-                await destination.FlushAsync(cancellationToken);
+                await using (var source = new FileStream(fullSourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                await using (var destination = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                {
+                    await source.CopyToAsync(destination, cancellationToken);
+                    await destination.FlushAsync(cancellationToken);
+                }
+                VerifyPhysicalDirectory(modsDirectory);
+                File.Move(temporaryPath, destinationPath, replaceExisting);
+                if (File.Exists(disabledPath)) File.Delete(disabledPath);
+                return CreateModel(destinationPath);
             }
-            VerifyPhysicalDirectory(modsDirectory);
-            File.Move(temporaryPath, destinationPath, replaceExisting);
-            if (File.Exists(disabledPath)) File.Delete(disabledPath);
-            return CreateModel(destinationPath);
+            finally
+            {
+                try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
+            }
         }
-        finally
-        {
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
-        }
+        finally { gate.Release(); }
     }
 
     public InstalledMod SetEnabled(string instanceId, string fileName, bool enabled)
     {
         ValidateManagedFileName(fileName, true);
-        var modsDirectory = VerifyModsDirectory(instanceId, create: false) ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
-        var currentPath = ResolveManagedPath(modsDirectory, fileName, true);
-        if (!File.Exists(currentPath)) throw new FileNotFoundException("The selected mod no longer exists.", currentPath);
-        var currentlyEnabled = fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
-        if (currentlyEnabled == enabled) return CreateModel(currentPath);
-        var targetFileName = enabled ? fileName[..^DisabledSuffix.Length] : fileName + DisabledSuffix;
-        var targetPath = ResolveManagedPath(modsDirectory, targetFileName, true);
-        if (File.Exists(targetPath)) throw new IOException($"Cannot change mod state because '{targetFileName}' already exists.");
-        VerifyPhysicalDirectory(modsDirectory);
-        File.Move(currentPath, targetPath);
-        return CreateModel(targetPath);
+        var gate = GetMutationGate(instanceId, fileName);
+        gate.Wait();
+        try
+        {
+            var modsDirectory = VerifyModsDirectory(instanceId, create: false) ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
+            var currentPath = ResolveManagedPath(modsDirectory, fileName, true);
+            if (!File.Exists(currentPath)) throw new FileNotFoundException("The selected mod no longer exists.", currentPath);
+            var currentlyEnabled = fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
+            if (currentlyEnabled == enabled) return CreateModel(currentPath);
+            var targetFileName = enabled ? fileName[..^DisabledSuffix.Length] : fileName + DisabledSuffix;
+            var targetPath = ResolveManagedPath(modsDirectory, targetFileName, true);
+            if (File.Exists(targetPath)) throw new IOException($"Cannot change mod state because '{targetFileName}' already exists.");
+            VerifyPhysicalDirectory(modsDirectory);
+            File.Move(currentPath, targetPath);
+            return CreateModel(targetPath);
+        }
+        finally { gate.Release(); }
     }
 
     public void Remove(string instanceId, string fileName)
     {
         ValidateManagedFileName(fileName, true);
-        var modsDirectory = VerifyModsDirectory(instanceId, create: false) ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
-        var path = ResolveManagedPath(modsDirectory, fileName, true);
-        if (!File.Exists(path)) throw new FileNotFoundException("The selected mod no longer exists.", path);
-        VerifyPhysicalDirectory(modsDirectory);
-        File.Delete(path);
+        var gate = GetMutationGate(instanceId, fileName);
+        gate.Wait();
+        try
+        {
+            var modsDirectory = VerifyModsDirectory(instanceId, create: false) ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
+            var path = ResolveManagedPath(modsDirectory, fileName, true);
+            if (!File.Exists(path)) throw new FileNotFoundException("The selected mod no longer exists.", path);
+            VerifyPhysicalDirectory(modsDirectory);
+            File.Delete(path);
+        }
+        finally { gate.Release(); }
+    }
+
+    private SemaphoreSlim GetMutationGate(string instanceId, string fileName)
+    {
+        var baseFileName = fileName.EndsWith(DisabledSuffix, StringComparison.OrdinalIgnoreCase)
+            ? fileName[..^DisabledSuffix.Length]
+            : fileName;
+        ValidateManagedFileName(baseFileName, false);
+        var key = Path.GetFullPath(Path.Combine(GetModsDirectory(instanceId), baseFileName));
+        return MutationGates.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
     }
 
     private string? VerifyModsDirectory(string instanceId, bool create)
