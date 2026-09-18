@@ -97,7 +97,9 @@ Authenticated public/online-mode servers can use a signed-in Microsoft profile. 
 
 ## Microsoft account status
 
-UN_Nexo now implements Microsoft public-client sign-in through the system browser, then exchanges the Microsoft session through Xbox Live, XSTS and Minecraft Services. Refresh credentials are persisted with the operating system-backed MSAL secure cache; `accounts.json` stores only profile metadata and the non-secret MSAL account identifier. Before an online launch, Nexo silently refreshes the Microsoft session, verifies the Minecraft entitlement/profile and passes the resulting short-lived Minecraft access token only in memory to the launch plan.\n\nThe registered UN_Nexo Client ID is `ac6485d3-1fd4-42d1-89c0-40ffee68d915`. Minecraft Services can still reject a newly registered third-party Client ID with `Invalid app registration` until Microsoft/Minecraft authorizes it; Nexo reports that condition explicitly and will not substitute another launcher's Client ID. See [`docs/microsoft-auth.md`](docs/microsoft-auth.md) for the flow and storage model.
+UN_Nexo now implements Microsoft public-client sign-in through the system browser, then exchanges the Microsoft session through Xbox Live, XSTS and Minecraft Services. Refresh credentials are persisted with the operating system-backed MSAL secure cache; `accounts.json` stores only profile metadata and the non-secret MSAL account identifier. Before an online launch, Nexo silently refreshes the Microsoft session, verifies the Minecraft entitlement/profile and passes the resulting short-lived Minecraft access token only in memory to the launch plan.
+
+The registered UN_Nexo Client ID is `ac6485d3-1fd4-42d1-89c0-40ffee68d915`. Minecraft Services can still reject a newly registered third-party Client ID with `Invalid app registration` until Microsoft/Minecraft authorizes it; Nexo reports that condition explicitly and will not substitute another launcher's Client ID. See [`docs/microsoft-auth.md`](docs/microsoft-auth.md) for the flow and storage model.
 
 ## Project layout
 
