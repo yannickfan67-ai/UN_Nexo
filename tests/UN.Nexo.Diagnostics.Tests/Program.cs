@@ -34,11 +34,18 @@ internal static class Program
             Console.WriteLine("[diagnostics] sanitizer checks");
             var explicitSecret = "keep-this-secret-private";
             var sanitized = service.Sanitize(
-                "--accessToken super-secret-token\nAuthorization: Bearer abcdefghijklmnop\nsecret=" + explicitSecret,
+                "--accessToken super-secret-token\nAuthorization: Bearer abcdefghijklmnop\n"
+                + "{\"access_token\":\"minecraft-json-token\",\"refresh_token\":\"microsoft-refresh-token\","
+                + "\"identityToken\":\"XBL3.0 x=123;xsts-token-value\",\"Token\":\"xbox-token-value\"}\n"
+                + "secret=" + explicitSecret,
                 explicitSecret);
             Contains(sanitized, "--accessToken <REDACTED>", "access token marker");
             DoesNotContain(sanitized, "super-secret-token", "raw access token");
             DoesNotContain(sanitized, "abcdefghijklmnop", "Bearer token");
+            DoesNotContain(sanitized, "minecraft-json-token", "JSON Minecraft token");
+            DoesNotContain(sanitized, "microsoft-refresh-token", "JSON Microsoft refresh token");
+            DoesNotContain(sanitized, "xsts-token-value", "JSON identity token");
+            DoesNotContain(sanitized, "xbox-token-value", "JSON Xbox token");
             DoesNotContain(sanitized, explicitSecret, "explicit secret");
 
             Console.WriteLine("[diagnostics] bounded-tail and ZIP checks");
