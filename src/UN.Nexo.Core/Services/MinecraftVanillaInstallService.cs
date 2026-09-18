@@ -8,6 +8,8 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class MinecraftVanillaInstallService
 {
+    private const long MaxVersionMetadataBytes = 8L * 1024 * 1024;
+    private const long MaxAssetIndexBytes = 64L * 1024 * 1024;
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
     private readonly DownloadSourceService _downloadSources;
@@ -108,11 +110,23 @@ public sealed class MinecraftVanillaInstallService
 
         Report(progress, new InstallProgress("Version metadata", 0, 1, version.Id));
         var versionJsonPath = Path.Combine(versionRoot, $"{version.Id}.json");
-        await DownloadFileAsync(version.Url, versionJsonPath, version.Sha1, "Version metadata", 0, 1, progress, cancellationToken);
+        await DownloadFileAsync(
+            version.Url,
+            versionJsonPath,
+            version.Sha1,
+            "Version metadata",
+            0,
+            1,
+            progress,
+            cancellationToken,
+            MaxVersionMetadataBytes);
         Report(progress, new InstallProgress("Version metadata", 1, 1, version.Id, Detail: "Version metadata ready"));
 
-        await using var versionStream = File.OpenRead(versionJsonPath);
-        using var versionDocument = await JsonDocument.ParseAsync(versionStream, cancellationToken: cancellationToken);
+        using var versionDocument = await ReadBoundedJsonFileAsync(
+            versionJsonPath,
+            MaxVersionMetadataBytes,
+            "Version metadata",
+            cancellationToken);
         var root = versionDocument.RootElement;
 
         if (root.TryGetProperty("downloads", out var downloads)
@@ -153,7 +167,16 @@ public sealed class MinecraftVanillaInstallService
                 "assetIndex.id");
 
             Report(progress, new InstallProgress("Asset index", 0, 1, assetId));
-            await DownloadFileAsync(assetUrl, indexPath, assetSha1, "Asset index", 0, 1, progress, cancellationToken);
+            await DownloadFileAsync(
+                assetUrl,
+                indexPath,
+                assetSha1,
+                "Asset index",
+                0,
+                1,
+                progress,
+                cancellationToken,
+                MaxAssetIndexBytes);
             Report(progress, new InstallProgress("Asset index", 1, 1, assetId, Detail: "Asset index ready"));
 
             await DownloadAssetsAsync(indexPath, assetsRoot, progress, cancellationToken);
@@ -181,8 +204,11 @@ public sealed class MinecraftVanillaInstallService
         IProgress<InstallProgress>? progress,
         CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(indexPath);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        using var document = await ReadBoundedJsonFileAsync(
+            indexPath,
+            MaxAssetIndexBytes,
+            "Asset index",
+            cancellationToken);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object
             || !root.TryGetProperty("objects", out var objects)
@@ -403,12 +429,15 @@ public sealed class MinecraftVanillaInstallService
         int completed,
         int total,
         IProgress<InstallProgress>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? maxBytes = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var item = Path.GetFileName(path);
 
-        if (File.Exists(path) && await HashMatchesAsync(path, expectedSha1, cancellationToken))
+        if (File.Exists(path)
+            && (maxBytes is null || new FileInfo(path).Length <= maxBytes.Value)
+            && await HashMatchesAsync(path, expectedSha1, cancellationToken))
         {
             Report(progress, new InstallProgress(stage, completed, total, item, "Cache", Detail: "Verified existing file"));
             return;
@@ -447,6 +476,10 @@ public sealed class MinecraftVanillaInstallService
                 }
 
                 var contentLength = response.Content.Headers.ContentLength;
+                if (maxBytes is not null && contentLength is > 0 && contentLength.Value > maxBytes.Value)
+                    throw new InvalidDataException(
+                        $"{stage} response exceeds the {maxBytes.Value}-byte limit.");
+
                 await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
                 await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true))
                 {
@@ -465,7 +498,8 @@ public sealed class MinecraftVanillaInstallService
                             bytesPerSecond,
                             fallback,
                             fallback ? "Downloading from fallback source" : "Downloading")),
-                        cancellationToken);
+                        cancellationToken,
+                        maxBytes);
                 }
 
                 if (!await HashMatchesAsync(temporaryPath, expectedSha1, cancellationToken))
@@ -496,7 +530,7 @@ public sealed class MinecraftVanillaInstallService
                     File.Delete(temporaryPath);
                 throw;
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or TimeoutException)
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or TimeoutException or InvalidDataException)
             {
                 lastException = ex;
                 Report(progress, new InstallProgress(
@@ -523,7 +557,8 @@ public sealed class MinecraftVanillaInstallService
         Stream output,
         string candidate,
         Action<long, double> progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? maxBytes = null)
     {
         var buffer = new byte[128 * 1024];
         var downloaded = 0L;
@@ -552,6 +587,10 @@ public sealed class MinecraftVanillaInstallService
                 return;
             }
 
+            if (maxBytes is not null && downloaded + read > maxBytes.Value)
+                throw new InvalidDataException(
+                    $"Download from {new Uri(candidate).Host} exceeded the {maxBytes.Value}-byte limit.");
+
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             downloaded += read;
 
@@ -560,6 +599,38 @@ public sealed class MinecraftVanillaInstallService
                 progress(downloaded, downloaded / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001));
                 lastReport = stopwatch.Elapsed;
             }
+        }
+    }
+
+    private static async Task<JsonDocument> ReadBoundedJsonFileAsync(
+        string path,
+        long maxBytes,
+        string label,
+        CancellationToken cancellationToken)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists)
+            throw new FileNotFoundException($"{label} file is missing.", path);
+        if (info.Length > maxBytes)
+            throw new InvalidDataException(
+                $"{label} file exceeds the {maxBytes}-byte limit.");
+
+        try
+        {
+            await using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            return await JsonDocument.ParseAsync(
+                stream,
+                cancellationToken: cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"{label} contains malformed JSON.", ex);
         }
     }
 
