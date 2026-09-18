@@ -361,14 +361,14 @@ internal static class Program
                 {
                     ["client"] = new JsonObject
                     {
-                        ["url"] = "https://repair.example.test/client.jar",
+                        ["url"] = "https://piston-data.mojang.com/client.jar",
                         ["sha1"] = clientSha
                     }
                 },
                 ["assetIndex"] = new JsonObject
                 {
                     ["id"] = "fabric-assets",
-                    ["url"] = "https://repair.example.test/assets.json",
+                    ["url"] = "https://piston-data.mojang.com/assets.json",
                     ["sha1"] = assetIndexSha
                 },
                 ["libraries"] = new JsonArray
@@ -381,7 +381,7 @@ internal static class Program
                             ["artifact"] = new JsonObject
                             {
                                 ["path"] = baseLibraryRelative,
-                                ["url"] = "https://repair.example.test/base-library.jar",
+                                ["url"] = "https://piston-data.mojang.com/base-library.jar",
                                 ["sha1"] = baseLibrarySha
                             }
                         }
@@ -405,7 +405,7 @@ internal static class Program
                             ["artifact"] = new JsonObject
                             {
                                 ["path"] = fabricLibraryRelative,
-                                ["url"] = "https://repair.example.test/fabric-loader.jar",
+                                ["url"] = "https://piston-data.mojang.com/fabric-loader.jar",
                                 ["sha1"] = fabricLibrarySha
                             }
                         }
@@ -578,13 +578,13 @@ internal static class Program
                 var manifest =
                     "{\"latest\":{\"release\":\"" + baseVersionId + "\",\"snapshot\":\"" + baseVersionId + "\"},"
                     + "\"versions\":[{\"id\":\"" + baseVersionId + "\",\"type\":\"release\","
-                    + "\"url\":\"https://repair.example.test/version.json\","
+                    + "\"url\":\"https://piston-data.mojang.com/version.json\","
                     + "\"releaseTime\":\"2026-01-01T00:00:00Z\","
                     + "\"time\":\"2026-01-01T00:00:00Z\",\"sha1\":\"\",\"complianceLevel\":1}]}";
                 return Task.FromResult(Json(manifest));
             }
 
-            if (uri.Host.Equals("repair.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 return uri.AbsolutePath switch
                 {
