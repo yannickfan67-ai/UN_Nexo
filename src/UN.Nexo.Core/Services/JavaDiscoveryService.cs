@@ -7,10 +7,18 @@ namespace UN.Nexo.Core.Services;
 public sealed partial class JavaDiscoveryService
 {
     private readonly NexoPathService? _paths;
+    private readonly TimeSpan _probeTimeout;
 
-    public JavaDiscoveryService(NexoPathService? paths = null)
+    public JavaDiscoveryService(
+        NexoPathService? paths = null,
+        TimeSpan? probeTimeout = null)
     {
         _paths = paths;
+        _probeTimeout = probeTimeout ?? TimeSpan.FromSeconds(3);
+        if (_probeTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(
+                nameof(probeTimeout),
+                "Java probe timeout must be positive.");
     }
 
     public async Task<IReadOnlyList<JavaInstallation>> DiscoverAsync(CancellationToken cancellationToken = default)
@@ -111,8 +119,12 @@ public sealed partial class JavaDiscoveryService
         catch (Exception) when (path.Length > 0) { }
     }
 
-    private static async Task<JavaInstallation?> ProbeAsync(string javaPath, string source, CancellationToken cancellationToken)
+    private async Task<JavaInstallation?> ProbeAsync(
+        string javaPath,
+        string source,
+        CancellationToken cancellationToken)
     {
+        Process? process = null;
         try
         {
             var startInfo = new ProcessStartInfo
@@ -125,12 +137,12 @@ public sealed partial class JavaDiscoveryService
                 CreateNoWindow = true
             };
 
-            using var process = Process.Start(startInfo);
+            process = Process.Start(startInfo);
             if (process is null)
                 return null;
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            timeout.CancelAfter(_probeTimeout);
 
             var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
@@ -154,8 +166,56 @@ public sealed partial class JavaDiscoveryService
 
             return new JavaInstallation(javaPath, home, version, is64Bit, source);
         }
-        catch (OperationCanceledException) { return null; }
-        catch (Exception) { return null; }
+        catch (OperationCanceledException)
+        {
+            await TerminateProcessAsync(process);
+            cancellationToken.ThrowIfCancellationRequested();
+            return null;
+        }
+        catch (Exception)
+        {
+            await TerminateProcessAsync(process);
+            return null;
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static async Task TerminateProcessAsync(Process? process)
+    {
+        if (process is null)
+            return;
+
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (
+            ex is InvalidOperationException
+            or NotSupportedException
+            or System.ComponentModel.Win32Exception)
+        {
+            return;
+        }
+
+        try
+        {
+            if (process.HasExited)
+                return;
+
+            using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            await process.WaitForExitAsync(wait.Token);
+        }
+        catch (Exception ex) when (
+            ex is OperationCanceledException
+            or InvalidOperationException
+            or System.ComponentModel.Win32Exception)
+        {
+            // Best-effort reap after the process tree was terminated.
+        }
     }
 
     private static int ParseMajorVersion(string version)
