@@ -36,6 +36,7 @@ internal static class Program
 
             await TestCloneWithoutWorldsAsync(lifecycle, paths, source);
             await TestCloneWithWorldsAsync(lifecycle, paths, source);
+            await TestFabricCloneMetadataAsync(lifecycle, paths);
             var backup = await TestBackupAsync(lifecycle, source);
             await BackupIntegrityRegression.RunAsync(lifecycle, paths, source, backup);
             await TestRestoreSafetyAsync(lifecycle, paths, source, backup);
@@ -90,6 +91,49 @@ internal static class Program
         await File.WriteAllTextAsync(clonedLevel, "clone-only-change");
         var sourceLevel = Path.Combine(paths.GetInstanceGameDirectory(source.Id), "saves", "World A", "level.dat");
         Require(await File.ReadAllTextAsync(sourceLevel) == "original-A", "Clone must be independent from source files.");
+    }
+
+    private static async Task TestFabricCloneMetadataAsync(
+        InstanceLifecycleService lifecycle,
+        NexoPathService paths)
+    {
+        var source = new GameInstance(
+            "fabric-clone-source",
+            "Fabric clone source",
+            "fabric-loader-0.16.9-1.21.4",
+            "fabric",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            "1.21.4",
+            "0.16.9");
+        var sourceRoot = paths.GetInstanceDirectory(source.Id);
+        Directory.CreateDirectory(paths.GetInstanceGameDirectory(source.Id));
+        await File.WriteAllTextAsync(
+            Path.Combine(sourceRoot, "instance.json"),
+            JsonSerializer.Serialize(source, new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                WriteIndented = true
+            }));
+        await File.WriteAllTextAsync(
+            Path.Combine(paths.GetInstanceGameDirectory(source.Id), "fabric-marker.txt"),
+            "fabric");
+
+        var clone = await lifecycle.CloneAsync(
+            source,
+            "Fabric metadata clone",
+            includeWorlds: false);
+
+        Require(clone.Id != source.Id, "Fabric clone should receive a new id.");
+        Require(clone.VersionId == source.VersionId, "Fabric clone should retain VersionId.");
+        Require(clone.Loader == "fabric", "Fabric clone should retain loader.");
+        Require(clone.BaseVersionId == "1.21.4", "Fabric clone should retain BaseVersionId.");
+        Require(clone.LoaderVersion == "0.16.9", "Fabric clone should retain LoaderVersion.");
+
+        var reloaded = (await new InstanceStoreService(paths).GetAllAsync())
+            .Single(item => item.Id == clone.Id);
+        Require(reloaded.BaseVersionId == "1.21.4",
+            "Reloaded Fabric clone should retain BaseVersionId.");
+        Require(reloaded.LoaderVersion == "0.16.9",
+            "Reloaded Fabric clone should retain LoaderVersion.");
     }
 
     private static async Task<WorldBackupInfo> TestBackupAsync(
