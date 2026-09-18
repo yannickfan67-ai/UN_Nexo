@@ -55,6 +55,22 @@ internal static class Program
                 Equal("linux-system-library-missing", tailDiagnosis.Code, "bounded log tail classification");
                 Contains(tailDiagnosis.Title, "libTail.so.2", "recent tail evidence");
 
+                var exactTail = Path.Combine(tempDirectory, "exact-tail.log");
+                await File.WriteAllTextAsync(exactTail, "old-line\n1234567890");
+                var bounded = await service.ReadLogTailAsync(exactTail, 10);
+                Equal("1234567890", bounded, "tail must stay within requested byte snapshot");
+
+                var rejectedLimit = false;
+                try
+                {
+                    await service.ReadLogTailAsync(exactTail, 0);
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    rejectedLimit = true;
+                }
+                Equal(true, rejectedLimit, "non-positive tail limit must be rejected");
+
                 var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
                 var token = "nexo-secret-access-token-123456";
                 var minecraftLog = Path.Combine(tempDirectory, "minecraft.log");

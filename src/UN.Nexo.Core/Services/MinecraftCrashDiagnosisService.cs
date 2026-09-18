@@ -241,10 +241,13 @@ public sealed class MinecraftCrashDiagnosisService
 
     public async Task<string> ReadLogTailAsync(string path, int maxBytes = DefaultLogTailBytes, CancellationToken cancellationToken = default)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxBytes);
+
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 64 * 1024, useAsync: true);
-        var start = Math.Max(0L, stream.Length - maxBytes);
+        var end = stream.Length;
+        var bytesToRead = checked((int)Math.Min(end, maxBytes));
+        var start = end - bytesToRead;
         stream.Seek(start, SeekOrigin.Begin);
-        var bytesToRead = checked((int)(stream.Length - start));
         var buffer = new byte[bytesToRead];
         var read = 0;
         while (read < buffer.Length)
