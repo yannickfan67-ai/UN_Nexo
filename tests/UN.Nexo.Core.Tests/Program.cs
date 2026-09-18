@@ -19,6 +19,7 @@ internal static class Program
             ("Java major parsing", TestJavaMajorAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
+            ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
