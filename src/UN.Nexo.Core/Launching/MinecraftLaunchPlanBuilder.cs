@@ -168,9 +168,14 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         var assetsRoot = Within(gameRoot, "assets");
         if (!root.TryGetProperty("assetIndex", out var assetIndex))
             throw new InvalidDataException("Resolved version metadata has no asset index.");
-        var assetId = assetIndex.GetProperty("id").GetString()
-            ?? throw new InvalidDataException("Asset index has no id.");
-        var indexPath = Within(Path.Combine(assetsRoot, "indexes"), assetId + ".json");
+        var assetId = MetadataPath.RequireSingleComponent(
+            assetIndex.GetProperty("id").GetString(),
+            "assetIndex.id");
+        var indexPath = MetadataPath.ResolveSingleComponent(
+            Path.Combine(assetsRoot, "indexes"),
+            assetId,
+            ".json",
+            "assetIndex.id");
         RequireFile(indexPath, assetIndex);
         using var indexDocument = await ReadJsonAsync(indexPath, cancellationToken);
         var index = indexDocument.RootElement;
@@ -182,7 +187,11 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         var mapToResources = index.TryGetProperty("map_to_resources", out var resourcesElement)
             && resourcesElement.GetBoolean();
         var virtualRoot = virtualAssets
-            ? Within(Path.Combine(assetsRoot, "virtual"), assetId)
+            ? MetadataPath.ResolveSingleComponent(
+                Path.Combine(assetsRoot, "virtual"),
+                assetId,
+                string.Empty,
+                "assetIndex.id")
             : assetsRoot;
         var resourceRoot = Within(gameRoot, "resources");
         var gameAssetsRoot = mapToResources
