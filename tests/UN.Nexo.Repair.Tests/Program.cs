@@ -141,6 +141,56 @@ internal static class Program
             Require(report.Issues.Any(item => item.Code == "java-missing"), "wrong Java major should be detected");
             Require(await File.ReadAllTextAsync(savePath) == "keep-me", "integrity scan must not modify world data");
 
+            var versionPath = Path.Combine(versionRoot, "repair-test.json");
+            var validVersionJson = version.ToJsonString();
+            var malformedVersions = new[]
+            {
+                "[]",
+                "{\"downloads\":[]}",
+                "{\"downloads\":{\"client\":123}}",
+                "{\"libraries\":[123]}",
+                "{\"assetIndex\":123}",
+                "{\"libraries\":[{\"downloads\":[]}]}",
+                "{\"libraries\":[{\"downloads\":{},\"natives\":{\"" + osKey + "\":123}}]}",
+                "{\"libraries\":[{\"downloads\":{},\"extract\":{\"exclude\":{}}}]}"
+            };
+            foreach (var malformedVersion in malformedVersions)
+            {
+                await File.WriteAllTextAsync(versionPath, malformedVersion);
+                var malformedReport = await service.CheckAsync(instance);
+                Require(
+                    malformedReport.Issues.Any(item => item.Code == "version-metadata-invalid"),
+                    $"wrong-shaped version metadata should produce version-metadata-invalid: {malformedVersion}");
+            }
+            await File.WriteAllTextAsync(versionPath, validVersionJson);
+
+            var validAssetIndexJson = assetIndex.ToJsonString();
+            var malformedAssetIndexes = new[]
+            {
+                "{}",
+                "{\"objects\":null}",
+                "{\"objects\":[]}",
+                "{\"objects\":{\"x\":123}}",
+                "{\"objects\":{\"x\":{\"hash\":null}}}",
+                "{\"objects\":{\"x\":{\"hash\":123}}}",
+                "{\"objects\":{\"x\":{\"hash\":\"a\"}}}"
+            };
+            foreach (var malformedIndex in malformedAssetIndexes)
+            {
+                await File.WriteAllTextAsync(assetIndexPath, malformedIndex);
+                ((JsonObject)version["assetIndex"]!)["sha1"] = await Sha1FileAsync(assetIndexPath);
+                await File.WriteAllTextAsync(versionPath, version.ToJsonString());
+
+                var malformedReport = await service.CheckAsync(instance);
+                Require(
+                    malformedReport.Issues.Any(item => item.Code == "asset-index-invalid"),
+                    $"wrong-shaped asset index should produce asset-index-invalid: {malformedIndex}");
+            }
+
+            await File.WriteAllTextAsync(assetIndexPath, validAssetIndexJson);
+            ((JsonObject)version["assetIndex"]!)["sha1"] = await Sha1FileAsync(assetIndexPath);
+            await File.WriteAllTextAsync(versionPath, version.ToJsonString());
+
             var unsafeIds = new[] { "../outside", "a/b", @"a\b", ".", "..", "/rooted", @"C:\outside" };
             foreach (var unsafeId in unsafeIds)
             {
