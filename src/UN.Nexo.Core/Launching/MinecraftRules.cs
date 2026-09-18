@@ -6,6 +6,9 @@ namespace UN.Nexo.Core.Launching;
 
 public static class MinecraftRules
 {
+    private const int MaxRuleCount = 32;
+    private static readonly TimeSpan OsVersionRegexTimeout = TimeSpan.FromMilliseconds(50);
+
     public static string OsName => OperatingSystem.IsWindows() ? "windows"
         : OperatingSystem.IsMacOS() ? "osx" : "linux";
 
@@ -24,6 +27,8 @@ public static class MinecraftRules
             return true;
         if (rules.ValueKind != JsonValueKind.Array)
             throw Invalid("rules", "an array");
+        if (rules.GetArrayLength() > MaxRuleCount)
+            throw new InvalidDataException($"Minecraft metadata property 'rules' contains more than {MaxRuleCount} entries.");
 
         var allowed = false;
         foreach (var rule in rules.EnumerateArray())
@@ -48,7 +53,7 @@ public static class MinecraftRules
                     try
                     {
                         if (!Regex.IsMatch(Environment.OSVersion.Version.ToString(), version,
-                                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                                RegexOptions.CultureInvariant, OsVersionRegexTimeout))
                             continue;
                     }
                     catch (ArgumentException ex)
