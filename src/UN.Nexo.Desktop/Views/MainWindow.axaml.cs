@@ -79,6 +79,7 @@ public sealed partial class MainWindow : Window
             _manifest,
             _instances,
             _installer,
+            _fabricInstaller,
             accountStore,
             microsoftAuth,
             new LauncherSettingsService(_paths),
