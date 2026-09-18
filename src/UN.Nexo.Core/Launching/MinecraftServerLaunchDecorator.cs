@@ -13,17 +13,10 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
         MinecraftServerTarget target,
         CancellationToken cancellationToken = default)
     {
-        var metadataPath = Path.Combine(
-            paths.GetInstanceGameDirectory(instance.Id),
-            "versions",
-            instance.VersionId,
-            instance.VersionId + ".json");
-        if (!File.Exists(metadataPath))
-            throw new FileNotFoundException("Version metadata is missing. Prepare the instance again.", metadataPath);
-
-        await using var stream = File.OpenRead(metadataPath);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var quickPlay = SupportsQuickPlayMultiplayer(document.RootElement);
+        var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
+        using var resolved = await new MinecraftVersionMetadataResolver()
+            .ResolveAsync(gameRoot, instance.VersionId, cancellationToken);
+        var quickPlay = SupportsQuickPlayMultiplayer(resolved.Document.RootElement);
 
         var arguments = plan.Arguments.ToList();
         if (quickPlay)
@@ -44,9 +37,16 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
 
     internal static bool SupportsQuickPlayMultiplayer(JsonElement root)
     {
-        if (!root.TryGetProperty("arguments", out var arguments)
-            || !arguments.TryGetProperty("game", out var gameArguments))
+        if (root.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("root", "an object");
+        if (!root.TryGetProperty("arguments", out var arguments))
             return false;
+        if (arguments.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("arguments", "an object");
+        if (!arguments.TryGetProperty("game", out var gameArguments))
+            return false;
+        if (gameArguments.ValueKind != JsonValueKind.Array)
+            throw InvalidMetadata("arguments.game", "an array");
 
         foreach (var item in gameArguments.EnumerateArray())
         {
@@ -57,17 +57,35 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
                 continue;
             }
 
+            if (item.ValueKind != JsonValueKind.Object)
+                throw InvalidMetadata("arguments.game[]", "a string or object");
             if (!item.TryGetProperty("rules", out var rules))
                 continue;
+            if (rules.ValueKind != JsonValueKind.Array)
+                throw InvalidMetadata("arguments.game[].rules", "an array");
+
             foreach (var rule in rules.EnumerateArray())
             {
-                if (rule.TryGetProperty("features", out var features)
-                    && features.TryGetProperty("is_quick_play_multiplayer", out var enabled)
-                    && enabled.ValueKind == JsonValueKind.True)
+                if (rule.ValueKind != JsonValueKind.Object)
+                    throw InvalidMetadata("arguments.game[].rules[]", "an object");
+                if (!rule.TryGetProperty("features", out var features))
+                    continue;
+                if (features.ValueKind != JsonValueKind.Object)
+                    throw InvalidMetadata("arguments.game[].rules[].features", "an object");
+                if (!features.TryGetProperty("is_quick_play_multiplayer", out var enabled))
+                    continue;
+                if (enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                    throw InvalidMetadata(
+                        "arguments.game[].rules[].features.is_quick_play_multiplayer",
+                        "a boolean");
+                if (enabled.ValueKind == JsonValueKind.True)
                     return true;
             }
         }
 
         return false;
     }
+
+    private static InvalidDataException InvalidMetadata(string propertyName, string expected)
+        => new($"Minecraft version metadata property '{propertyName}' must be {expected}.");
 }
