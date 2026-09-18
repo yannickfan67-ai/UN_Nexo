@@ -131,6 +131,16 @@ public sealed class MsalMicrosoftAccessTokenProvider : IMicrosoftAccessTokenProv
                 .Build();
 
             var cacheHelper = await MsalCacheHelper.CreateAsync(storageBuilder.Build());
+            try
+            {
+                cacheHelper.VerifyPersistence();
+            }
+            catch (MsalCachePersistenceException ex)
+            {
+                throw new InvalidOperationException(
+                    "Secure Microsoft token storage is unavailable on this desktop session. UN_Nexo will not fall back to a plaintext refresh-token cache.",
+                    ex);
+            }
             cacheHelper.RegisterCache(application.UserTokenCache);
 
             _cacheHelper = cacheHelper;
