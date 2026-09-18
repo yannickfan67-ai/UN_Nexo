@@ -42,7 +42,14 @@ internal static class Program
             var vanilla = preview.Versions.Single(item => item.VersionId == "1.21.4");
             var fabric = preview.Versions.Single(item => item.VersionId == "fabric-loader-0.16.0-1.21.4");
             Require(vanilla.Loader == "vanilla" && vanilla.IsSupportedLoader, "Vanilla should be detected as launchable.");
-            Require(fabric.Loader == "fabric" && !fabric.IsSupportedLoader, "Fabric should be recognized but not marked launchable yet.");
+            Require(fabric.Loader == "fabric" && !fabric.IsSupportedLoader, "Fabric should be recognized but require preparation before launch.");
+            Require(fabric.BaseVersionId == "1.21.4", "Fabric preview should preserve the inherited base version.");
+            Require(fabric.LoaderVersion == "0.16.0", "Fabric preview should detect the loader version.");
+            Require(preview.Warnings.Any(item => item.Contains("Fabric", StringComparison.OrdinalIgnoreCase)
+                                                && item.Contains("prepar", StringComparison.OrdinalIgnoreCase)),
+                "Fabric scan warning should direct the user to preparation.");
+            Require(preview.Warnings.All(item => !item.Contains("#21", StringComparison.Ordinal)),
+                "Fabric scan warning must not claim launch support is waiting on #21.");
 
             await TestCompleteVanillaImportAsync(importer, paths, preview, vanilla, source);
             await TestFabricImportAsync(importer, paths, preview, fabric, source);
@@ -103,6 +110,8 @@ internal static class Program
         var result = await importer.ImportAsync(preview, fabric, "Imported Fabric");
         Require(!result.PreparedFromExistingFiles, "Fabric import must not masquerade as prepared Vanilla.");
         Require(result.Instance.Loader == "fabric", "Fabric loader should be retained in instance metadata.");
+        Require(result.Instance.BaseVersionId == "1.21.4", "Imported Fabric instance should retain BaseVersionId.");
+        Require(result.Instance.LoaderVersion == "0.16.0", "Imported Fabric instance should retain LoaderVersion.");
         var gameRoot = paths.GetInstanceGameDirectory(result.Instance.Id);
         Require(File.Exists(Path.Combine(gameRoot, "mods", "sodium.jar")), "Fabric mods should be copied.");
         Require(File.Exists(Path.Combine(gameRoot, "config", "sodium-options.json")), "Fabric config should be copied.");
@@ -110,8 +119,12 @@ internal static class Program
             "Fabric profile metadata should be copied.");
         Require(File.Exists(Path.Combine(gameRoot, "versions", "1.21.4", "1.21.4.jar")),
             "Fabric base Vanilla version should be copied for later loader support.");
-        Require(result.Warnings.Any(item => item.Contains("#21", StringComparison.Ordinal)),
-            "Fabric import should clearly explain current launch limitation.");
+        Require(result.Warnings.Any(item =>
+                item.Contains("Fabric", StringComparison.OrdinalIgnoreCase)
+                && item.Contains("prepar", StringComparison.OrdinalIgnoreCase)),
+            "Fabric import should direct the user to Fabric preparation.");
+        Require(result.Warnings.All(item => !item.Contains("#21", StringComparison.Ordinal)),
+            "Fabric import must not claim launch support is blocked on #21.");
         Require(await File.ReadAllTextAsync(Path.Combine(source, "mods", "sodium.jar")) == "fake-mod",
             "Fabric source must remain unchanged.");
     }
