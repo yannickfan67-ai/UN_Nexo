@@ -92,6 +92,18 @@ public sealed class MinecraftInstanceRepairService
         using (versionDocument)
         {
             var root = versionDocument.RootElement;
+            if (!TryValidateVersionMetadata(root, out var metadataError))
+            {
+                issues.Add(new InstanceHealthIssue(
+                    "version-metadata-invalid",
+                    "Version metadata",
+                    InstanceHealthLevel.Error,
+                    $"Version metadata is structurally invalid: {metadataError}",
+                    versionJsonPath,
+                    "Run Repair to replace the invalid version metadata."));
+                return BuildReport(instance, issues, null);
+            }
+
             progress?.Report("Checking Minecraft client…");
             await CheckClientAsync(instance, root, versionRoot, issues, cancellationToken);
 
@@ -412,9 +424,19 @@ public sealed class MinecraftInstanceRepairService
 
         using (indexDocument)
         {
-            if (!indexDocument.RootElement.TryGetProperty("objects", out var objects))
+            if (!TryValidateAssetIndex(indexDocument.RootElement, out var assetError))
+            {
+                issues.Add(new InstanceHealthIssue(
+                    "asset-index-invalid",
+                    "Assets",
+                    InstanceHealthLevel.Error,
+                    $"The asset index is structurally invalid: {assetError}",
+                    indexPath,
+                    "Run Repair to replace the invalid asset index."));
                 return;
+            }
 
+            var objects = indexDocument.RootElement.GetProperty("objects");
             var mapToResources = indexDocument.RootElement.TryGetProperty("map_to_resources", out var mapElement)
                                  && mapElement.ValueKind == JsonValueKind.True;
             var checks = new List<AssetCheck>();
@@ -702,6 +724,166 @@ public sealed class MinecraftInstanceRepairService
                 return false;
         }
         return true;
+    }
+
+    private static bool TryValidateVersionMetadata(JsonElement root, out string error)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return Fail("root must be an object", out error);
+
+        if (root.TryGetProperty("downloads", out var downloads))
+        {
+            if (downloads.ValueKind != JsonValueKind.Object)
+                return Fail("'downloads' must be an object", out error);
+            if (downloads.TryGetProperty("client", out var client))
+            {
+                if (client.ValueKind != JsonValueKind.Object)
+                    return Fail("'downloads.client' must be an object", out error);
+                if (!OptionalString(client, "sha1"))
+                    return Fail("'downloads.client.sha1' must be a string", out error);
+            }
+        }
+
+        if (root.TryGetProperty("assetIndex", out var assetIndex))
+        {
+            if (assetIndex.ValueKind != JsonValueKind.Object)
+                return Fail("'assetIndex' must be an object", out error);
+            if (!OptionalString(assetIndex, "id"))
+                return Fail("'assetIndex.id' must be a string", out error);
+            if (!OptionalString(assetIndex, "sha1"))
+                return Fail("'assetIndex.sha1' must be a string", out error);
+        }
+
+        if (root.TryGetProperty("libraries", out var libraries))
+        {
+            if (libraries.ValueKind != JsonValueKind.Array)
+                return Fail("'libraries' must be an array", out error);
+
+            var libraryIndex = 0;
+            foreach (var library in libraries.EnumerateArray())
+            {
+                if (library.ValueKind != JsonValueKind.Object)
+                    return Fail($"'libraries[{libraryIndex}]' must be an object", out error);
+
+                if (library.TryGetProperty("rules", out var rules))
+                {
+                    if (rules.ValueKind != JsonValueKind.Array)
+                        return Fail($"'libraries[{libraryIndex}].rules' must be an array", out error);
+                    var ruleIndex = 0;
+                    foreach (var rule in rules.EnumerateArray())
+                    {
+                        if (rule.ValueKind != JsonValueKind.Object)
+                            return Fail($"'libraries[{libraryIndex}].rules[{ruleIndex}]' must be an object", out error);
+                        if (!OptionalString(rule, "action"))
+                            return Fail($"'libraries[{libraryIndex}].rules[{ruleIndex}].action' must be a string", out error);
+                        if (rule.TryGetProperty("os", out var os))
+                        {
+                            if (os.ValueKind != JsonValueKind.Object)
+                                return Fail($"'libraries[{libraryIndex}].rules[{ruleIndex}].os' must be an object", out error);
+                            if (!OptionalString(os, "name") || !OptionalString(os, "arch"))
+                                return Fail($"'libraries[{libraryIndex}].rules[{ruleIndex}].os' name/arch must be strings", out error);
+                        }
+                        ruleIndex++;
+                    }
+                }
+
+                if (library.TryGetProperty("downloads", out var libraryDownloads))
+                {
+                    if (libraryDownloads.ValueKind != JsonValueKind.Object)
+                        return Fail($"'libraries[{libraryIndex}].downloads' must be an object", out error);
+
+                    if (libraryDownloads.TryGetProperty("artifact", out var artifact)
+                        && !ValidateArtifact(artifact))
+                        return Fail($"'libraries[{libraryIndex}].downloads.artifact' is invalid", out error);
+
+                    if (libraryDownloads.TryGetProperty("classifiers", out var classifiers))
+                    {
+                        if (classifiers.ValueKind != JsonValueKind.Object)
+                            return Fail($"'libraries[{libraryIndex}].downloads.classifiers' must be an object", out error);
+                        foreach (var classifier in classifiers.EnumerateObject())
+                        {
+                            if (!ValidateArtifact(classifier.Value))
+                                return Fail($"classifier '{classifier.Name}' in libraries[{libraryIndex}] is invalid", out error);
+                        }
+                    }
+                }
+
+                if (library.TryGetProperty("natives", out var natives))
+                {
+                    if (natives.ValueKind != JsonValueKind.Object)
+                        return Fail($"'libraries[{libraryIndex}].natives' must be an object", out error);
+                    foreach (var native in natives.EnumerateObject())
+                    {
+                        if (native.Value.ValueKind != JsonValueKind.String)
+                            return Fail($"native classifier '{native.Name}' in libraries[{libraryIndex}] must be a string", out error);
+                    }
+                }
+
+                if (library.TryGetProperty("extract", out var extract))
+                {
+                    if (extract.ValueKind != JsonValueKind.Object)
+                        return Fail($"'libraries[{libraryIndex}].extract' must be an object", out error);
+                    if (extract.TryGetProperty("exclude", out var exclude))
+                    {
+                        if (exclude.ValueKind != JsonValueKind.Array)
+                            return Fail($"'libraries[{libraryIndex}].extract.exclude' must be an array", out error);
+                        foreach (var item in exclude.EnumerateArray())
+                        {
+                            if (item.ValueKind != JsonValueKind.String)
+                                return Fail($"'libraries[{libraryIndex}].extract.exclude' entries must be strings", out error);
+                        }
+                    }
+                }
+
+                libraryIndex++;
+            }
+        }
+
+        error = string.Empty;
+        return true;
+
+        static bool OptionalString(JsonElement element, string name)
+            => !element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.String;
+
+        static bool ValidateArtifact(JsonElement artifact)
+            => artifact.ValueKind == JsonValueKind.Object
+               && OptionalString(artifact, "path")
+               && OptionalString(artifact, "sha1");
+
+        static bool Fail(string message, out string result)
+        {
+            result = message;
+            return false;
+        }
+    }
+
+    private static bool TryValidateAssetIndex(JsonElement root, out string error)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return Fail("root must be an object", out error);
+        if (!root.TryGetProperty("objects", out var objects)
+            || objects.ValueKind != JsonValueKind.Object)
+            return Fail("'objects' must be an object", out error);
+
+        foreach (var property in objects.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.Object)
+                return Fail($"asset '{property.Name}' must be an object", out error);
+            if (!property.Value.TryGetProperty("hash", out var hashElement)
+                || hashElement.ValueKind != JsonValueKind.String)
+                return Fail($"asset '{property.Name}' must contain a string 'hash'", out error);
+            if (!IsSha1(hashElement.GetString()))
+                return Fail($"asset '{property.Name}' contains an invalid SHA-1 hash", out error);
+        }
+
+        error = string.Empty;
+        return true;
+
+        static bool Fail(string message, out string result)
+        {
+            result = message;
+            return false;
+        }
     }
 
     private static string GetMinecraftOsKey()
