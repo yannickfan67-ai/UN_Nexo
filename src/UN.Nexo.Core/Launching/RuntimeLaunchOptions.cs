@@ -39,6 +39,13 @@ public static class RuntimeLaunchOptions
             ? RecommendMemoryMb(availableBytes ?? GC.GetGCMemoryInfo().TotalAvailableMemoryBytes)
             : settings.MemoryMb;
         var extra = ParseExtraJvmArguments(settings.ExtraJvmArguments);
+        foreach (var argument in extra)
+        {
+            if (TryParseInitialHeapMb(argument, out var initialHeapMb) && initialHeapMb > memoryMb)
+                throw new ArgumentException(
+                    $"Initial heap ({initialHeapMb} MB) cannot exceed Nexo's maximum heap ({memoryMb} MB).",
+                    nameof(settings));
+        }
 
         var result = new List<string>(baseArguments.Count + extra.Count + 1)
         {
@@ -110,6 +117,43 @@ public static class RuntimeLaunchOptions
             throw new ArgumentException("Extra JVM arguments contain an unterminated quote.", nameof(text));
         Commit();
         return result;
+    }
+
+    private static bool TryParseInitialHeapMb(string value, out long memoryMb)
+    {
+        memoryMb = 0;
+        if (!value.StartsWith("-Xms", StringComparison.OrdinalIgnoreCase) || value.Length <= 4)
+            return false;
+
+        var text = value.AsSpan(4);
+        long multiplier = 1;
+        if (char.IsLetter(text[^1]))
+        {
+            multiplier = char.ToUpperInvariant(text[^1]) switch
+            {
+                'K' => 1,
+                'M' => 1024,
+                'G' => 1024L * 1024,
+                'T' => 1024L * 1024 * 1024,
+                _ => 0
+            };
+            if (multiplier == 0)
+                return false;
+            text = text[..^1];
+        }
+
+        if (!long.TryParse(text, out var amount) || amount < 0)
+            return false;
+        try
+        {
+            var kib = checked(amount * multiplier);
+            memoryMb = (kib + 1023) / 1024;
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
     }
 
     private static void ValidateJvmArgument(string value)
