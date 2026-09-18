@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -17,7 +18,8 @@ public sealed class JavaRuntimeProvisionService
     private readonly NexoPathService _paths;
     private readonly TimeSpan _transferIdleTimeout;
     private readonly Func<string, int, CancellationToken, Task<bool>> _runtimeValidator;
-    private readonly HashSet<string> _trustedThisSession = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _trustedThisSession = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     public JavaRuntimeProvisionService(NexoPathService paths)
         : this(SharedClient, paths)
@@ -58,6 +60,7 @@ public sealed class JavaRuntimeProvisionService
         Directory.CreateDirectory(runtimesRoot);
         var targetRoot = Path.Combine(runtimesRoot, $"temurin-{major}-{os}-x64");
 
+        using var lease = await PathKeyedLock.AcquireAsync(targetRoot, cancellationToken);
         var existing = await TryLoadExistingAsync(targetRoot, major, cancellationToken);
         if (existing is not null)
             return existing;
@@ -71,7 +74,9 @@ public sealed class JavaRuntimeProvisionService
             : asset.Link.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
                 ? ".tar.gz"
                 : throw new InvalidDataException("Java runtime package has an unsupported archive type.");
-        var archivePath = Path.Combine(downloadRoot, $"temurin-{major}-{os}-x64{archiveExtension}");
+        var archivePath = Path.Combine(
+            downloadRoot,
+            $"temurin-{major}-{os}-x64{archiveExtension}");
         var partPath = archivePath + ".part";
 
         try
@@ -81,28 +86,39 @@ public sealed class JavaRuntimeProvisionService
             File.Move(partPath, archivePath, overwrite: true);
 
             progress?.Report($"Installing Java {major} runtime…");
-            var stagingRoot = Path.Combine(runtimesRoot, $".staging-{major}-{Guid.NewGuid():N}");
+            var stagingRoot = Path.Combine(
+                runtimesRoot,
+                $".staging-{major}-{Guid.NewGuid():N}");
             Directory.CreateDirectory(stagingRoot);
             try
             {
                 ExtractArchive(archivePath, stagingRoot);
                 var javaPath = FindJavaExecutable(stagingRoot)
-                    ?? throw new InvalidDataException("Downloaded Java runtime does not contain bin/java.");
+                    ?? throw new InvalidDataException(
+                        "Downloaded Java runtime does not contain bin/java.");
                 var binDirectory = Path.GetDirectoryName(javaPath)
-                    ?? throw new InvalidDataException("Downloaded Java runtime has an invalid bin directory.");
+                    ?? throw new InvalidDataException(
+                        "Downloaded Java runtime has an invalid bin directory.");
                 var runtimeHome = Directory.GetParent(binDirectory)?.FullName
-                    ?? throw new InvalidDataException("Downloaded Java runtime has an invalid home directory.");
+                    ?? throw new InvalidDataException(
+                        "Downloaded Java runtime has an invalid home directory.");
                 var relativeJavaPath = Path.GetRelativePath(runtimeHome, javaPath);
+                var stagedJavaPath = Path.Combine(runtimeHome, relativeJavaPath);
 
-                if (Directory.Exists(targetRoot))
-                    Directory.Delete(targetRoot, recursive: true);
-                Directory.Move(runtimeHome, targetRoot);
+                EnsureUnixExecutable(stagedJavaPath);
+                var stagedSpawnHelper = Path.Combine(
+                    runtimeHome,
+                    "lib",
+                    "jspawnhelper");
+                if (File.Exists(stagedSpawnHelper))
+                    EnsureUnixExecutable(stagedSpawnHelper);
 
-                var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
-                EnsureUnixExecutable(finalJavaPath);
-                var spawnHelper = Path.Combine(targetRoot, "lib", "jspawnhelper");
-                if (File.Exists(spawnHelper))
-                    EnsureUnixExecutable(spawnHelper);
+                if (!await _runtimeValidator(
+                        stagedJavaPath,
+                        major,
+                        cancellationToken))
+                    throw new InvalidDataException(
+                        $"Downloaded Java {major} runtime failed executable validation.");
 
                 var manifest = new ManagedRuntimeManifest(
                     major,
@@ -111,12 +127,16 @@ public sealed class JavaRuntimeProvisionService
                     asset.Link,
                     asset.Sha256,
                     DateTimeOffset.UtcNow);
-                await File.WriteAllTextAsync(
-                    Path.Combine(targetRoot, "nexo-runtime.json"),
-                    JsonSerializer.Serialize(manifest, JsonOptions),
+                await WriteRuntimeManifestAtomicAsync(
+                    runtimeHome,
+                    manifest,
                     cancellationToken);
 
-                _trustedThisSession.Add(targetRoot);
+                cancellationToken.ThrowIfCancellationRequested();
+                PublishRuntimeDirectory(runtimeHome, targetRoot);
+
+                var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
+                _trustedThisSession.TryAdd(targetRoot, 0);
                 progress?.Report($"Java {major} runtime ready.");
                 return new JavaInstallation(
                     finalJavaPath,
@@ -180,17 +200,79 @@ public sealed class JavaRuntimeProvisionService
             return null;
 
         EnsureUnixExecutable(javaPath);
-        if (!_trustedThisSession.Contains(targetRoot)
+        if (!_trustedThisSession.ContainsKey(targetRoot)
             && !await _runtimeValidator(javaPath, expectedMajor, cancellationToken))
             return null;
 
-        _trustedThisSession.Add(targetRoot);
+        _trustedThisSession.TryAdd(targetRoot, 0);
         return new JavaInstallation(
             javaPath,
             targetRoot,
             manifest.Version,
             true,
             "Nexo managed · Eclipse Temurin");
+    }
+
+    private static async Task WriteRuntimeManifestAtomicAsync(
+        string runtimeHome,
+        ManagedRuntimeManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(runtimeHome, "nexo-runtime.json");
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(
+                temp,
+                JsonSerializer.Serialize(manifest, JsonOptions),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temp, path, overwrite: true);
+        }
+        catch
+        {
+            TryDeleteFile(temp);
+            throw;
+        }
+    }
+
+    private static void PublishRuntimeDirectory(
+        string stagedRuntimeHome,
+        string targetRoot,
+        Action? afterExistingMoved = null)
+    {
+        if (!Directory.Exists(stagedRuntimeHome))
+            throw new DirectoryNotFoundException(
+                $"Staged runtime directory is missing: {stagedRuntimeHome}");
+
+        var backupRoot = targetRoot + ".rollback-" + Guid.NewGuid().ToString("N");
+        var movedExisting = false;
+        try
+        {
+            if (Directory.Exists(targetRoot))
+            {
+                Directory.Move(targetRoot, backupRoot);
+                movedExisting = true;
+            }
+
+            afterExistingMoved?.Invoke();
+            Directory.Move(stagedRuntimeHome, targetRoot);
+        }
+        catch
+        {
+            if (Directory.Exists(targetRoot))
+                TryDeleteDirectory(targetRoot);
+
+            if (movedExisting
+                && Directory.Exists(backupRoot)
+                && !Directory.Exists(targetRoot))
+                Directory.Move(backupRoot, targetRoot);
+
+            throw;
+        }
+
+        if (movedExisting)
+            TryDeleteDirectory(backupRoot);
     }
 
     private async Task<RuntimeAsset> ResolveAssetAsync(
@@ -525,6 +607,30 @@ public sealed class JavaRuntimeProvisionService
                 | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
         }
         catch (PlatformNotSupportedException)
+        {
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
         {
         }
     }
