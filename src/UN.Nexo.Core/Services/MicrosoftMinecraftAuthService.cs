@@ -39,16 +39,37 @@ public sealed class MicrosoftMinecraftAuthService
         CancellationToken cancellationToken = default)
     {
         var microsoft = await _microsoftTokens.AcquireInteractiveAsync(cancellationToken);
-        var exchanged = await ExchangeAsync(microsoft.AccessToken, cancellationToken);
-        var account = await _accounts.UpsertMicrosoftAsync(
-            exchanged.PlayerName,
-            exchanged.Uuid,
-            microsoft.HomeAccountId,
-            cancellationToken);
+        try
+        {
+            var exchanged = await ExchangeAsync(microsoft.AccessToken, cancellationToken);
+            var account = await _accounts.UpsertMicrosoftAsync(
+                exchanged.PlayerName,
+                exchanged.Uuid,
+                microsoft.HomeAccountId,
+                cancellationToken);
 
-        return new MicrosoftMinecraftSession(
-            account,
-            exchanged with { AccountId = account.Id });
+            return new MicrosoftMinecraftSession(
+                account,
+                exchanged with { AccountId = account.Id });
+        }
+        catch
+        {
+            try
+            {
+                await _microsoftTokens.SignOutAsync(
+                    microsoft.HomeAccountId,
+                    CancellationToken.None);
+            }
+            catch
+            {
+                // Keep the original authentication/entitlement failure.
+                // No launcher account was published, so a later interactive
+                // sign-in can still replace any cache entry that the OS store
+                // could not remove during rollback.
+            }
+
+            throw;
+        }
     }
 
     public async Task<MicrosoftMinecraftSession> AcquireSessionAsync(
