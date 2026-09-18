@@ -29,6 +29,7 @@ internal static class Program
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Server decorator inherited metadata", TestServerDecoratorInheritedMetadataAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
+            ("Version catalog schema and stall fallback", VersionCatalogRegression.RunAsync),
             ("Metadata response size bounds", MetadataSizeRegression.RunAsync),
             ("Modern 1.21.4 launch plan and Quick Play", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
             ("Legacy 1.8.9 launch plan and direct connect", () => TestLaunchPlanAsync("1.8.9", 8, modern: false)),
