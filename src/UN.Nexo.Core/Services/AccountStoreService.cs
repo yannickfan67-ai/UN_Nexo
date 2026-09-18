@@ -109,7 +109,11 @@ public sealed partial class AccountStoreService
         try
         {
             await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<List<LauncherAccount>>(stream, _jsonOptions, cancellationToken) ?? [];
+            var accounts = await JsonSerializer.DeserializeAsync<List<LauncherAccount?>>(
+                stream,
+                _jsonOptions,
+                cancellationToken) ?? [];
+            return ValidateAccounts(accounts);
         }
         catch (JsonException) when (tolerateReadErrors)
         {
@@ -119,6 +123,63 @@ public sealed partial class AccountStoreService
         {
             return [];
         }
+    }
+
+    private static IReadOnlyList<LauncherAccount> ValidateAccounts(
+        IReadOnlyList<LauncherAccount?> accounts)
+    {
+        var result = new List<LauncherAccount>(accounts.Count);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var index = 0; index < accounts.Count; index++)
+        {
+            var account = accounts[index]
+                ?? throw new InvalidDataException(
+                    $"Account store entry {index} is null.");
+
+            if (string.IsNullOrWhiteSpace(account.Id)
+                || account.Id.Length > 512
+                || account.Id.Any(char.IsControl))
+                throw new InvalidDataException(
+                    $"Account store entry {index} has an invalid id.");
+            if (!ids.Add(account.Id))
+                throw new InvalidDataException(
+                    $"Account store contains duplicate id '{account.Id}'.");
+
+            if (!OfflineNameRegex().IsMatch(account.DisplayName ?? string.Empty))
+                throw new InvalidDataException(
+                    $"Account store entry '{account.Id}' has an invalid Minecraft profile name.");
+            if (!Guid.TryParse(account.Uuid, out var parsedUuid))
+                throw new InvalidDataException(
+                    $"Account store entry '{account.Id}' has an invalid UUID.");
+
+            var normalizedUuid = parsedUuid.ToString("D");
+            if (account.IsOffline)
+            {
+                if (!account.Id.StartsWith("offline:", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException(
+                        $"Offline account '{account.Id}' has an invalid id kind.");
+                account = account with { Uuid = normalizedUuid, AuthenticationId = null };
+            }
+            else if (account.IsMicrosoft)
+            {
+                if (!account.Id.StartsWith("microsoft:", StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(account.AuthenticationId)
+                    || account.AuthenticationId.Length > 512)
+                    throw new InvalidDataException(
+                        $"Microsoft account '{account.Id}' has invalid authentication metadata.");
+                account = account with { Uuid = normalizedUuid };
+            }
+            else
+            {
+                throw new InvalidDataException(
+                    $"Account store entry '{account.Id}' has unsupported type '{account.Type}'.");
+            }
+
+            result.Add(account);
+        }
+
+        return result;
     }
 
     private async Task SaveAtomicAsync(IReadOnlyList<LauncherAccount> accounts, CancellationToken cancellationToken)
