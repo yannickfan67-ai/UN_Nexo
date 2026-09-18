@@ -137,8 +137,14 @@ public sealed partial class JavaDiscoveryService
             await process.WaitForExitAsync(timeout.Token);
             var text = $"{await stderrTask}\n{await stdoutTask}";
 
+            if (process.ExitCode != 0)
+                return null;
+
             var match = JavaVersionRegex().Match(text);
-            var version = match.Success ? match.Groups["version"].Value : "Unknown";
+            if (!match.Success || string.IsNullOrWhiteSpace(match.Groups["version"].Value))
+                return null;
+
+            var version = match.Groups["version"].Value;
             var is64Bit = text.Contains("64-Bit", StringComparison.OrdinalIgnoreCase)
                           || text.Contains("amd64", StringComparison.OrdinalIgnoreCase)
                           || text.Contains("aarch64", StringComparison.OrdinalIgnoreCase);
