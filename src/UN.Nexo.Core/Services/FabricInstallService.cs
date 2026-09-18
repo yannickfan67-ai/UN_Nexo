@@ -28,6 +28,7 @@ public sealed class FabricInstallService(
         Directory.CreateDirectory(profileRoot);
 
         JsonDocument profile;
+        var persistDownloadedProfile = false;
         if (File.Exists(profilePath))
         {
             await using var profileStream = File.OpenRead(profilePath);
@@ -42,25 +43,15 @@ public sealed class FabricInstallService(
                 baseVersion.Id,
                 instance.LoaderVersion,
                 cancellationToken);
-            var profileId = profile.RootElement.GetProperty("id").GetString();
-            if (!string.Equals(profileId, instance.VersionId, StringComparison.Ordinal))
-            {
-                profile.Dispose();
-                throw new InvalidDataException(
-                    $"Fabric profile id '{profileId}' does not match instance version '{instance.VersionId}'.");
-            }
-            await WriteProfileAtomicAsync(profilePath, profile.RootElement, cancellationToken);
+            persistDownloadedProfile = true;
         }
 
         using (profile)
         {
             var root = profile.RootElement;
-            var inherited = root.TryGetProperty("inheritsFrom", out var inherits)
-                ? inherits.GetString()
-                : null;
-            if (!string.Equals(inherited, baseVersion.Id, StringComparison.Ordinal))
-                throw new InvalidDataException(
-                    $"Fabric profile inherits '{inherited}', expected Minecraft {baseVersion.Id}.");
+            ValidateProfile(root, instance.VersionId, baseVersion.Id);
+            if (persistDownloadedProfile)
+                await WriteProfileAtomicAsync(profilePath, root, cancellationToken);
 
             var loaderVersion = instance.LoaderVersion ?? ReadLoaderVersion(root)
                 ?? throw new InvalidDataException("Fabric profile does not declare a Fabric Loader library.");
@@ -148,19 +139,27 @@ public sealed class FabricInstallService(
 
         await using var stream = File.OpenRead(profilePath);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        return document.RootElement.TryGetProperty("inheritsFrom", out var inherits)
-            ? inherits.GetString()
-            : null;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Fabric profile root must be an object.");
+        if (!root.TryGetProperty("inheritsFrom", out var inherits))
+            return null;
+        if (inherits.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("Fabric profile property 'inheritsFrom' must be a string.");
+        return inherits.GetString();
     }
 
     public static string? ReadLoaderVersion(JsonElement profile)
     {
-        if (!profile.TryGetProperty("libraries", out var libraries)
+        if (profile.ValueKind != JsonValueKind.Object
+            || !profile.TryGetProperty("libraries", out var libraries)
             || libraries.ValueKind != JsonValueKind.Array)
             return null;
         foreach (var library in libraries.EnumerateArray())
         {
-            if (!library.TryGetProperty("name", out var nameElement))
+            if (library.ValueKind != JsonValueKind.Object
+                || !library.TryGetProperty("name", out var nameElement)
+                || nameElement.ValueKind != JsonValueKind.String)
                 continue;
             var name = nameElement.GetString();
             const string prefix = "net.fabricmc:fabric-loader:";
@@ -169,6 +168,90 @@ public sealed class FabricInstallService(
         }
         return null;
     }
+
+    private static void ValidateProfile(
+        JsonElement profile,
+        string expectedId,
+        string expectedBaseVersion)
+    {
+        if (profile.ValueKind != JsonValueKind.Object)
+            throw InvalidProfile("root", "an object");
+
+        var profileId = RequireString(profile, "id");
+        if (!string.Equals(profileId, expectedId, StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"Fabric profile id '{profileId}' does not match instance version '{expectedId}'.");
+
+        var inherited = RequireString(profile, "inheritsFrom");
+        if (!string.Equals(inherited, expectedBaseVersion, StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"Fabric profile inherits '{inherited}', expected Minecraft {expectedBaseVersion}.");
+
+        if (!profile.TryGetProperty("libraries", out var libraries))
+            return;
+        if (libraries.ValueKind != JsonValueKind.Array)
+            throw InvalidProfile("libraries", "an array");
+
+        var index = 0;
+        foreach (var library in libraries.EnumerateArray())
+        {
+            if (library.ValueKind != JsonValueKind.Object)
+                throw InvalidProfile($"libraries[{index}]", "an object");
+
+            MinecraftRules.Allows(library);
+
+            ValidateOptionalString(library, "name", $"libraries[{index}].name");
+            ValidateOptionalString(library, "url", $"libraries[{index}].url");
+
+            if (library.TryGetProperty("downloads", out var downloads))
+            {
+                if (downloads.ValueKind != JsonValueKind.Object)
+                    throw InvalidProfile($"libraries[{index}].downloads", "an object");
+
+                if (downloads.TryGetProperty("artifact", out var artifact))
+                {
+                    if (artifact.ValueKind != JsonValueKind.Object)
+                        throw InvalidProfile($"libraries[{index}].downloads.artifact", "an object");
+                    ValidateOptionalString(
+                        artifact,
+                        "path",
+                        $"libraries[{index}].downloads.artifact.path");
+                    ValidateOptionalString(
+                        artifact,
+                        "url",
+                        $"libraries[{index}].downloads.artifact.url");
+                    ValidateOptionalString(
+                        artifact,
+                        "sha1",
+                        $"libraries[{index}].downloads.artifact.sha1");
+                }
+            }
+
+            index++;
+        }
+    }
+
+    private static string RequireString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value)
+            || value.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(value.GetString()))
+            throw InvalidProfile(propertyName, "a non-empty string");
+        return value.GetString()!;
+    }
+
+    private static void ValidateOptionalString(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        if (element.TryGetProperty(propertyName, out var value)
+            && value.ValueKind != JsonValueKind.String)
+            throw InvalidProfile(displayName, "a string");
+    }
+
+    private static InvalidDataException InvalidProfile(string propertyName, string expected)
+        => new($"Fabric profile property '{propertyName}' must be {expected}.");
 
     private static List<LibraryDownload> CollectLibraries(JsonElement profile, string librariesRoot)
     {
