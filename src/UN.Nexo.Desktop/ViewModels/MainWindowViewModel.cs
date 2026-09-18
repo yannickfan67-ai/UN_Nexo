@@ -14,6 +14,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly MinecraftVersionManifestService _manifest;
     private readonly InstanceStoreService _instances;
     private readonly MinecraftVanillaInstallService _installer;
+    private readonly FabricInstallService _fabricInstaller;
     private readonly AccountStoreService _accounts;
     private readonly MicrosoftMinecraftAuthService _microsoftAuth;
     private readonly LauncherSettingsService _settings;
@@ -111,6 +112,7 @@ public partial class MainWindowViewModel : ObservableObject
         MinecraftVersionManifestService manifest,
         InstanceStoreService instances,
         MinecraftVanillaInstallService installer,
+        FabricInstallService fabricInstaller,
         AccountStoreService accounts,
         MicrosoftMinecraftAuthService microsoftAuth,
         LauncherSettingsService settings,
@@ -124,6 +126,7 @@ public partial class MainWindowViewModel : ObservableObject
         _manifest = manifest;
         _instances = instances;
         _installer = installer;
+        _fabricInstaller = fabricInstaller;
         _accounts = accounts;
         _microsoftAuth = microsoftAuth;
         _settings = settings;
@@ -315,12 +318,6 @@ public partial class MainWindowViewModel : ObservableObject
 
         var targetInstance = SelectedInstance;
         var targetSource = _downloadSources.DisplayName;
-        var version = AvailableVersions.FirstOrDefault(v => v.Id == targetInstance.VersionId);
-        if (version is null)
-        {
-            LauncherStatus = "Version metadata is unavailable. Refresh the catalog first.";
-            return;
-        }
 
         IsInstallBusy = true;
         InstallProgressValue = 0;
@@ -340,11 +337,16 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            await _installer.InstallAsync(targetInstance, version, progress);
+            await PrepareInstanceFilesAsync(
+                targetInstance,
+                progress,
+                CancellationToken.None);
             if (IsSelectedInstance(targetInstance))
             {
                 InstallProgressValue = 100;
-                InstallProgressText = $"Vanilla files prepared · {targetSource}";
+                InstallProgressText = targetInstance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase)
+                    ? $"Fabric files prepared · {targetSource}"
+                    : $"Vanilla files prepared · {targetSource}";
             }
             LauncherStatus = $"{targetInstance.Name} is prepared";
         }
@@ -362,21 +364,15 @@ public partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task EnsureLaunchReadyAsync(GameInstance instance, CancellationToken cancellationToken)
+    private async Task EnsureLaunchReadyAsync(
+        GameInstance instance,
+        CancellationToken cancellationToken)
     {
-        var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
+        var statePath = Path.Combine(
+            _paths.GetInstanceDirectory(instance.Id),
+            "install-state.json");
         if (!File.Exists(statePath))
         {
-            var version = AvailableVersions.FirstOrDefault(item => item.Id == instance.VersionId);
-            if (version is null)
-            {
-                var catalog = await TryGetCatalogAsync();
-                version = catalog?.Versions.FirstOrDefault(item => item.Id == instance.VersionId);
-            }
-            if (version is null)
-                throw new InvalidOperationException(
-                    $"Minecraft {instance.VersionId} metadata is unavailable. Refresh the catalog and try again.");
-
             IsInstallBusy = true;
             InstallProgressValue = 0;
             InstallProgressText = $"Auto preparing {instance.VersionId}…";
@@ -391,16 +387,26 @@ public partial class MainWindowViewModel : ObservableObject
                             ? $"{value.Stage} · {value.Completed}/{value.Total}"
                             : value.Stage;
                     }
+
                     GameStatus = value.Total > 0
                         ? $"Downloading {instance.VersionId} · {value.Stage} · {value.Completed}/{value.Total}"
                         : $"Downloading {instance.VersionId} · {value.Stage}";
                     LauncherStatus = GameStatus;
                 });
-                await _installer.InstallAsync(instance, version, progress, cancellationToken);
+
+                await PrepareInstanceFilesAsync(
+                    instance,
+                    progress,
+                    cancellationToken);
+
                 if (IsSelectedInstance(instance))
                 {
                     InstallProgressValue = 100;
-                    InstallProgressText = $"Vanilla files prepared · {_downloadSources.DisplayName}";
+                    InstallProgressText = instance.Loader.Equals(
+                        "fabric",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? $"Fabric files prepared · {_downloadSources.DisplayName}"
+                        : $"Vanilla files prepared · {_downloadSources.DisplayName}";
                 }
             }
             finally
@@ -409,7 +415,8 @@ public partial class MainWindowViewModel : ObservableObject
             }
         }
 
-        var requiredJava = await _runtimeInspector.GetRequiredJavaMajorAsync(instance, cancellationToken) ?? 8;
+        var requiredJava = await _runtimeInspector
+            .GetRequiredJavaMajorAsync(instance, cancellationToken) ?? 8;
         var matchingJava = JavaInstallations.FirstOrDefault(item =>
             item.Is64Bit
             && File.Exists(item.JavaPath)
@@ -428,14 +435,94 @@ public partial class MainWindowViewModel : ObservableObject
                 progress,
                 cancellationToken);
             if (!JavaInstallations.Any(item =>
-                    string.Equals(item.JavaPath, installed.JavaPath, StringComparison.OrdinalIgnoreCase)))
+                    string.Equals(
+                        item.JavaPath,
+                        installed.JavaPath,
+                        StringComparison.OrdinalIgnoreCase)))
                 JavaInstallations.Add(installed);
-            JavaSummary = $"{JavaInstallations.Count} Java installation{(JavaInstallations.Count == 1 ? string.Empty : "s")}";
-            JavaDetail = $"Managed Java {installed.Version} · 64-bit\n{installed.JavaPath}";
+            JavaSummary =
+                $"{JavaInstallations.Count} Java installation{(JavaInstallations.Count == 1 ? string.Empty : "s")}";
+            JavaDetail =
+                $"Managed Java {installed.Version} · 64-bit\n{installed.JavaPath}";
         }
 
         GameStatus = $"Starting {instance.Name}…";
         LauncherStatus = GameStatus;
+    }
+
+    private async Task PrepareInstanceFilesAsync(
+        GameInstance instance,
+        IProgress<InstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase))
+        {
+            var version = await ResolveCatalogVersionAsync(
+                instance.VersionId,
+                cancellationToken);
+            await _installer.InstallAsync(
+                instance,
+                version,
+                progress,
+                cancellationToken);
+            return;
+        }
+
+        if (instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseVersionId = !string.IsNullOrWhiteSpace(instance.BaseVersionId)
+                ? instance.BaseVersionId
+                : await _fabricInstaller.GetBaseVersionIdAsync(
+                    instance,
+                    cancellationToken);
+            if (string.IsNullOrWhiteSpace(baseVersionId))
+                throw new InvalidDataException(
+                    "Fabric instance does not declare its base Minecraft version.");
+
+            var baseVersion = await ResolveCatalogVersionAsync(
+                baseVersionId,
+                cancellationToken);
+            await _fabricInstaller.PrepareAsync(
+                instance,
+                baseVersion,
+                progress,
+                cancellationToken);
+            return;
+        }
+
+        throw new NotSupportedException(
+            $"Automatic preparation is not implemented for loader '{instance.Loader}'.");
+    }
+
+    private async Task<MinecraftVersionInfo> ResolveCatalogVersionAsync(
+        string versionId,
+        CancellationToken cancellationToken)
+    {
+        var version = AvailableVersions.FirstOrDefault(item =>
+            item.Id.Equals(versionId, StringComparison.Ordinal));
+        if (version is not null)
+            return version;
+
+        MinecraftVersionCatalog? catalog;
+        try
+        {
+            catalog = await _manifest.GetCatalogAsync(cancellationToken);
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException
+            or InvalidDataException
+            or IOException)
+        {
+            throw new InvalidOperationException(
+                $"Minecraft {versionId} metadata is unavailable. Refresh the catalog and try again.",
+                ex);
+        }
+
+        version = catalog.Versions.FirstOrDefault(item =>
+            item.Id.Equals(versionId, StringComparison.Ordinal));
+        return version
+            ?? throw new InvalidOperationException(
+                $"Minecraft {versionId} metadata is unavailable. Refresh the catalog and try again.");
     }
 
     [RelayCommand(CanExecute = nameof(CanPlay))]
