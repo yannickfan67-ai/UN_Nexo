@@ -56,6 +56,8 @@ internal static class Program
             await TestIncompleteVanillaReusesFilesAsync(root, paths);
             await TestDuplicateNameAsync(importer, store, preview, vanilla, source);
             await TestCancelledImportLeavesNoInstanceAsync(importer, store, preview, vanilla, source);
+            await TestUnsafeVersionPathMetadataAsync(root, paths);
+            await TestSymlinkedVersionMetadataAsync(root, paths);
 
             Require(await File.ReadAllTextAsync(Path.Combine(source, "options.txt")) == "fov:90", "Source settings changed during import.");
             Require(await File.ReadAllTextAsync(Path.Combine(source, "mods", "sodium.jar")) == "fake-mod", "Source mod changed during import.");
@@ -194,6 +196,229 @@ internal static class Program
         Require(afterInstances.Count == beforeInstances.Count, "Cancelled import should not publish a partial instance.");
         Require(afterInstances.All(item => item.Name != "Cancelled Import"), "Cancelled import should not appear in instance list.");
         Require(sourceBefore == await SnapshotAsync(source), "Cancelled import changed source files.");
+    }
+
+    private static async Task TestUnsafeVersionPathMetadataAsync(
+        string root,
+        NexoPathService paths)
+    {
+        var source = Path.Combine(root, "unsafe-version-source", ".minecraft");
+        var versionsRoot = Path.Combine(source, "versions");
+        Directory.CreateDirectory(versionsRoot);
+
+        await WriteSimpleProfileAsync(
+            versionsRoot,
+            "healthy-profile",
+            "healthy-profile",
+            null);
+
+        var unsafeValues = new[]
+        {
+            "../outside",
+            "../../outside",
+            "a/b",
+            @"a\b",
+            ".",
+            "..",
+            Path.GetFullPath(Path.Combine(root, "rooted-outside"))
+        };
+
+        for (var index = 0; index < unsafeValues.Length; index++)
+        {
+            var folder = $"bad-inherits-{index:D2}";
+            await WriteSimpleProfileAsync(
+                versionsRoot,
+                folder,
+                folder,
+                unsafeValues[index],
+                fabric: true);
+
+            var idFolder = $"bad-id-{index:D2}";
+            await WriteSimpleProfileAsync(
+                versionsRoot,
+                idFolder,
+                unsafeValues[index],
+                null);
+        }
+
+        var outside = Path.GetFullPath(Path.Combine(versionsRoot, "..", "..", "outside"));
+        Directory.CreateDirectory(outside);
+        var sentinel = Path.Combine(outside, "outside-sentinel.txt");
+        await File.WriteAllTextAsync(sentinel, "do-not-import");
+
+        var importer = new GameDirectoryImportService(paths);
+        var preview = await importer.ScanAsync(source);
+
+        Require(
+            preview.Versions.Any(item => item.VersionId == "healthy-profile"),
+            "Healthy sibling profile should remain discoverable.");
+        Require(
+            preview.Versions.All(item =>
+                !item.VersionId.StartsWith("bad-inherits-", StringComparison.Ordinal)
+                && !item.VersionId.StartsWith("bad-id-", StringComparison.Ordinal)),
+            "Unsafe id/inheritsFrom profiles must not be returned as import candidates.");
+        Require(
+            preview.Warnings.Any(item =>
+                item.Contains("safe filesystem component", StringComparison.OrdinalIgnoreCase)
+                || item.Contains("Skipped", StringComparison.OrdinalIgnoreCase)),
+            "Unsafe version metadata should produce an actionable scan warning.");
+        Require(await File.ReadAllTextAsync(sentinel) == "do-not-import",
+            "Unsafe inheritsFrom scanning must not touch data outside versions/.");
+
+        var malicious = new ImportVersionCandidate(
+            "../../outside",
+            "fabric",
+            "../../outside",
+            Path.Combine(versionsRoot, "healthy-profile", "healthy-profile.json"),
+            false,
+            false,
+            "malicious traversal fixture",
+            "0.0.0");
+        try
+        {
+            await importer.ImportAsync(preview, malicious, "Unsafe traversal import");
+            throw new InvalidOperationException("Unsafe traversal candidate unexpectedly imported.");
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("changed", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("disappeared", StringComparison.OrdinalIgnoreCase))
+        {
+        }
+
+        Require(await File.ReadAllTextAsync(sentinel) == "do-not-import",
+            "Rejected traversal import must not copy or mutate the outside sentinel.");
+    }
+
+    private static async Task TestSymlinkedVersionMetadataAsync(
+        string root,
+        NexoPathService paths)
+    {
+        var source = Path.Combine(root, "symlink-version-source", ".minecraft");
+        var versionsRoot = Path.Combine(source, "versions");
+        Directory.CreateDirectory(versionsRoot);
+        await WriteSimpleProfileAsync(
+            versionsRoot,
+            "regular-profile",
+            "regular-profile",
+            null);
+
+        var externalRoot = Path.Combine(root, "external-version-metadata");
+        Directory.CreateDirectory(externalRoot);
+        var externalPreferred = Path.Combine(externalRoot, "preferred.json");
+        var externalFallback = Path.Combine(externalRoot, "fallback.json");
+        await File.WriteAllTextAsync(
+            externalPreferred,
+            JsonSerializer.Serialize(new { id = "linked-preferred", mainClass = "example.Main", libraries = Array.Empty<object>() }, Json));
+        await File.WriteAllTextAsync(
+            externalFallback,
+            JsonSerializer.Serialize(new { id = "linked-fallback", mainClass = "example.Main", libraries = Array.Empty<object>() }, Json));
+
+        var preferredDirectory = Path.Combine(versionsRoot, "linked-preferred");
+        var fallbackDirectory = Path.Combine(versionsRoot, "linked-fallback");
+        Directory.CreateDirectory(preferredDirectory);
+        Directory.CreateDirectory(fallbackDirectory);
+
+        var linksCreated = TryCreateFileSymlink(
+            Path.Combine(preferredDirectory, "linked-preferred.json"),
+            externalPreferred)
+            && TryCreateFileSymlink(
+                Path.Combine(fallbackDirectory, "other.json"),
+                externalFallback);
+        if (!linksCreated)
+        {
+            Console.WriteLine("SKIP import metadata symlink regression: runner cannot create file symlinks.");
+            return;
+        }
+
+        var importer = new GameDirectoryImportService(paths);
+        var preview = await importer.ScanAsync(source);
+        Require(
+            preview.Versions.Any(item => item.VersionId == "regular-profile"),
+            "Regular metadata file should remain importable next to rejected symlinks.");
+        Require(
+            preview.Versions.All(item =>
+                item.VersionId is not "linked-preferred" and not "linked-fallback"),
+            "Preferred and fallback metadata symlinks must not become import candidates.");
+        Require(
+            preview.Warnings.Count(item =>
+                item.Contains("Symbolic links", StringComparison.OrdinalIgnoreCase)
+                || item.Contains("reparse", StringComparison.OrdinalIgnoreCase)) >= 2,
+            "Both symlinked metadata files should produce scan warnings.");
+
+        var regular = preview.Versions.Single(item => item.VersionId == "regular-profile");
+        var regularMetadata = regular.MetadataPath;
+        File.Delete(regularMetadata);
+        var externalReplacement = Path.Combine(externalRoot, "replacement.json");
+        await File.WriteAllTextAsync(
+            externalReplacement,
+            JsonSerializer.Serialize(new { id = "regular-profile", mainClass = "example.Main", libraries = Array.Empty<object>() }, Json));
+        Require(
+            TryCreateFileSymlink(regularMetadata, externalReplacement),
+            "TOCTOU regression requires replacing the approved metadata file with a symlink.");
+
+        try
+        {
+            await importer.ImportAsync(preview, regular, "Symlink swap import");
+            throw new InvalidOperationException("Import unexpectedly accepted metadata replaced by a symlink.");
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("changed", StringComparison.OrdinalIgnoreCase)
+            || ex.Message.Contains("disappeared", StringComparison.OrdinalIgnoreCase))
+        {
+        }
+
+        Require(
+            (File.GetAttributes(regularMetadata) & FileAttributes.ReparsePoint) != 0,
+            "Rejected import should leave the source symlink untouched.");
+    }
+
+    private static async Task WriteSimpleProfileAsync(
+        string versionsRoot,
+        string folder,
+        string id,
+        string? inheritsFrom,
+        bool fabric = false)
+    {
+        var directory = Path.Combine(versionsRoot, folder);
+        Directory.CreateDirectory(directory);
+        object metadata = inheritsFrom is null
+            ? new
+            {
+                id,
+                mainClass = "example.Main",
+                libraries = Array.Empty<object>()
+            }
+            : new
+            {
+                id,
+                inheritsFrom,
+                mainClass = fabric
+                    ? "net.fabricmc.loader.impl.launch.knot.KnotClient"
+                    : "example.Main",
+                libraries = fabric
+                    ? new[] { new { name = "net.fabricmc:fabric-loader:0.16.0" } }
+                    : Array.Empty<object>()
+            };
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, folder + ".json"),
+            JsonSerializer.Serialize(metadata, Json));
+    }
+
+    private static bool TryCreateFileSymlink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+            return (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (
+            ex is IOException
+            or UnauthorizedAccessException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static async Task CreateCompleteVanillaAsync(string gameRoot, string versionId)

@@ -61,6 +61,8 @@ public sealed class GameDirectoryImportService
                 var metadata = FindVersionMetadata(directory);
                 if (metadata is null)
                     continue;
+                RejectReparsePoint(metadata);
+                EnsureDirectChild(directory, metadata, "Version metadata");
                 var info = new FileInfo(metadata);
                 if (info.Length <= 0 || info.Length > MaxVersionMetadataBytes)
                 {
@@ -77,19 +79,33 @@ public sealed class GameDirectoryImportService
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
                 var root = document.RootElement;
-                if (!root.TryGetProperty("id", out var idElement))
+                if (!root.TryGetProperty("id", out var idElement)
+                    || idElement.ValueKind != JsonValueKind.String)
                     continue;
-                var id = idElement.GetString()?.Trim();
-                if (string.IsNullOrWhiteSpace(id) || id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-                    continue;
+                var id = MetadataPath.RequireSingleComponent(
+                    idElement.GetString(),
+                    "version id");
 
-                var baseVersion = root.TryGetProperty("inheritsFrom", out var inherits)
-                    ? inherits.GetString()?.Trim()
-                    : null;
-                baseVersion = string.IsNullOrWhiteSpace(baseVersion) ? id : baseVersion;
+                string baseVersion;
+                if (root.TryGetProperty("inheritsFrom", out var inherits))
+                {
+                    if (inherits.ValueKind != JsonValueKind.String)
+                        throw new InvalidDataException(
+                            "inheritsFrom must be one safe Minecraft version ID.");
+                    baseVersion = MetadataPath.RequireSingleComponent(
+                        inherits.GetString(),
+                        "inheritsFrom");
+                }
+                else
+                {
+                    baseVersion = id;
+                }
 
-                var (loader, detail, loaderVersion) = DetectLoader(root, baseVersion!);
-                var baseDirectory = Path.Combine(versionsRoot, baseVersion!);
+                var (loader, detail, loaderVersion) = DetectLoader(root, baseVersion);
+                var baseDirectory = ResolveVersionDirectory(
+                    versionsRoot,
+                    baseVersion,
+                    "inheritsFrom");
                 var clientJar = loader == "vanilla"
                     ? Path.Combine(directory, id + ".jar")
                     : Path.Combine(baseDirectory, baseVersion + ".jar");
@@ -356,12 +372,58 @@ public sealed class GameDirectoryImportService
         string versionId,
         ImportVersionCandidate selected)
     {
-        var canonical = Path.Combine(sourceRoot, "versions", versionId);
+        var versionsRoot = Path.Combine(sourceRoot, "versions");
+        var canonical = ResolveVersionDirectory(
+            versionsRoot,
+            versionId,
+            "version id");
         if (Directory.Exists(canonical))
+        {
+            RejectReparsePoint(canonical);
             return canonical;
-        if (versionId.Equals(selected.VersionId, StringComparison.Ordinal))
-            return Path.GetDirectoryName(selected.MetadataPath);
-        return null;
+        }
+
+        if (!versionId.Equals(selected.VersionId, StringComparison.Ordinal))
+            return null;
+
+        var selectedDirectory = Path.GetDirectoryName(selected.MetadataPath);
+        if (string.IsNullOrWhiteSpace(selectedDirectory)
+            || !Directory.Exists(selectedDirectory))
+            return null;
+
+        RejectReparsePoint(selectedDirectory);
+        EnsureDirectChild(versionsRoot, selectedDirectory, "Version directory");
+        return selectedDirectory;
+    }
+
+    private static string ResolveVersionDirectory(
+        string versionsRoot,
+        string versionId,
+        string fieldName)
+    {
+        var component = MetadataPath.RequireSingleComponent(versionId, fieldName);
+        var fullRoot = Path.GetFullPath(versionsRoot);
+        var candidate = Path.GetFullPath(Path.Combine(fullRoot, component));
+        EnsureDirectChild(fullRoot, candidate, fieldName);
+        return candidate;
+    }
+
+    private static void EnsureDirectChild(
+        string root,
+        string child,
+        string label)
+    {
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var fullChild = Path.GetFullPath(child);
+        var parent = Path.GetDirectoryName(fullChild);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (parent is null
+            || !Path.TrimEndingDirectorySeparator(parent).Equals(fullRoot, comparison))
+            throw new InvalidDataException(
+                $"{label} must remain one direct child of the versions directory.");
     }
 
     private static (string Loader, string Detail, string? LoaderVersion) DetectLoader(
