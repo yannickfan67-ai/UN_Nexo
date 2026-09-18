@@ -60,6 +60,7 @@ public sealed class InstanceStoreService
             }
             catch (JsonException) { }
             catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
 
         return result.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
