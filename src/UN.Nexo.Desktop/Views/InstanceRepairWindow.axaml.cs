@@ -29,13 +29,19 @@ public sealed partial class InstanceRepairWindow : Window
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/repair");
         var installer = new MinecraftVanillaInstallService(httpClient, paths, _downloadSources);
         var manifest = new MinecraftVersionManifestService(httpClient, _downloadSources);
+        var fabricInstaller = new FabricInstallService(
+            httpClient,
+            paths,
+            installer,
+            new FabricMetaService(httpClient));
         _repairService = new MinecraftInstanceRepairService(
             paths,
             installer,
             manifest,
             new JavaDiscoveryService(paths),
             new MinecraftRuntimeInspector(paths),
-            new JavaRuntimeProvisionService(paths));
+            new JavaRuntimeProvisionService(paths),
+            fabricInstaller);
 
         Opened += OnOpened;
         Closed += OnClosed;
