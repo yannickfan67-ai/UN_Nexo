@@ -1,11 +1,18 @@
 namespace UN.Nexo.Core.Models;
 
+public sealed record WorldBackupFile(
+    string Path,
+    long Size,
+    string Sha256);
+
 public sealed record WorldBackupWorld(
     string Name,
     string ArchivePrefix,
     long UncompressedBytes,
     int FileCount)
 {
+    public IReadOnlyList<WorldBackupFile>? Files { get; init; }
+
     public string SizeLabel => FormatBytes(UncompressedBytes);
 
     private static string FormatBytes(long value)
@@ -33,6 +40,8 @@ public sealed record WorldBackupInfo(
     long ArchiveBytes,
     IReadOnlyList<WorldBackupWorld> Worlds)
 {
+    public int Schema { get; init; } = 1;
+
     public string DisplayName => $"{CreatedAt.LocalDateTime:yyyy-MM-dd HH:mm:ss} · {Kind}";
     public string WorldsSummary => Worlds.Count == 0
         ? "No worlds"
