@@ -88,6 +88,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         using var resolved = await new MinecraftVersionMetadataResolver()
             .ResolveAsync(gameRoot, instance.VersionId, cancellationToken);
         var root = resolved.Document.RootElement;
+        ValidateResolvedMetadataForLaunch(root);
         if (!string.Equals(root.GetProperty("id").GetString(), instance.VersionId,
                 StringComparison.Ordinal))
             throw new InvalidDataException("Instance and resolved version metadata do not match.");
@@ -179,6 +180,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         RequireFile(indexPath, assetIndex);
         using var indexDocument = await ReadJsonAsync(indexPath, cancellationToken);
         var index = indexDocument.RootElement;
+        ValidateAssetIndexForLaunch(index);
         var legacyAssets = string.Equals(assetId, "legacy", StringComparison.OrdinalIgnoreCase)
             || (root.TryGetProperty("assets", out var assetsElement)
                 && string.Equals(assetsElement.GetString(), "legacy", StringComparison.OrdinalIgnoreCase));
@@ -328,13 +330,197 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         return result;
     }
 
+    private static void ValidateResolvedMetadataForLaunch(JsonElement root)
+    {
+        RequireObject(root, "root");
+        RequireString(root, "id", required: true);
+
+        if (root.TryGetProperty("javaVersion", out var javaVersion))
+        {
+            RequireObject(javaVersion, "javaVersion");
+            if (javaVersion.TryGetProperty("majorVersion", out var majorVersion)
+                && (majorVersion.ValueKind != JsonValueKind.Number || !majorVersion.TryGetInt32(out _)))
+                throw InvalidMetadata("javaVersion.majorVersion", "an integer");
+        }
+
+        if (root.TryGetProperty("libraries", out var libraries))
+        {
+            if (libraries.ValueKind != JsonValueKind.Array)
+                throw InvalidMetadata("libraries", "an array");
+
+            var index = 0;
+            foreach (var library in libraries.EnumerateArray())
+            {
+                RequireObject(library, $"libraries[{index}]");
+                MinecraftRules.Allows(library);
+                _ = MinecraftRules.NativeClassifier(library);
+                RequireString(library, "name", required: false);
+
+                if (library.TryGetProperty("downloads", out var downloads))
+                {
+                    RequireObject(downloads, $"libraries[{index}].downloads");
+                    if (downloads.TryGetProperty("artifact", out var artifact))
+                        ValidateArtifact(artifact, $"libraries[{index}].downloads.artifact");
+                    if (downloads.TryGetProperty("classifiers", out var classifiers))
+                    {
+                        RequireObject(classifiers, $"libraries[{index}].downloads.classifiers");
+                        foreach (var classifier in classifiers.EnumerateObject())
+                            ValidateArtifact(
+                                classifier.Value,
+                                $"libraries[{index}].downloads.classifiers.{classifier.Name}");
+                    }
+                }
+
+                index++;
+            }
+        }
+
+        if (root.TryGetProperty("downloads", out var rootDownloads))
+        {
+            RequireObject(rootDownloads, "downloads");
+            if (rootDownloads.TryGetProperty("client", out var client))
+                RequireObject(client, "downloads.client");
+        }
+
+        if (root.TryGetProperty("assetIndex", out var assetIndex))
+        {
+            RequireObject(assetIndex, "assetIndex");
+            RequireString(assetIndex, "id", required: true);
+        }
+
+        RequireString(root, "assets", required: false);
+        RequireString(root, "type", required: false);
+        RequireString(root, "minecraftArguments", required: false);
+        RequireString(root, "mainClass", required: true);
+
+        if (root.TryGetProperty("arguments", out var arguments))
+        {
+            RequireObject(arguments, "arguments");
+            if (arguments.TryGetProperty("jvm", out var jvm))
+                ValidateArguments(jvm, "arguments.jvm");
+            if (arguments.TryGetProperty("game", out var game))
+                ValidateArguments(game, "arguments.game");
+        }
+
+        if (root.TryGetProperty("logging", out var logging))
+        {
+            RequireObject(logging, "logging");
+            if (logging.TryGetProperty("client", out var clientLogging))
+            {
+                RequireObject(clientLogging, "logging.client");
+                RequireString(clientLogging, "argument", required: false);
+                if (clientLogging.TryGetProperty("file", out var file))
+                {
+                    RequireObject(file, "logging.client.file");
+                    RequireString(file, "id", required: true);
+                }
+            }
+        }
+    }
+
+    private static void ValidateAssetIndexForLaunch(JsonElement root)
+    {
+        RequireObject(root, "asset index root");
+        if (!root.TryGetProperty("objects", out var objects)
+            || objects.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("asset index objects", "an object");
+
+        RequireBoolean(root, "virtual");
+        RequireBoolean(root, "map_to_resources");
+
+        foreach (var property in objects.EnumerateObject())
+        {
+            RequireObject(property.Value, $"asset '{property.Name}'");
+            var hash = RequireString(property.Value, "hash", required: true);
+            if (hash is null || !Regex.IsMatch(hash, "^[a-fA-F0-9]{40}$"))
+                throw new InvalidDataException(
+                    $"Minecraft metadata property 'asset {property.Name}.hash' must be a 40-character hexadecimal SHA-1.");
+        }
+    }
+
+    private static void ValidateArtifact(JsonElement artifact, string name)
+    {
+        RequireObject(artifact, name);
+        RequireString(artifact, "path", required: false);
+        if (artifact.TryGetProperty("size", out var size)
+            && (size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var parsed) || parsed < 0))
+            throw InvalidMetadata($"{name}.size", "a non-negative integer");
+    }
+
+    private static void ValidateArguments(JsonElement list, string name)
+    {
+        if (list.ValueKind != JsonValueKind.Array)
+            throw InvalidMetadata(name, "an array");
+
+        foreach (var item in list.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+                continue;
+            if (item.ValueKind != JsonValueKind.Object)
+                throw InvalidMetadata($"{name}[]", "a string or object");
+
+            MinecraftRules.Allows(item);
+            if (!item.TryGetProperty("value", out var value))
+                throw InvalidMetadata($"{name}[].value", "a string or array of strings");
+            if (value.ValueKind == JsonValueKind.String)
+                continue;
+            if (value.ValueKind != JsonValueKind.Array)
+                throw InvalidMetadata($"{name}[].value", "a string or array of strings");
+            foreach (var part in value.EnumerateArray())
+                if (part.ValueKind != JsonValueKind.String)
+                    throw InvalidMetadata($"{name}[].value[]", "a string");
+        }
+    }
+
+    private static void RequireObject(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata(name, "an object");
+    }
+
+    private static string? RequireString(JsonElement element, string propertyName, bool required)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+        {
+            if (required)
+                throw InvalidMetadata(propertyName, "a string");
+            return null;
+        }
+
+        if (value.ValueKind != JsonValueKind.String)
+            throw InvalidMetadata(propertyName, "a string");
+        return value.GetString();
+    }
+
+    private static void RequireBoolean(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+            return;
+        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw InvalidMetadata(propertyName, "a boolean");
+    }
+
+    private static InvalidDataException InvalidMetadata(string propertyName, string expected)
+        => new($"Minecraft metadata property '{propertyName}' must be {expected}.");
+
     private static void RequireFile(string file, JsonElement? metadata = null)
     {
+        long? expectedSize = null;
+        if (metadata.HasValue)
+        {
+            if (metadata.Value.ValueKind != JsonValueKind.Object)
+                throw InvalidMetadata("file metadata", "an object");
+            if (metadata.Value.TryGetProperty("size", out var size))
+            {
+                if (size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var parsedSize) || parsedSize < 0)
+                    throw InvalidMetadata("size", "a non-negative integer");
+                expectedSize = parsedSize;
+            }
+        }
+
         var info = new FileInfo(file);
         if (!info.Exists || info.Length == 0
-            || (metadata.HasValue
-                && metadata.Value.TryGetProperty("size", out var size)
-                && info.Length != size.GetInt64()))
+            || (expectedSize.HasValue && info.Length != expectedSize.Value))
             throw new FileNotFoundException(
                 $"Missing or incomplete file: {file}. Run Prepare instance files again.",
                 file);
@@ -344,8 +530,15 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         string file,
         CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(file);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        try
+        {
+            await using var stream = File.OpenRead(file);
+            return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException($"Minecraft metadata JSON is malformed: {file}", ex);
+        }
     }
 
     private static void CopyAsset(string source, string target)
@@ -358,6 +551,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
     private static IEnumerable<string> ReadArguments(JsonElement list)
     {
+        if (list.ValueKind != JsonValueKind.Array)
+            throw InvalidMetadata("launch arguments", "an array");
+
         foreach (var item in list.EnumerateArray())
         {
             if (item.ValueKind == JsonValueKind.String)
@@ -366,15 +562,28 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                 continue;
             }
 
+            if (item.ValueKind != JsonValueKind.Object)
+                throw InvalidMetadata("launch argument item", "a string or object");
             if (!MinecraftRules.Allows(item))
                 continue;
+            if (!item.TryGetProperty("value", out var value))
+                throw InvalidMetadata("launch argument value", "a string or array of strings");
 
-            var value = item.GetProperty("value");
             if (value.ValueKind == JsonValueKind.String)
+            {
                 yield return value.GetString()!;
-            else
-                foreach (var part in value.EnumerateArray())
-                    yield return part.GetString()!;
+                continue;
+            }
+
+            if (value.ValueKind != JsonValueKind.Array)
+                throw InvalidMetadata("launch argument value", "a string or array of strings");
+
+            foreach (var part in value.EnumerateArray())
+            {
+                if (part.ValueKind != JsonValueKind.String)
+                    throw InvalidMetadata("launch argument value[]", "a string");
+                yield return part.GetString()!;
+            }
         }
     }
 
