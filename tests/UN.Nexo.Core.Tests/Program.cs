@@ -21,6 +21,7 @@ internal static class Program
             ("Managed Java metadata hardening", TestManagedJavaMetadataHardeningAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
+            ("Persisted account and server store validation", PersistedStoreRegression.RunAsync),
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
             ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
