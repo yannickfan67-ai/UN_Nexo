@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -139,6 +140,78 @@ internal static class Program
             Require(report.Issues.Any(item => item.Code == "assets-damaged"), "missing asset should be detected");
             Require(report.Issues.Any(item => item.Code == "java-missing"), "wrong Java major should be detected");
             Require(await File.ReadAllTextAsync(savePath) == "keep-me", "integrity scan must not modify world data");
+
+            var unsafeIds = new[] { "../outside", "a/b", @"a\b", ".", "..", "/rooted", @"C:\outside" };
+            foreach (var unsafeId in unsafeIds)
+            {
+                ((JsonObject)version["assetIndex"]!)["id"] = unsafeId;
+                await File.WriteAllTextAsync(
+                    Path.Combine(versionRoot, "repair-test.json"),
+                    version.ToJsonString());
+
+                var unsafeReport = await service.CheckAsync(instance);
+                Require(
+                    unsafeReport.Issues.Any(item => item.Code == "asset-index-invalid-metadata"),
+                    $"unsafe assetIndex.id '{unsafeId}' should be reported as invalid metadata");
+                Require(
+                    unsafeReport.Issues.All(item =>
+                        item.Code is not "asset-index-missing" and not "asset-index-corrupt"),
+                    $"unsafe assetIndex.id '{unsafeId}' must not be inspected as an asset-index file");
+            }
+
+            var escapedIndexPath = Path.Combine(assetsRoot, "outside.json");
+            await File.WriteAllTextAsync(
+                escapedIndexPath,
+                new JsonObject
+                {
+                    ["virtual"] = true,
+                    ["objects"] = new JsonObject
+                    {
+                        ["escape.txt"] = new JsonObject
+                        {
+                            ["hash"] = assetSha,
+                            ["size"] = expectedAsset.Length
+                        }
+                    }
+                }.ToJsonString());
+            var objectPath = Path.Combine(assetsRoot, "objects", assetSha[..2], assetSha);
+            Directory.CreateDirectory(Path.GetDirectoryName(objectPath)!);
+            await File.WriteAllBytesAsync(objectPath, expectedAsset);
+
+            ((JsonObject)version["assetIndex"]!)["id"] = "../outside";
+            await File.WriteAllTextAsync(
+                Path.Combine(versionRoot, "repair-test.json"),
+                version.ToJsonString());
+
+            var rebuildMethod = typeof(MinecraftInstanceRepairService).GetMethod(
+                "RebuildMappedAssetsAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("RebuildMappedAssetsAsync regression hook not found.");
+            var rebuildTask = (Task?)rebuildMethod.Invoke(
+                service,
+                [instance, CancellationToken.None])
+                ?? throw new InvalidOperationException("RebuildMappedAssetsAsync did not return a task.");
+            try
+            {
+                await rebuildTask;
+                throw new InvalidOperationException(
+                    "Unsafe assetIndex.id should be rejected by the mapped-assets rebuild boundary.");
+            }
+            catch (InvalidDataException ex)
+            {
+                Require(
+                    ex.Message.Contains("assetIndex.id", StringComparison.Ordinal),
+                    "mapped-assets rejection should identify assetIndex.id");
+            }
+
+            Require(
+                !File.Exists(Path.Combine(assetsRoot, "outside", "escape.txt")),
+                "mapped-assets rebuild must not write through an escaped virtual root");
+
+            ((JsonObject)version["assetIndex"]!)["id"] = "repair-assets";
+            await File.WriteAllTextAsync(
+                Path.Combine(versionRoot, "repair-test.json"),
+                version.ToJsonString());
 
             Console.WriteLine($"PASS repair regression: {report.ErrorCount} errors, {report.WarningCount} warnings detected without touching saves");
             return 0;

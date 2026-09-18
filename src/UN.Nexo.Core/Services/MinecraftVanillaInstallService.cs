@@ -141,10 +141,16 @@ public sealed class MinecraftVanillaInstallService
 
         if (root.TryGetProperty("assetIndex", out var assetIndex))
         {
-            var assetId = assetIndex.GetProperty("id").GetString() ?? "legacy";
+            var assetId = MetadataPath.RequireSingleComponent(
+                assetIndex.GetProperty("id").GetString(),
+                "assetIndex.id");
             var assetUrl = assetIndex.GetProperty("url").GetString() ?? throw new InvalidDataException("Asset index URL missing.");
             var assetSha1 = assetIndex.TryGetProperty("sha1", out var indexSha) ? indexSha.GetString() : null;
-            var indexPath = Path.Combine(assetsRoot, "indexes", $"{assetId}.json");
+            var indexPath = MetadataPath.ResolveSingleComponent(
+                Path.Combine(assetsRoot, "indexes"),
+                assetId,
+                ".json",
+                "assetIndex.id");
 
             Report(progress, new InstallProgress("Asset index", 0, 1, assetId));
             await DownloadFileAsync(assetUrl, indexPath, assetSha1, "Asset index", 0, 1, progress, cancellationToken);

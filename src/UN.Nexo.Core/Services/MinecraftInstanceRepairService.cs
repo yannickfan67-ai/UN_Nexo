@@ -350,11 +350,34 @@ public sealed class MinecraftInstanceRepairService
         if (!root.TryGetProperty("assetIndex", out var assetIndex))
             return;
 
-        var assetId = assetIndex.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
-        if (string.IsNullOrWhiteSpace(assetId))
-            assetId = "legacy";
         var assetsRoot = Path.Combine(gameRoot, "assets");
-        var indexPath = Path.Combine(assetsRoot, "indexes", $"{assetId}.json");
+        string assetId;
+        string indexPath;
+        try
+        {
+            var rawAssetId = assetIndex.TryGetProperty("id", out var idElement)
+                             && idElement.ValueKind == JsonValueKind.String
+                ? idElement.GetString()
+                : null;
+            assetId = MetadataPath.RequireSingleComponent(rawAssetId, "assetIndex.id");
+            indexPath = MetadataPath.ResolveSingleComponent(
+                Path.Combine(assetsRoot, "indexes"),
+                assetId,
+                ".json",
+                "assetIndex.id");
+        }
+        catch (InvalidDataException ex)
+        {
+            issues.Add(new InstanceHealthIssue(
+                "asset-index-invalid-metadata",
+                "Assets",
+                InstanceHealthLevel.Error,
+                $"The asset index metadata is unsafe: {ex.Message}",
+                Path.Combine(assetsRoot, "indexes"),
+                "Run Repair to replace the version metadata and asset index."));
+            return;
+        }
+
         var indexSha1 = assetIndex.TryGetProperty("sha1", out var shaElement) ? shaElement.GetString() : null;
         var indexHealth = await InspectFileAsync(indexPath, indexSha1, cancellationToken);
         if (indexHealth != FileHealth.Healthy)
@@ -476,12 +499,18 @@ public sealed class MinecraftInstanceRepairService
         if (!root.TryGetProperty("assetIndex", out var assetIndex))
             return;
 
-        var assetId = assetIndex.TryGetProperty("id", out var idElement) ? idElement.GetString() : null;
-        if (string.IsNullOrWhiteSpace(assetId))
-            return;
+        var rawAssetId = assetIndex.TryGetProperty("id", out var idElement)
+                         && idElement.ValueKind == JsonValueKind.String
+            ? idElement.GetString()
+            : null;
+        var assetId = MetadataPath.RequireSingleComponent(rawAssetId, "assetIndex.id");
 
         var assetsRoot = Path.Combine(gameRoot, "assets");
-        var indexPath = Path.Combine(assetsRoot, "indexes", assetId + ".json");
+        var indexPath = MetadataPath.ResolveSingleComponent(
+            Path.Combine(assetsRoot, "indexes"),
+            assetId,
+            ".json",
+            "assetIndex.id");
         if (!File.Exists(indexPath))
             return;
 
@@ -502,7 +531,11 @@ public sealed class MinecraftInstanceRepairService
             return;
 
         var objectsRoot = Path.Combine(assetsRoot, "objects");
-        var virtualRoot = Path.Combine(assetsRoot, "virtual", assetId);
+        var virtualRoot = MetadataPath.ResolveSingleComponent(
+            Path.Combine(assetsRoot, "virtual"),
+            assetId,
+            string.Empty,
+            "assetIndex.id");
         var resourceRoot = Path.Combine(gameRoot, "resources");
 
         foreach (var property in objects.EnumerateObject())
