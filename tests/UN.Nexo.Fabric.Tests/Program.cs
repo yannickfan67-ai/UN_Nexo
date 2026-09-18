@@ -39,7 +39,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
         "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[123]}",
         "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[{\"name\":123}]}",
         "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[{\"downloads\":[]}]}",
-        "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[{\"downloads\":{\"artifact\":{\"path\":123,\"url\":\"https://fabric-library.example.test/loader.jar\"}}}]}",
+        "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[{\"downloads\":{\"artifact\":{\"path\":123,\"url\":\"https://maven.fabricmc.net/loader.jar\"}}}]}",
         "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[{\"downloads\":{\"artifact\":{\"path\":\"net/fabricmc/fabric-loader/0.16.9/fabric-loader-0.16.9.jar\",\"url\":123}}}]}",
         "{\"id\":\"" + profileId + "\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[{\"url\":123}]}",
         "{\"id\":\"fabric-loader-other-1.21.4\",\"inheritsFrom\":\"1.21.4\",\"libraries\":[]}"
@@ -83,7 +83,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
             var baseVersion = new MinecraftVersionInfo(
                 baseVersionId,
                 "release",
-                "https://metadata.example.test/version.json",
+                "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
                 string.Empty,
@@ -139,7 +139,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
             + "\"inheritsFrom\":\"" + baseVersionId + "\","
             + "\"libraries\":[{\"name\":\"net.fabricmc:fabric-loader:" + loaderVersion + "\","
             + "\"downloads\":{\"artifact\":{\"path\":\"" + artifactRelative + "\","
-            + "\"url\":\"https://fabric-library.example.test/loader.jar\","
+            + "\"url\":\"https://maven.fabricmc.net/loader.jar\","
             + "\"sha1\":\"" + artifactSha1 + "\"}}}]}";
         await File.WriteAllTextAsync(
             Path.Combine(profileRoot, instance.VersionId + ".json"),
@@ -156,7 +156,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
         var baseVersion = new MinecraftVersionInfo(
             baseVersionId,
             "release",
-            "https://metadata.example.test/version.json",
+            "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
             string.Empty,
@@ -383,7 +383,7 @@ sealed class FabricPrepareHandler(byte[] artifactBytes) : HttpMessageHandler
     {
         RequestCount++;
         var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
-        if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+        if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
         {
             const string json = "{\"id\":\"1.21.4\",\"libraries\":[]}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -392,7 +392,7 @@ sealed class FabricPrepareHandler(byte[] artifactBytes) : HttpMessageHandler
             });
         }
 
-        if (uri.Host.Equals("fabric-library.example.test", StringComparison.OrdinalIgnoreCase))
+        if (uri.Host.Equals("maven.fabricmc.net", StringComparison.OrdinalIgnoreCase))
         {
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
