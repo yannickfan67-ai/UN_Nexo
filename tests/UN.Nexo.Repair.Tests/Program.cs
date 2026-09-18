@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
 
@@ -263,6 +264,8 @@ internal static class Program
                 Path.Combine(versionRoot, "repair-test.json"),
                 version.ToJsonString());
 
+            await RunFabricRepairInheritanceRegressionAsync();
+
             Console.WriteLine($"PASS repair regression: {report.ErrorCount} errors, {report.WarningCount} warnings detected without touching saves");
             return 0;
         }
@@ -270,6 +273,254 @@ internal static class Program
         {
             Console.Error.WriteLine($"FAIL repair regression: {ex}");
             return 1;
+        }
+        finally
+        {
+            try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task RunFabricRepairInheritanceRegressionAsync()
+    {
+        var temp = Path.Combine(
+            Path.GetTempPath(),
+            "nexo-fabric-repair-regression",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new NexoPathService(temp);
+            paths.EnsureDirectories();
+            var javaDiscovery = new JavaDiscoveryService(paths);
+            var installedJava = (await javaDiscovery.DiscoverAsync())
+                .FirstOrDefault(item =>
+                    item.Is64Bit
+                    && MinecraftLaunchPlanBuilder.JavaMajor(item.Version) > 0);
+            Require(installedJava is not null,
+                "Fabric repair regression requires one discoverable 64-bit Java runtime.");
+            var javaMajor = MinecraftLaunchPlanBuilder.JavaMajor(installedJava!.Version);
+
+            const string baseVersionId = "1.21.4";
+            const string loaderVersion = "0.16.9";
+            const string childVersionId = "fabric-loader-0.16.9-1.21.4";
+            var instance = new GameInstance(
+                "fabric-repair-test",
+                "Fabric repair test",
+                childVersionId,
+                "fabric",
+                DateTimeOffset.UtcNow,
+                baseVersionId,
+                loaderVersion);
+
+            var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
+            var baseRoot = Path.Combine(gameRoot, "versions", baseVersionId);
+            var childRoot = Path.Combine(gameRoot, "versions", childVersionId);
+            var librariesRoot = Path.Combine(gameRoot, "libraries");
+            var assetsRoot = Path.Combine(gameRoot, "assets");
+            Directory.CreateDirectory(baseRoot);
+            Directory.CreateDirectory(childRoot);
+            Directory.CreateDirectory(librariesRoot);
+            Directory.CreateDirectory(Path.Combine(assetsRoot, "indexes"));
+            Directory.CreateDirectory(Path.Combine(assetsRoot, "objects"));
+            await File.WriteAllTextAsync(
+                Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json"),
+                "{}");
+
+            var clientBytes = Encoding.UTF8.GetBytes("fabric-parent-client");
+            var clientSha = Sha1(clientBytes);
+            var baseLibraryBytes = Encoding.UTF8.GetBytes("fabric-parent-library");
+            var baseLibrarySha = Sha1(baseLibraryBytes);
+            const string baseLibraryRelative = "example/base/1.0/base-1.0.jar";
+            var fabricLibraryBytes = Encoding.UTF8.GetBytes("fabric-loader-library");
+            var fabricLibrarySha = Sha1(fabricLibraryBytes);
+            const string fabricLibraryRelative =
+                "net/fabricmc/fabric-loader/0.16.9/fabric-loader-0.16.9.jar";
+            var assetBytes = Encoding.UTF8.GetBytes("fabric-parent-asset");
+            var assetSha = Sha1(assetBytes);
+
+            var assetIndex = new JsonObject
+            {
+                ["objects"] = new JsonObject
+                {
+                    ["minecraft/fabric-test.txt"] = new JsonObject
+                    {
+                        ["hash"] = assetSha,
+                        ["size"] = assetBytes.Length
+                    }
+                }
+            };
+            var assetIndexPath = Path.Combine(assetsRoot, "indexes", "fabric-assets.json");
+            await File.WriteAllTextAsync(assetIndexPath, assetIndex.ToJsonString());
+            var assetIndexSha = await Sha1FileAsync(assetIndexPath);
+
+            var baseMetadata = new JsonObject
+            {
+                ["id"] = baseVersionId,
+                ["type"] = "release",
+                ["javaVersion"] = new JsonObject { ["majorVersion"] = javaMajor },
+                ["downloads"] = new JsonObject
+                {
+                    ["client"] = new JsonObject
+                    {
+                        ["url"] = "https://repair.example.test/client.jar",
+                        ["sha1"] = clientSha
+                    }
+                },
+                ["assetIndex"] = new JsonObject
+                {
+                    ["id"] = "fabric-assets",
+                    ["url"] = "https://repair.example.test/assets.json",
+                    ["sha1"] = assetIndexSha
+                },
+                ["libraries"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["name"] = "example:base:1.0",
+                        ["downloads"] = new JsonObject
+                        {
+                            ["artifact"] = new JsonObject
+                            {
+                                ["path"] = baseLibraryRelative,
+                                ["url"] = "https://repair.example.test/base-library.jar",
+                                ["sha1"] = baseLibrarySha
+                            }
+                        }
+                    }
+                }
+            };
+            var baseMetadataPath = Path.Combine(baseRoot, baseVersionId + ".json");
+            await File.WriteAllTextAsync(baseMetadataPath, baseMetadata.ToJsonString());
+
+            var childMetadata = new JsonObject
+            {
+                ["id"] = childVersionId,
+                ["inheritsFrom"] = baseVersionId,
+                ["libraries"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["name"] = "net.fabricmc:fabric-loader:" + loaderVersion,
+                        ["downloads"] = new JsonObject
+                        {
+                            ["artifact"] = new JsonObject
+                            {
+                                ["path"] = fabricLibraryRelative,
+                                ["url"] = "https://repair.example.test/fabric-loader.jar",
+                                ["sha1"] = fabricLibrarySha
+                            }
+                        }
+                    }
+                }
+            };
+            var childMetadataPath = Path.Combine(childRoot, childVersionId + ".json");
+            await File.WriteAllTextAsync(childMetadataPath, childMetadata.ToJsonString());
+
+            var clientPath = Path.Combine(baseRoot, baseVersionId + ".jar");
+            await File.WriteAllBytesAsync(clientPath, clientBytes);
+            var baseLibraryPath = Path.Combine(
+                librariesRoot,
+                baseLibraryRelative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(baseLibraryPath)!);
+            await File.WriteAllBytesAsync(baseLibraryPath, baseLibraryBytes);
+            var fabricLibraryPath = Path.Combine(
+                librariesRoot,
+                fabricLibraryRelative.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(fabricLibraryPath)!);
+            await File.WriteAllBytesAsync(fabricLibraryPath, fabricLibraryBytes);
+            var assetObjectPath = Path.Combine(
+                assetsRoot,
+                "objects",
+                assetSha[..2],
+                assetSha);
+            Directory.CreateDirectory(Path.GetDirectoryName(assetObjectPath)!);
+            await File.WriteAllBytesAsync(assetObjectPath, assetBytes);
+
+            var handler = new FabricRepairHandler(
+                baseVersionId,
+                clientBytes,
+                baseLibraryBytes,
+                fabricLibraryBytes,
+                assetBytes);
+            using var client = new HttpClient(handler);
+            var sources = new DownloadSourceService();
+            var vanillaInstaller = new MinecraftVanillaInstallService(client, paths, sources);
+            var fabricInstaller = new FabricInstallService(
+                client,
+                paths,
+                vanillaInstaller,
+                new FabricMetaService(client));
+            var service = new MinecraftInstanceRepairService(
+                paths,
+                vanillaInstaller,
+                new MinecraftVersionManifestService(client, sources),
+                javaDiscovery,
+                new MinecraftRuntimeInspector(paths),
+                new JavaRuntimeProvisionService(client, paths),
+                fabricInstaller);
+
+            var healthy = await service.CheckAsync(instance);
+            Require(
+                healthy.Issues.All(item =>
+                    item.Code is not "client-missing"
+                    and not "client-corrupt"
+                    and not "libraries-damaged"
+                    and not "assets-damaged"
+                    and not "version-metadata-inheritance-invalid"),
+                "Healthy Fabric inheritance fixture should not report inherited artifact damage.");
+
+            File.Delete(clientPath);
+            var missingClient = await service.CheckAsync(instance);
+            Require(
+                missingClient.Issues.Any(item => item.Code == "client-missing"),
+                "Fabric health check should detect a missing inherited Vanilla client.");
+            await File.WriteAllBytesAsync(clientPath, clientBytes);
+
+            File.Delete(baseLibraryPath);
+            var missingLibrary = await service.CheckAsync(instance);
+            Require(
+                missingLibrary.Issues.Any(item => item.Code == "libraries-damaged"),
+                "Fabric health check should detect a missing inherited Vanilla library.");
+            Directory.CreateDirectory(Path.GetDirectoryName(baseLibraryPath)!);
+            await File.WriteAllBytesAsync(baseLibraryPath, baseLibraryBytes);
+
+            File.Delete(assetObjectPath);
+            var missingAsset = await service.CheckAsync(instance);
+            Require(
+                missingAsset.Issues.Any(item => item.Code == "assets-damaged"),
+                "Fabric health check should detect a missing inherited asset object.");
+            Directory.CreateDirectory(Path.GetDirectoryName(assetObjectPath)!);
+            await File.WriteAllBytesAsync(assetObjectPath, assetBytes);
+
+            File.Delete(baseMetadataPath);
+            var missingParent = await service.CheckAsync(instance);
+            Require(
+                missingParent.Issues.Any(item => item.Code == "version-metadata-inheritance-invalid"),
+                "Missing Fabric parent metadata should be an actionable inheritance health issue.");
+            await File.WriteAllTextAsync(baseMetadataPath, baseMetadata.ToJsonString());
+
+            File.Delete(clientPath);
+            File.Delete(baseLibraryPath);
+            File.Delete(fabricLibraryPath);
+            File.Delete(assetObjectPath);
+            File.Delete(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json"));
+
+            var repaired = await service.RepairAsync(instance);
+            Require(repaired.ErrorCount == 0,
+                "Fabric Repair should complete with no remaining file-health errors.");
+            Require(File.Exists(clientPath),
+                "Fabric Repair should restore the inherited Vanilla client.");
+            Require(File.Exists(baseLibraryPath),
+                "Fabric Repair should restore inherited Vanilla libraries.");
+            Require(File.Exists(fabricLibraryPath),
+                "Fabric Repair should restore Fabric loader libraries.");
+            Require(File.Exists(assetObjectPath),
+                "Fabric Repair should restore inherited assets.");
+            Require(File.Exists(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json")),
+                "Fabric Repair should publish prepared install state.");
+            Require(handler.ManifestRequests > 0,
+                "Fabric Repair should resolve the base Minecraft version through the Mojang catalog.");
+            Require(handler.FabricLibraryRequests > 0,
+                "Fabric Repair should route through Fabric preparation instead of Vanilla profile lookup.");
         }
         finally
         {
@@ -304,6 +555,72 @@ internal static class Program
     {
         if (!condition)
             throw new InvalidOperationException(message);
+    }
+
+    private sealed class FabricRepairHandler(
+        string baseVersionId,
+        byte[] clientBytes,
+        byte[] baseLibraryBytes,
+        byte[] fabricLibraryBytes,
+        byte[] assetBytes) : HttpMessageHandler
+    {
+        public int ManifestRequests { get; private set; }
+        public int FabricLibraryRequests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
+            if (uri.AbsolutePath.Contains("version_manifest", StringComparison.OrdinalIgnoreCase))
+            {
+                ManifestRequests++;
+                var manifest =
+                    "{\"latest\":{\"release\":\"" + baseVersionId + "\",\"snapshot\":\"" + baseVersionId + "\"},"
+                    + "\"versions\":[{\"id\":\"" + baseVersionId + "\",\"type\":\"release\","
+                    + "\"url\":\"https://repair.example.test/version.json\","
+                    + "\"releaseTime\":\"2026-01-01T00:00:00Z\","
+                    + "\"time\":\"2026-01-01T00:00:00Z\",\"sha1\":\"\",\"complianceLevel\":1}]}";
+                return Task.FromResult(Json(manifest));
+            }
+
+            if (uri.Host.Equals("repair.example.test", StringComparison.OrdinalIgnoreCase))
+            {
+                return uri.AbsolutePath switch
+                {
+                    "/version.json" => Task.FromResult(Json(
+                        "{\"id\":\"" + baseVersionId + "\",\"libraries\":[]}")),
+                    "/client.jar" => Task.FromResult(Bytes(clientBytes)),
+                    "/base-library.jar" => Task.FromResult(Bytes(baseLibraryBytes)),
+                    "/fabric-loader.jar" => Task.FromResult(FabricBytes()),
+                    "/assets.json" => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)),
+                    _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))
+                };
+            }
+
+            if (uri.Host.Equals("resources.download.minecraft.net", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(Bytes(assetBytes));
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private HttpResponseMessage FabricBytes()
+        {
+            FabricLibraryRequests++;
+            return Bytes(fabricLibraryBytes);
+        }
+
+        private static HttpResponseMessage Json(string value)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(value, Encoding.UTF8, "application/json")
+            };
+
+        private static HttpResponseMessage Bytes(byte[] value)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(value)
+            };
     }
 
     private sealed class FailNetworkHandler : HttpMessageHandler
