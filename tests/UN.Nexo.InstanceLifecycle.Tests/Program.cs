@@ -98,7 +98,7 @@ internal static class Program
         NexoPathService paths)
     {
         var source = new GameInstance(
-            "fabric-clone-source",
+            Guid.NewGuid().ToString("N"),
             "Fabric clone source",
             "fabric-loader-0.16.9-1.21.4",
             "fabric",
