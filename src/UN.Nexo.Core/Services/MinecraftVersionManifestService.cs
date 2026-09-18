@@ -5,6 +5,7 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class MinecraftVersionManifestService
 {
+    private const int MaxCatalogBytes = 16 * 1024 * 1024;
     private readonly HttpClient _httpClient;
     private readonly DownloadSourceService _downloadSources;
 
@@ -57,8 +58,11 @@ public sealed class MinecraftVersionManifestService
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        using var document = await BoundedJsonResponse.ReadAsync(
+            response.Content,
+            MaxCatalogBytes,
+            "Minecraft version catalog",
+            cancellationToken);
 
         var root = document.RootElement;
         if (!root.TryGetProperty("latest", out var latestElement)
