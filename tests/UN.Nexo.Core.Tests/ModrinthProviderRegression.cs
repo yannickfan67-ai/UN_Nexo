@@ -51,6 +51,53 @@ internal static class ModrinthProviderRegression
             Assert((await File.ReadAllBytesAsync(installedPath)).SequenceEqual(payload),
                 "Installed Modrinth JAR content changed.");
 
+            handler.RedirectDownloadTarget =
+                "https://cdn.modrinth.com/data/AABBCCDD/versions/NEWVER01/redirected.jar";
+            var redirected = await provider.InstallAsync(
+                "fabric-redirect-ok",
+                projects[0],
+                latest,
+                null,
+                mods);
+            Assert(redirected.InstalledMod.FileName == "sodium.jar",
+                "Trusted same-CDN redirect should remain installable.");
+            Assert(handler.RedirectedDownloadRequests > 0,
+                "Trusted Modrinth redirect target should be requested after validation.");
+
+            handler.RedirectDownloadTarget = "https://example.invalid/evil.jar";
+            var untrustedRequestsBefore = handler.UntrustedDownloadRequests;
+            try
+            {
+                await provider.InstallAsync("fabric-redirect-bad", projects[0], latest, null, mods);
+                throw new Exception("Untrusted Modrinth redirect target should be rejected.");
+            }
+            catch (InvalidDataException ex)
+            {
+                Assert(ex.Message.Contains("trusted", StringComparison.OrdinalIgnoreCase)
+                       || ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase),
+                    "Redirect rejection should explain the trust boundary.");
+            }
+            Assert(handler.UntrustedDownloadRequests == untrustedRequestsBefore,
+                "Nexo must reject an untrusted redirect before sending the redirected GET.");
+            Assert(mods.List("fabric-redirect-bad").Count == 0,
+                "Rejected Modrinth redirect must not publish a JAR.");
+
+            handler.RedirectDownloadTarget = null;
+            handler.RedirectLoop = true;
+            try
+            {
+                await provider.InstallAsync("fabric-redirect-loop", projects[0], latest, null, mods);
+                throw new Exception("Redirect loop should exceed the bounded redirect policy.");
+            }
+            catch (InvalidDataException ex)
+            {
+                Assert(ex.Message.Contains("redirect", StringComparison.OrdinalIgnoreCase),
+                    "Redirect-loop rejection should be actionable.");
+            }
+            handler.RedirectLoop = false;
+            Assert(mods.List("fabric-redirect-loop").Count == 0,
+                "Redirect-loop failure must not publish a JAR.");
+
             var matches = await provider.MatchInstalledAsync(
                 mods.GetModsDirectory("fabric-test"),
                 mods.List("fabric-test"));
@@ -140,6 +187,10 @@ internal static class ModrinthProviderRegression
         public bool BadSearchShape { get; set; }
         public bool FailSearch { get; set; }
         public bool UnsafeOnlyVersion { get; set; }
+        public string? RedirectDownloadTarget { get; set; }
+        public bool RedirectLoop { get; set; }
+        public int RedirectedDownloadRequests { get; private set; }
+        public int UntrustedDownloadRequests { get; private set; }
         public string LastUserAgent { get; private set; } = string.Empty;
         public string LastSearchQuery { get; private set; } = string.Empty;
 
@@ -152,12 +203,42 @@ internal static class ModrinthProviderRegression
 
             if (uri.Host.Equals("cdn.modrinth.com", StringComparison.OrdinalIgnoreCase))
             {
+                if (RedirectLoop)
+                {
+                    var loop = new HttpResponseMessage(HttpStatusCode.Found);
+                    loop.Headers.Location = new Uri(
+                        uri.AbsolutePath.EndsWith("/redirect-loop-a", StringComparison.Ordinal)
+                            ? "https://cdn.modrinth.com/redirect-loop-b"
+                            : "https://cdn.modrinth.com/redirect-loop-a");
+                    return loop;
+                }
+
+                if (RedirectDownloadTarget is not null
+                    && uri.AbsolutePath.EndsWith("/sodium.jar", StringComparison.Ordinal))
+                {
+                    var redirect = new HttpResponseMessage(HttpStatusCode.Found);
+                    redirect.Headers.Location = new Uri(RedirectDownloadTarget);
+                    return redirect;
+                }
+
+                if (uri.AbsolutePath.EndsWith("/redirected.jar", StringComparison.Ordinal))
+                    RedirectedDownloadRequests++;
+
                 var bytes = BadDownload
                     ? Enumerable.Repeat((byte)9, downloadBytes.Length).ToArray()
                     : downloadBytes;
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new ByteArrayContent(bytes)
+                };
+            }
+
+            if (!uri.Host.Equals("api.modrinth.com", StringComparison.OrdinalIgnoreCase))
+            {
+                UntrustedDownloadRequests++;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(downloadBytes)
                 };
             }
 

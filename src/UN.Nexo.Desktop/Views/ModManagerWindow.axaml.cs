@@ -25,7 +25,13 @@ public sealed partial class ModManagerWindow : Window
         InitializeComponent();
         _paths = new NexoPathService();
         _mods = new InstanceModService(_paths);
-        _modrinthHttpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _modrinthHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
         _modrinth = new ModrinthModProvider(_modrinthHttpClient, BuildModrinthUserAgent());
         Opened += (_, _) => RefreshInstances();
         Closed += (_, _) => _modrinthHttpClient.Dispose();
