@@ -6,6 +6,7 @@ namespace UN.Nexo.Core.Services;
 public sealed class FabricMetaService(HttpClient httpClient)
 {
     private const string BaseUrl = "https://meta.fabricmc.net";
+    private const int MaxMetadataBytes = 4 * 1024 * 1024;
 
     public async Task<IReadOnlyList<FabricLoaderVersion>> GetLoaderVersionsAsync(
         string minecraftVersion,
@@ -15,10 +16,16 @@ public sealed class FabricMetaService(HttpClient httpClient)
             throw new ArgumentException("Minecraft version is required.", nameof(minecraftVersion));
 
         var url = $"{BaseUrl}/v2/versions/loader/{Uri.EscapeDataString(minecraftVersion.Trim())}";
-        using var response = await httpClient.GetAsync(url, cancellationToken);
+        using var response = await httpClient.GetAsync(
+            url,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        using var document = await BoundedJsonResponse.ReadAsync(
+            response.Content,
+            MaxMetadataBytes,
+            "Fabric Meta loader list",
+            cancellationToken);
         if (document.RootElement.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("Fabric loader response is not an array.");
 
@@ -59,9 +66,15 @@ public sealed class FabricMetaService(HttpClient httpClient)
         var url = $"{BaseUrl}/v2/versions/loader/" +
                   $"{Uri.EscapeDataString(minecraftVersion.Trim())}/" +
                   $"{Uri.EscapeDataString(loaderVersion.Trim())}/profile/json";
-        using var response = await httpClient.GetAsync(url, cancellationToken);
+        using var response = await httpClient.GetAsync(
+            url,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
         response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        return await BoundedJsonResponse.ReadAsync(
+            response.Content,
+            MaxMetadataBytes,
+            "Fabric Meta profile",
+            cancellationToken);
     }
 }
