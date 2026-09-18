@@ -138,7 +138,7 @@ jobs:
           DEB="UN_Nexo-${VERSION}-linux-x64.deb"
           dpkg-deb -f "release/$DEB" Depends
           docker run --rm -v "$PWD/release:/packages:ro" ubuntu:24.04 bash -lc \
-            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libxtst6 | grep -q 'install ok installed' && dpkg-query -W -f='${Status}\n' libsecret-1-0 | grep -q 'install ok installed' && ldconfig -p | grep -q 'libXtst.so.6' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
+            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libxtst6 | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libsecret-1-0 | grep -q 'install ok installed' && ldconfig -p | grep -q 'libXtst.so.6' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
       - name: Smoke test packaged DEB UI
         shell: bash
         run: |
