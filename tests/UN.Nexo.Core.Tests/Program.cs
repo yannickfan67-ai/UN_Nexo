@@ -24,6 +24,7 @@ internal static class Program
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
             ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
+            ("Launch metadata shape validation", LaunchMetadataRegression.RunAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Server decorator inherited metadata", TestServerDecoratorInheritedMetadataAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
