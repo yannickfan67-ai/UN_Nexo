@@ -24,6 +24,7 @@ internal static class Program
             ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
+            ("Server decorator inherited metadata", TestServerDecoratorInheritedMetadataAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
             ("Modern 1.21.4 launch plan and Quick Play", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
             ("Legacy 1.8.9 launch plan and direct connect", () => TestLaunchPlanAsync("1.8.9", 8, modern: false)),
@@ -515,6 +516,140 @@ internal static class Program
             {
                 try { Directory.Delete(root, recursive: true); } catch { }
             }
+        }
+    }
+
+    private static async Task TestServerDecoratorInheritedMetadataAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-server-decorator-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new NexoPathService(root);
+            var gameRoot = paths.GetInstanceGameDirectory("server-test");
+            var versionsRoot = Path.Combine(gameRoot, "versions");
+            Directory.CreateDirectory(versionsRoot);
+
+            async Task WriteVersionAsync(string id, string json)
+            {
+                var directory = Path.Combine(versionsRoot, id);
+                Directory.CreateDirectory(directory);
+                await File.WriteAllTextAsync(Path.Combine(directory, id + ".json"), json);
+            }
+
+            await WriteVersionAsync(
+                "quick-base",
+                """
+                {
+                  "id":"quick-base",
+                  "arguments":{
+                    "game":[
+                      {
+                        "rules":[
+                          {
+                            "action":"allow",
+                            "features":{"is_quick_play_multiplayer":true}
+                          }
+                        ],
+                        "value":["--quickPlayMultiplayer","${quickPlayMultiplayer}"]
+                      }
+                    ]
+                  }
+                }
+                """);
+            await WriteVersionAsync(
+                "quick-child",
+                """
+                {"id":"quick-child","inheritsFrom":"quick-base"}
+                """);
+
+            var decorator = new MinecraftServerLaunchDecorator(paths);
+            var target = MinecraftServerTarget.Parse("play.example.net:25566");
+            var basePlan = new MinecraftLaunchPlan(
+                "java",
+                gameRoot,
+                [],
+                Path.Combine(gameRoot, "logs", "server-test.log"));
+            var quickInstance = new GameInstance(
+                "server-test",
+                "Inherited Quick Play",
+                "quick-child",
+                "fabric",
+                DateTimeOffset.UtcNow);
+
+            var quickPlan = await decorator.ApplyAsync(basePlan, quickInstance, target);
+            Contains(quickPlan.Arguments, "--quickPlayMultiplayer",
+                "inherited Quick Play metadata should use Quick Play");
+            Contains(quickPlan.Arguments, "play.example.net:25566",
+                "Quick Play should use target authority");
+            DoesNotContain(quickPlan.Arguments, "--server",
+                "Quick Play path must not append legacy server arguments");
+
+            await WriteVersionAsync(
+                "legacy-base",
+                """
+                {"id":"legacy-base","arguments":{"game":["--demo"]}}
+                """);
+            await WriteVersionAsync(
+                "legacy-child",
+                """
+                {"id":"legacy-child","inheritsFrom":"legacy-base"}
+                """);
+            var legacyInstance = quickInstance with { VersionId = "legacy-child" };
+            var legacyPlan = await decorator.ApplyAsync(basePlan, legacyInstance, target);
+            Contains(legacyPlan.Arguments, "--server",
+                "metadata without Quick Play should retain legacy server arguments");
+            Contains(legacyPlan.Arguments, "play.example.net",
+                "legacy server path should include the host");
+            Contains(legacyPlan.Arguments, "25566",
+                "legacy server path should include the port");
+
+            var malformed = new (string Id, string Json)[]
+            {
+                ("bad-root", "[]"),
+                ("bad-arguments", "{\"id\":\"bad-arguments\",\"arguments\":[]}"),
+                ("bad-game", "{\"id\":\"bad-game\",\"arguments\":{\"game\":{}}}"),
+                ("bad-item", "{\"id\":\"bad-item\",\"arguments\":{\"game\":[123]}}"),
+                ("bad-rules", "{\"id\":\"bad-rules\",\"arguments\":{\"game\":[{\"rules\":{}}]}}"),
+                ("bad-rule", "{\"id\":\"bad-rule\",\"arguments\":{\"game\":[{\"rules\":[123]}]}}")
+            };
+
+            foreach (var fixture in malformed)
+            {
+                await WriteVersionAsync(fixture.Id, fixture.Json);
+                var instance = quickInstance with { VersionId = fixture.Id };
+                try
+                {
+                    await decorator.ApplyAsync(basePlan, instance, target);
+                    throw new Exception($"Malformed server metadata '{fixture.Id}' should be rejected.");
+                }
+                catch (InvalidDataException)
+                {
+                }
+            }
+
+            await WriteVersionAsync(
+                "missing-parent-child",
+                """
+                {"id":"missing-parent-child","inheritsFrom":"missing-parent"}
+                """);
+            try
+            {
+                await decorator.ApplyAsync(
+                    basePlan,
+                    quickInstance with { VersionId = "missing-parent-child" },
+                    target);
+                throw new Exception("Missing inherited metadata should be rejected.");
+            }
+            catch (FileNotFoundException)
+            {
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
 
