@@ -465,7 +465,7 @@ internal static class Program
                 var version = new MinecraftVersionInfo(
                     "asset-id-test",
                     "release",
-                    "https://metadata.example.test/version.json",
+                    "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
                     string.Empty,
@@ -518,7 +518,7 @@ internal static class Program
             var version = new MinecraftVersionInfo(
                 "asset-id-valid",
                 "release",
-                "https://metadata.example.test/version.json",
+                "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
                 string.Empty,
@@ -567,7 +567,7 @@ internal static class Program
                 var version = new MinecraftVersionInfo(
                     "asset-index-validation",
                     "release",
-                    "https://metadata.example.test/version.json",
+                    "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
                     string.Empty,
@@ -653,7 +653,7 @@ internal static class Program
                 var version = new MinecraftVersionInfo(
                     "asset-index-valid",
                     "release",
-                    "https://metadata.example.test/version.json",
+                    "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
                     string.Empty,
@@ -1114,17 +1114,17 @@ internal static class Program
             CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
-            if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 const string metadata =
-                    "{\"id\":\"asset-index-validation\",\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://assets.example.test/index.json\"},\"libraries\":[]}";
+                    "{\"id\":\"asset-index-validation\",\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(metadata, Encoding.UTF8, "application/json")
                 });
             }
 
-            if (uri.Host.Equals("assets.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -1154,20 +1154,20 @@ internal static class Program
             CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
-            if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 var encodedId = System.Text.Json.JsonSerializer.Serialize(assetId);
                 var metadata =
                     "{\"id\":\"asset-id-test\",\"assetIndex\":{\"id\":"
                     + encodedId
-                    + ",\"url\":\"https://assets.example.test/index.json\"},\"libraries\":[]}";
+                    + ",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(metadata, Encoding.UTF8, "application/json")
                 });
             }
 
-            if (uri.Host.Equals("assets.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 AssetIndexRequests++;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
