@@ -17,6 +17,7 @@ internal static class Program
         {
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
             ("Java major parsing", TestJavaMajorAsync),
+            ("Java discovery process cleanup", JavaDiscoveryRegression.RunAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Managed Java metadata hardening", TestManagedJavaMetadataHardeningAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
