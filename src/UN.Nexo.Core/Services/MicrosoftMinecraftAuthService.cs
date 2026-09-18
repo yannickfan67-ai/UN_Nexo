@@ -10,6 +10,7 @@ namespace UN.Nexo.Core.Services;
 public sealed class MicrosoftMinecraftAuthService
 {
     private const int MaxResponseBytes = 1024 * 1024;
+    private static readonly TimeSpan ResponseBodyIdleTimeout = TimeSpan.FromSeconds(15);
     private static readonly Uri XboxUserAuthenticateUri =
         new("https://user.auth.xboxlive.com/user/authenticate");
     private static readonly Uri XboxXstsAuthorizeUri =
@@ -313,7 +314,18 @@ public sealed class MicrosoftMinecraftAuthService
 
         while (true)
         {
-            var read = await input.ReadAsync(buffer, cancellationToken);
+            int read;
+            try
+            {
+                using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                idleCts.CancelAfter(ResponseBodyIdleTimeout);
+                read = await input.ReadAsync(buffer, idleCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"{serviceName} stopped making progress while reading its response body.");
+            }
             if (read == 0)
                 break;
             if (output.Length + read > MaxResponseBytes)

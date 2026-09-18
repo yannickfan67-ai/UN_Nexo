@@ -21,6 +21,7 @@ internal static class MicrosoftAuthRegression
         await TestHappyPathAndNoPlaintextTokenPersistenceAsync();
         await TestInvalidAppRegistrationAsync();
         await TestMissingEntitlementAsync();
+        await TestCallerCancellationDuringBodyReadAsync();
     }
 
     private static async Task TestHappyPathAndNoPlaintextTokenPersistenceAsync()
@@ -146,6 +147,35 @@ internal static class MicrosoftAuthRegression
         }
     }
 
+    private static async Task TestCallerCancellationDuringBodyReadAsync()
+    {
+        var root = NewRoot();
+        try
+        {
+            var accounts = new AccountStoreService(new NexoPathService(root));
+            var provider = new FakeMicrosoftTokenProvider();
+            using var client = new HttpClient(new CancellationBodyHandler());
+            var service = new MicrosoftMinecraftAuthService(client, accounts, provider);
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+            try
+            {
+                await service.SignInAsync(cts.Token);
+                throw new Exception("Caller cancellation should stop a stalled authentication body read.");
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+            }
+
+            Assert((await accounts.GetAllAsync()).Count == 0,
+                "Cancelled authentication must not publish an account profile.");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
     private static string NewRoot()
     {
         var root = Path.Combine(
@@ -207,6 +237,49 @@ internal static class MicrosoftAuthRegression
                 SignOutCalls++;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class CancellationBodyHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new NeverEndingContent()
+            });
+    }
+
+    private sealed class NeverEndingContent : HttpContent
+    {
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            => await Task.Delay(Timeout.InfiniteTimeSpan);
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+
+        protected override Task<Stream> CreateContentReadStreamAsync()
+            => Task.FromResult<Stream>(new NeverEndingStream());
+    }
+
+    private sealed class NeverEndingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => new(Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ContinueWith(
+                _ => 0, cancellationToken, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default));
     }
 
     private sealed class AuthHandler : HttpMessageHandler
