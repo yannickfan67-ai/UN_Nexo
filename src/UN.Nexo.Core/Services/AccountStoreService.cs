@@ -154,21 +154,27 @@ public sealed partial class AccountStoreService
                     $"Account store entry '{account.Id}' has an invalid UUID.");
 
             var normalizedUuid = parsedUuid.ToString("D");
-            if (account.IsOffline)
+            var type = account.Type?.Trim();
+            if (string.Equals(type, "offline", StringComparison.OrdinalIgnoreCase))
             {
                 if (!account.Id.StartsWith("offline:", StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException(
                         $"Offline account '{account.Id}' has an invalid id kind.");
-                account = account with { Uuid = normalizedUuid, AuthenticationId = null };
+                account = account with
+                {
+                    Type = "offline",
+                    Uuid = normalizedUuid,
+                    AuthenticationId = null
+                };
             }
-            else if (account.IsMicrosoft)
+            else if (string.Equals(type, "microsoft", StringComparison.OrdinalIgnoreCase))
             {
                 if (!account.Id.StartsWith("microsoft:", StringComparison.OrdinalIgnoreCase)
                     || string.IsNullOrWhiteSpace(account.AuthenticationId)
                     || account.AuthenticationId.Length > 512)
                     throw new InvalidDataException(
                         $"Microsoft account '{account.Id}' has invalid authentication metadata.");
-                account = account with { Uuid = normalizedUuid };
+                account = account with { Type = "microsoft", Uuid = normalizedUuid };
             }
             else
             {
