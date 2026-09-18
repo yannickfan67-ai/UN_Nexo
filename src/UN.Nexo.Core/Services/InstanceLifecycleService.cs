@@ -74,7 +74,9 @@ public sealed class InstanceLifecycleService
                 normalizedName,
                 source.VersionId,
                 source.Loader,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                source.BaseVersionId,
+                source.LoaderVersion);
 
             await WriteJsonAtomicAsync(Path.Combine(stagingRoot, "instance.json"), clone, cancellationToken);
             await RewriteInstallStateAsync(stagingRoot, clone, cancellationToken);

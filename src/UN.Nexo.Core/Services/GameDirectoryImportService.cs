@@ -88,7 +88,7 @@ public sealed class GameDirectoryImportService
                     : null;
                 baseVersion = string.IsNullOrWhiteSpace(baseVersion) ? id : baseVersion;
 
-                var (loader, detail) = DetectLoader(root, baseVersion!);
+                var (loader, detail, loaderVersion) = DetectLoader(root, baseVersion!);
                 var baseDirectory = Path.Combine(versionsRoot, baseVersion!);
                 var clientJar = loader == "vanilla"
                     ? Path.Combine(directory, id + ".jar")
@@ -102,7 +102,8 @@ public sealed class GameDirectoryImportService
                     metadata,
                     File.Exists(clientJar),
                     launchableNow,
-                    detail),
+                    detail,
+                    loaderVersion),
                     info.LastWriteTimeUtc));
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or InvalidDataException)
@@ -120,8 +121,10 @@ public sealed class GameDirectoryImportService
             warnings.Add("No usable version metadata was found under versions/.");
         if (ordered.Count(item => item.Loader == "unsupported") > 0)
             warnings.Add("Some inherited/modded versions use an unsupported loader. They are shown for diagnosis but cannot be imported as runnable instances.");
-        if (ordered.Any(item => item.Loader is "fabric" or "forge"))
-            warnings.Add("Fabric/Forge content can be migrated now, but launching those imported instances waits for loader support in #21.");
+        if (ordered.Any(item => item.Loader == "fabric"))
+            warnings.Add("Fabric profiles can be imported now and launched after running Fabric preparation/repair in Fabric Manager.");
+        if (ordered.Any(item => item.Loader == "forge"))
+            warnings.Add("Forge profiles can be imported, but Forge launch support is still in progress.");
 
         var worldCount = CountDirectories(Path.Combine(source, "saves"));
         var modCount = CountFiles(Path.Combine(source, "mods"), "*.jar");
@@ -256,7 +259,11 @@ public sealed class GameDirectoryImportService
                 name,
                 currentCandidate.VersionId,
                 currentCandidate.Loader,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                currentCandidate.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : currentCandidate.BaseVersionId,
+                currentCandidate.LoaderVersion);
             await WriteJsonAtomicAsync(Path.Combine(stagingRoot, "instance.json"), instance, cancellationToken);
 
             var prepared = currentCandidate.Loader == "vanilla"
@@ -279,9 +286,15 @@ public sealed class GameDirectoryImportService
             {
                 warnings.Add("The imported Vanilla files are incomplete or failed verification. They were kept, and Nexo will reuse valid files while downloading only what is missing when the instance is prepared.");
             }
+            else if (currentCandidate.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
+            {
+                warnings.Add(
+                    "Fabric content was preserved. Run Fabric preparation/repair in Fabric Manager before launching this imported instance.");
+            }
             else
             {
-                warnings.Add($"{currentCandidate.Loader} content was preserved, but this build cannot launch that loader yet. Loader support is tracked in #21.");
+                warnings.Add(
+                    $"{currentCandidate.Loader} content was preserved, but this loader cannot be launched by this build yet.");
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -351,37 +364,85 @@ public sealed class GameDirectoryImportService
         return null;
     }
 
-    private static (string Loader, string Detail) DetectLoader(JsonElement root, string baseVersion)
+    private static (string Loader, string Detail, string? LoaderVersion) DetectLoader(
+        JsonElement root,
+        string baseVersion)
     {
         var mainClass = root.TryGetProperty("mainClass", out var main)
             ? main.GetString() ?? string.Empty
             : string.Empty;
         var libraryNames = new List<string>();
-        if (root.TryGetProperty("libraries", out var libraries) && libraries.ValueKind == JsonValueKind.Array)
+        if (root.TryGetProperty("libraries", out var libraries)
+            && libraries.ValueKind == JsonValueKind.Array)
         {
             foreach (var library in libraries.EnumerateArray())
-                if (library.TryGetProperty("name", out var name) && !string.IsNullOrWhiteSpace(name.GetString()))
-                    libraryNames.Add(name.GetString()!);
+            {
+                if (library.ValueKind != JsonValueKind.Object
+                    || !library.TryGetProperty("name", out var name)
+                    || name.ValueKind != JsonValueKind.String)
+                    continue;
+                var value = name.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                    libraryNames.Add(value);
+            }
         }
 
-        if (libraryNames.Any(name => name.StartsWith("net.fabricmc:fabric-loader:", StringComparison.OrdinalIgnoreCase))
+        const string fabricPrefix = "net.fabricmc:fabric-loader:";
+        var fabricLibrary = libraryNames.FirstOrDefault(name =>
+            name.StartsWith(fabricPrefix, StringComparison.OrdinalIgnoreCase));
+        if (fabricLibrary is not null
             || mainClass.Contains("fabricmc", StringComparison.OrdinalIgnoreCase))
-            return ("fabric", $"Fabric loader profile inheriting Minecraft {baseVersion}.");
-        if (libraryNames.Any(name => name.StartsWith("net.neoforged:", StringComparison.OrdinalIgnoreCase))
+        {
+            var loaderVersion = fabricLibrary is null
+                ? null
+                : fabricLibrary[fabricPrefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(loaderVersion))
+                loaderVersion = null;
+            return (
+                "fabric",
+                $"Fabric loader profile inheriting Minecraft {baseVersion}.",
+                loaderVersion);
+        }
+
+        if (libraryNames.Any(name =>
+                name.StartsWith("net.neoforged:", StringComparison.OrdinalIgnoreCase))
             || mainClass.Contains("neoforge", StringComparison.OrdinalIgnoreCase))
-            return ("unsupported", $"NeoForge profile inheriting Minecraft {baseVersion}; NeoForge import/launch support is not implemented.");
-        if (libraryNames.Any(name => name.StartsWith("net.minecraftforge:forge:", StringComparison.OrdinalIgnoreCase))
+            return (
+                "unsupported",
+                $"NeoForge profile inheriting Minecraft {baseVersion}; NeoForge import/launch support is not implemented.",
+                null);
+
+        if (libraryNames.Any(name =>
+                name.StartsWith("net.minecraftforge:forge:", StringComparison.OrdinalIgnoreCase))
             || mainClass.Contains("modlauncher", StringComparison.OrdinalIgnoreCase)
             || mainClass.Contains("forge", StringComparison.OrdinalIgnoreCase))
-            return ("forge", $"Forge loader profile inheriting Minecraft {baseVersion}.");
-        if (libraryNames.Any(name => name.Contains("quiltmc", StringComparison.OrdinalIgnoreCase))
+            return (
+                "forge",
+                $"Forge loader profile inheriting Minecraft {baseVersion}.",
+                null);
+
+        if (libraryNames.Any(name =>
+                name.Contains("quiltmc", StringComparison.OrdinalIgnoreCase))
             || mainClass.Contains("quilt", StringComparison.OrdinalIgnoreCase))
-            return ("unsupported", $"Quilt profile inheriting Minecraft {baseVersion}; Quilt import/launch support is not implemented.");
-        if (libraryNames.Any(name => name.Contains("optifine", StringComparison.OrdinalIgnoreCase)))
-            return ("unsupported", $"OptiFine/inherited profile for Minecraft {baseVersion}; import it through a supported base/loader instead.");
+            return (
+                "unsupported",
+                $"Quilt profile inheriting Minecraft {baseVersion}; Quilt import/launch support is not implemented.",
+                null);
+
+        if (libraryNames.Any(name =>
+                name.Contains("optifine", StringComparison.OrdinalIgnoreCase)))
+            return (
+                "unsupported",
+                $"OptiFine/inherited profile for Minecraft {baseVersion}; import it through a supported base/loader instead.",
+                null);
+
         if (root.TryGetProperty("inheritsFrom", out _))
-            return ("unsupported", $"Inherited version based on Minecraft {baseVersion}; loader could not be identified safely.");
-        return ("vanilla", "Vanilla Minecraft version.");
+            return (
+                "unsupported",
+                $"Inherited version based on Minecraft {baseVersion}; loader could not be identified safely.",
+                null);
+
+        return ("vanilla", "Vanilla Minecraft version.", null);
     }
 
     private async Task<bool> VerifyVanillaPreparedAsync(
