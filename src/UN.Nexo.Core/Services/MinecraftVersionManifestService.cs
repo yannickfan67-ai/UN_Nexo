@@ -33,7 +33,11 @@ public sealed class MinecraftVersionManifestService
         {
             try
             {
-                using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await TrustedHttpDownload.SendGetAsync(
+                    _httpClient,
+                    url,
+                    "Minecraft version catalog",
+                    cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     lastException = new HttpRequestException($"HTTP {(int)response.StatusCode} from {new Uri(url).Host}.");
