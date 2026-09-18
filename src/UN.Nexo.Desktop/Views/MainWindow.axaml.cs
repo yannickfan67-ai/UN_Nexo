@@ -42,12 +42,20 @@ public sealed partial class MainWindow : Window
         {
             Timeout = TimeSpan.FromSeconds(12)
         };
+        var authHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
         var launcherVersion = typeof(MainWindow).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "dev";
         Title = $"UN_Nexo {launcherVersion}";
         downloadHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         manifestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
+        authHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         ApplyRuntimeVersionLabel(launcherVersion);
 
         LauncherStartupTrace.Write("[startup] Creating launcher services");
@@ -60,13 +68,19 @@ public sealed partial class MainWindow : Window
             _paths,
             _installer,
             _fabricMeta);
+        var accountStore = new AccountStoreService(_paths);
+        var microsoftAuth = new MicrosoftMinecraftAuthService(
+            authHttpClient,
+            accountStore,
+            new MsalMicrosoftAccessTokenProvider(_paths));
         _viewModel = new MainWindowViewModel(
             new JavaDiscoveryService(_paths),
             _paths,
             _manifest,
             _instances,
             _installer,
-            new AccountStoreService(_paths),
+            accountStore,
+            microsoftAuth,
             new LauncherSettingsService(_paths),
             downloadSources);
 
