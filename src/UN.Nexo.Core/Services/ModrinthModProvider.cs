@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,6 +12,7 @@ public sealed class ModrinthModProvider : IModProvider
     private const string ApiBase = "https://api.modrinth.com/v2/";
     private const int MaxMetadataBytes = 4 * 1024 * 1024;
     private const long MaxModBytes = 512L * 1024L * 1024L;
+    private const int MaxDownloadRedirects = 5;
     private readonly HttpClient _httpClient;
     private readonly string _userAgent;
 
@@ -279,13 +281,7 @@ public sealed class ModrinthModProvider : IModProvider
         string destinationPath,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, file.DownloadUrl);
-        ApplyHeaders(request);
-
-        using var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
+        using var response = await SendDownloadAsync(file.DownloadUrl, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         if (response.Content.Headers.ContentLength is { } declaredLength)
@@ -326,6 +322,69 @@ public sealed class ModrinthModProvider : IModProvider
         var actualSha1 = Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
         if (!string.Equals(actualSha1, file.Sha1, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The Modrinth download failed SHA-1 verification.");
+    }
+
+    private async Task<HttpResponseMessage> SendDownloadAsync(
+        string downloadUrl,
+        CancellationToken cancellationToken)
+    {
+        if (!Uri.TryCreate(downloadUrl, UriKind.Absolute, out var currentUri)
+            || !IsTrustedDownloadUri(currentUri))
+            throw new InvalidDataException("The selected Modrinth download URL is not a trusted CDN origin.");
+
+        for (var redirectCount = 0; ; redirectCount++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, currentUri);
+            ApplyHeaders(request);
+
+            var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+
+            var effectiveUri = response.RequestMessage?.RequestUri;
+            if (effectiveUri is not null && !effectiveUri.Equals(currentUri))
+            {
+                response.Dispose();
+                throw new InvalidDataException(
+                    "The Modrinth HTTP client followed a redirect automatically. Automatic redirects must be disabled so Nexo can validate every redirect target before connecting.");
+            }
+
+            if (!IsRedirectStatusCode(response.StatusCode))
+                return response;
+
+            if (redirectCount >= MaxDownloadRedirects)
+            {
+                response.Dispose();
+                throw new InvalidDataException(
+                    $"The Modrinth download exceeded the {MaxDownloadRedirects}-redirect safety limit.");
+            }
+
+            var location = response.Headers.Location;
+            if (location is null)
+            {
+                response.Dispose();
+                throw new InvalidDataException("The Modrinth download returned a redirect without a Location header.");
+            }
+
+            Uri nextUri;
+            try
+            {
+                nextUri = location.IsAbsoluteUri ? location : new Uri(currentUri, location);
+            }
+            catch (UriFormatException ex)
+            {
+                response.Dispose();
+                throw new InvalidDataException("The Modrinth download returned an invalid redirect target.", ex);
+            }
+
+            response.Dispose();
+            if (!IsTrustedDownloadUri(nextUri))
+                throw new InvalidDataException(
+                    "The Modrinth download redirect left the trusted HTTPS CDN origin.");
+
+            currentUri = nextUri;
+        }
     }
 
     private ModProviderVersion? ParseVersion(JsonElement item)
@@ -481,8 +540,20 @@ public sealed class ModrinthModProvider : IModProvider
 
     private static bool IsTrustedDownloadUrl(string value)
         => Uri.TryCreate(value, UriKind.Absolute, out var uri)
-           && uri.Scheme == Uri.UriSchemeHttps
+           && IsTrustedDownloadUri(uri);
+
+    private static bool IsTrustedDownloadUri(Uri uri)
+        => uri.Scheme == Uri.UriSchemeHttps
+           && (uri.IsDefaultPort || uri.Port == 443)
+           && string.IsNullOrEmpty(uri.UserInfo)
            && string.Equals(uri.Host, "cdn.modrinth.com", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsRedirectStatusCode(HttpStatusCode statusCode)
+        => statusCode is HttpStatusCode.MovedPermanently
+            or HttpStatusCode.Found
+            or HttpStatusCode.SeeOther
+            or HttpStatusCode.TemporaryRedirect
+            or HttpStatusCode.PermanentRedirect;
 
     private static void ValidateProviderFile(ModProviderFile file)
     {
