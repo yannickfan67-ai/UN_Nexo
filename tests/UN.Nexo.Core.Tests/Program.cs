@@ -18,6 +18,7 @@ internal static class Program
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
             ("Java major parsing", TestJavaMajorAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
+            ("Managed Java metadata hardening", TestManagedJavaMetadataHardeningAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
@@ -176,6 +177,162 @@ internal static class Program
         finally
         {
             try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestManagedJavaMetadataHardeningAsync()
+    {
+        const int metadataLimit = 1024 * 1024;
+        var archiveBytes = CreateFakeJavaArchive();
+        var checksum = Convert.ToHexString(SHA256.HashData(archiveBytes)).ToLowerInvariant();
+        var validLegacy =
+            "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\""
+            + checksum
+            + "\"}},\"version_data\":{\"semver\":\"8.0.442+6\"}}]";
+
+        var malformed = new (string Label, string Json)[]
+        {
+            (
+                "numeric package link",
+                "[{\"binary\":{\"package\":{\"link\":123,\"checksum\":\"" + checksum + "\"}}}]"
+            ),
+            (
+                "object package checksum",
+                "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":{}}}}]"
+            ),
+            (
+                "array version_data",
+                "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\"" + checksum + "\"}},\"version_data\":[]}]"
+            ),
+            (
+                "numeric semver",
+                "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\"" + checksum + "\"}},\"version_data\":{\"semver\":21}}]"
+            )
+        };
+
+        foreach (var fixture in malformed)
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-adoptium-shape-tests",
+                Guid.NewGuid().ToString("N"));
+            try
+            {
+                var handler = new ManagedJavaHandler(archiveBytes, checksum, fixture.Json);
+                using var client = new HttpClient(handler);
+                var service = new JavaRuntimeProvisionService(client, new NexoPathService(root));
+                try
+                {
+                    await service.EnsureJavaAsync(8);
+                    throw new Exception($"Malformed Adoptium fixture '{fixture.Label}' should be rejected.");
+                }
+                catch (InvalidDataException)
+                {
+                }
+
+                Equal(1, handler.RequestCount,
+                    $"Malformed Adoptium fixture '{fixture.Label}' must fail before package download.");
+            }
+            finally
+            {
+                try { Directory.Delete(root, recursive: true); } catch { }
+            }
+        }
+
+        var binariesRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-adoptium-binaries-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var binariesJson =
+                "[{\"binaries\":[{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\""
+                + checksum
+                + "\"}}],\"version_data\":{\"semver\":\"8.0.442+6\"}}]";
+            var handler = new ManagedJavaHandler(archiveBytes, checksum, binariesJson);
+            using var client = new HttpClient(handler);
+            var installation = await new JavaRuntimeProvisionService(
+                client,
+                new NexoPathService(binariesRoot)).EnsureJavaAsync(8);
+            Equal(8, MinecraftLaunchPlanBuilder.JavaMajor(installation.Version),
+                "Adoptium binaries[] metadata should remain supported.");
+            Equal(2, handler.RequestCount,
+                "Valid binaries[] metadata should proceed to one package download.");
+        }
+        finally
+        {
+            try { Directory.Delete(binariesRoot, recursive: true); } catch { }
+        }
+
+        var declaredRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-adoptium-size-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var oversized = new DeclaredLengthContent(metadataLimit + 1);
+            using var client = new HttpClient(new AdoptiumContentHandler(oversized));
+            var service = new JavaRuntimeProvisionService(client, new NexoPathService(declaredRoot));
+            try
+            {
+                await service.EnsureJavaAsync(8);
+                throw new Exception("Declared oversized Adoptium metadata should be rejected.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Equal(false, oversized.ReadAttempted,
+                "Declared oversized metadata must be rejected before the response body is read.");
+        }
+        finally
+        {
+            try { Directory.Delete(declaredRoot, recursive: true); } catch { }
+        }
+
+        var streamedRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-adoptium-stream-size-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var content = new StreamContent(new MemoryStream(new byte[metadataLimit + 1]));
+            using var client = new HttpClient(new AdoptiumContentHandler(content));
+            var service = new JavaRuntimeProvisionService(client, new NexoPathService(streamedRoot));
+            try
+            {
+                await service.EnsureJavaAsync(8);
+                throw new Exception("Unknown-length oversized Adoptium metadata should be rejected.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(streamedRoot, recursive: true); } catch { }
+        }
+
+        var nearLimitRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-adoptium-near-limit-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var nearLimitJson = validLegacy.PadRight(metadataLimit - 64, ' ');
+            var handler = new ManagedJavaHandler(archiveBytes, checksum, nearLimitJson);
+            using var client = new HttpClient(handler);
+            var installation = await new JavaRuntimeProvisionService(
+                client,
+                new NexoPathService(nearLimitRoot)).EnsureJavaAsync(8);
+            Equal(8, MinecraftLaunchPlanBuilder.JavaMajor(installation.Version),
+                "Just-under-limit Adoptium metadata should remain accepted.");
+            Equal(2, handler.RequestCount,
+                "Just-under-limit metadata should proceed to package download.");
+        }
+        finally
+        {
+            try { Directory.Delete(nearLimitRoot, recursive: true); } catch { }
         }
     }
 
@@ -906,7 +1063,10 @@ internal static class Program
         }
     }
 
-    private sealed class ManagedJavaHandler(byte[] archiveBytes, string checksum) : HttpMessageHandler
+    private sealed class ManagedJavaHandler(
+        byte[] archiveBytes,
+        string checksum,
+        string? metadataJson = null) : HttpMessageHandler
     {
         public int RequestCount { get; private set; }
 
@@ -916,9 +1076,10 @@ internal static class Program
             var host = request.RequestUri?.Host ?? string.Empty;
             if (host.Equals("api.adoptium.net", StringComparison.OrdinalIgnoreCase))
             {
-                var json = "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\""
-                           + checksum
-                           + "\"}},\"version_data\":{\"semver\":\"8.0.442+6\"}}]";
+                var json = metadataJson
+                    ?? "[{\"binary\":{\"package\":{\"link\":\"https://runtime.example.test/temurin8.zip\",\"checksum\":\""
+                       + checksum
+                       + "\"}},\"version_data\":{\"semver\":\"8.0.442+6\"}}]";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
@@ -934,6 +1095,34 @@ internal static class Program
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+    }
+
+    private sealed class AdoptiumContentHandler(HttpContent content) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = content
+            });
+    }
+
+    private sealed class DeclaredLengthContent(long declaredLength) : HttpContent
+    {
+        public bool ReadAttempted { get; private set; }
+
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            ReadAttempted = true;
+            throw new InvalidOperationException("Oversized declared content must not be read.");
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = declaredLength;
+            return true;
         }
     }
 
