@@ -8,11 +8,14 @@ internal static class BoundedJsonResponse
         HttpContent content,
         int maxBytes,
         string source,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? idleTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         if (maxBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        if (idleTimeout is not null && idleTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(idleTimeout));
 
         if (content.Headers.ContentLength is > 0
             && content.Headers.ContentLength.Value > maxBytes)
@@ -26,7 +29,26 @@ internal static class BoundedJsonResponse
 
         while (true)
         {
-            var read = await input.ReadAsync(buffer.AsMemory(), cancellationToken);
+            int read;
+            if (idleTimeout is null)
+            {
+                read = await input.ReadAsync(buffer.AsMemory(), cancellationToken);
+            }
+            else
+            {
+                using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                idle.CancelAfter(idleTimeout.Value);
+                try
+                {
+                    read = await input.ReadAsync(buffer.AsMemory(), idle.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException(
+                        $"{source} made no body-read progress for {idleTimeout.Value.TotalSeconds:0.###} seconds.");
+                }
+            }
+
             if (read == 0)
                 break;
 
