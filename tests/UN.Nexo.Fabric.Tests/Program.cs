@@ -15,6 +15,7 @@ try
     await RunFabricMetaRegressionAsync();
     await UN.Nexo.Fabric.Tests.FabricMetaSizeRegression.RunAsync();
     await RunFabricPrepareValidationRegressionAsync();
+    await UN.Nexo.Fabric.Tests.FabricLibraryIntegrityRegression.RunAsync();
     RunMavenPathRegression();
     Console.WriteLine("Fabric regression checks passed.");
 }
