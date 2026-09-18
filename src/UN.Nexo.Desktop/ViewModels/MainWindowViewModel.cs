@@ -15,6 +15,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly InstanceStoreService _instances;
     private readonly MinecraftVanillaInstallService _installer;
     private readonly AccountStoreService _accounts;
+    private readonly MicrosoftMinecraftAuthService _microsoftAuth;
     private readonly LauncherSettingsService _settings;
     private readonly DownloadSourceService _downloadSources;
     private readonly MinecraftLaunchPlanBuilder _launchBuilder;
@@ -53,15 +54,16 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string accountSummary = "No account selected";
     [ObservableProperty] private string selectedDownloadSource = "Official";
     [ObservableProperty] private string downloadSourceStatus = "Official Mojang/Minecraft services";
-    [ObservableProperty] private string microsoftAuthStatus = "Microsoft sign-in needs an approved UN_Nexo application registration before Minecraft Services will accept the client ID.";
+    [ObservableProperty] private string microsoftAuthStatus = "UN_Nexo is configured as a Microsoft public client. Sign in opens your system browser; refresh credentials stay in the operating system's secure credential store.";
+    [ObservableProperty] private bool isAccountAuthBusy;
 
     [ObservableProperty] private bool isGameRunning;
-    [ObservableProperty] private string gameStatus = "Select an instance and an offline profile.";
+    [ObservableProperty] private string gameStatus = "Select an instance and a profile.";
     [ObservableProperty] private string gameLog = string.Empty;
 
-    public bool CanPlay => !IsBusy && !IsInstallBusy && !IsGameRunning
+    public bool CanPlay => !IsBusy && !IsInstallBusy && !IsAccountAuthBusy && !IsGameRunning
         && SelectedInstance is not null
-        && SelectedAccount?.IsOffline == true;
+        && SelectedAccount is not null;
 
     private void UpdatePlayAvailability()
     {
@@ -73,22 +75,27 @@ public partial class MainWindowViewModel : ObservableObject
 
         if (IsInstallBusy)
             GameStatus = "Wait for file preparation to finish.";
+        else if (IsAccountAuthBusy)
+            GameStatus = "Microsoft account operation in progress…";
         else if (IsBusy)
             GameStatus = "Scanning environment…";
         else if (SelectedInstance is null)
             GameStatus = "Create or select an instance in Instances.";
-        else if (SelectedAccount?.IsOffline != true)
-            GameStatus = "Select an offline profile in Accounts.";
+        else if (SelectedAccount is null)
+            GameStatus = "Select a profile in Accounts.";
         else if (!File.Exists(Path.Combine(_paths.GetInstanceDirectory(SelectedInstance.Id), "install-state.json")))
             GameStatus = "Ready · required Minecraft files will download automatically.";
         else if (JavaInstallations.Count == 0)
             GameStatus = "Ready · required Java will download automatically.";
+        else if (SelectedAccount.IsMicrosoft)
+            GameStatus = "Ready · Microsoft credentials will refresh securely when you press Play.";
         else
             GameStatus = "Ready for offline play.";
     }
 
     partial void OnIsBusyChanged(bool value) => UpdatePlayAvailability();
     partial void OnIsInstallBusyChanged(bool value) => UpdatePlayAvailability();
+    partial void OnIsAccountAuthBusyChanged(bool value) => UpdatePlayAvailability();
     partial void OnIsGameRunningChanged(bool value) => UpdatePlayAvailability();
 
 
@@ -105,6 +112,7 @@ public partial class MainWindowViewModel : ObservableObject
         InstanceStoreService instances,
         MinecraftVanillaInstallService installer,
         AccountStoreService accounts,
+        MicrosoftMinecraftAuthService microsoftAuth,
         LauncherSettingsService settings,
         DownloadSourceService downloadSources)
     {
@@ -117,6 +125,7 @@ public partial class MainWindowViewModel : ObservableObject
         _instances = instances;
         _installer = installer;
         _accounts = accounts;
+        _microsoftAuth = microsoftAuth;
         _settings = settings;
         _downloadSources = downloadSources;
         JavaInstallations.CollectionChanged += (_, _) => UpdatePlayAvailability();
@@ -437,6 +446,8 @@ public partial class MainWindowViewModel : ObservableObject
 
         var instance = SelectedInstance;
         var account = SelectedAccount;
+        var launchAccount = account;
+        MinecraftLaunchCredentials? credentials = null;
         var cancellation = new CancellationTokenSource();
         _gameCancellation = cancellation;
         IsGameRunning = true;
@@ -448,9 +459,26 @@ public partial class MainWindowViewModel : ObservableObject
         try
         {
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
+
+            if (account.IsMicrosoft)
+            {
+                GameStatus = $"Refreshing Microsoft session for {account.DisplayName}…";
+                LauncherStatus = GameStatus;
+                var session = await _microsoftAuth.AcquireSessionAsync(account, cancellation.Token);
+                launchAccount = session.Account;
+                credentials = session.Credentials;
+                ReplaceAccountInList(account, session.Account);
+            }
+
             var plan = await _launchBuilder.BuildAsync(
-                instance, account, JavaInstallations.ToArray(), cancellation.Token);
-            GameStatus = $"Running {instance.Name} · Offline profile {account.DisplayName}";
+                instance,
+                launchAccount,
+                JavaInstallations.ToArray(),
+                credentials,
+                cancellation.Token);
+            GameStatus = launchAccount.IsMicrosoft
+                ? $"Running {instance.Name} · Microsoft profile {launchAccount.DisplayName}"
+                : $"Running {instance.Name} · Offline profile {launchAccount.DisplayName}";
             LauncherStatus = GameStatus;
             var result = await _gameProcess.RunAsync(
                 plan, new Progress<string>(AppendGameLog), cancellation.Token);
@@ -462,6 +490,17 @@ public partial class MainWindowViewModel : ObservableObject
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             GameStatus = $"Stopped {instance.Name}.";
+        }
+        catch (MicrosoftAuthenticationRequiredException ex)
+        {
+            GameStatus = $"Microsoft sign-in required: {ex.Message}";
+            AppendGameLog(GameStatus);
+        }
+        catch (MinecraftApplicationNotAuthorizedException ex)
+        {
+            GameStatus = ex.Message;
+            MicrosoftAuthStatus = ex.Message;
+            AppendGameLog("Minecraft Services rejected the UN_Nexo application registration.");
         }
         catch (Exception ex)
         {
@@ -508,10 +547,95 @@ public partial class MainWindowViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private async Task SignInMicrosoftAsync()
+    {
+        if (IsBusy || IsInstallBusy || IsAccountAuthBusy || IsGameRunning)
+            return;
+
+        IsAccountAuthBusy = true;
+        MicrosoftAuthStatus = "Opening your system browser for Microsoft sign-in…";
+        LauncherStatus = "Signing in with Microsoft…";
+        try
+        {
+            var session = await _microsoftAuth.SignInAsync();
+            var existing = Accounts.FirstOrDefault(item => item.Id == session.Account.Id);
+            if (existing is null)
+                Accounts.Add(session.Account);
+            else
+                ReplaceAccountInList(existing, session.Account);
+
+            SelectedAccount = session.Account;
+            MicrosoftAuthStatus =
+                $"Signed in as {session.Account.DisplayName}. Refresh credentials are stored by the operating system, not in accounts.json.";
+            LauncherStatus = $"Microsoft profile {session.Account.DisplayName} is ready";
+        }
+        catch (MinecraftApplicationNotAuthorizedException ex)
+        {
+            MicrosoftAuthStatus = ex.Message;
+            LauncherStatus = "Minecraft Services has not authorized the UN_Nexo Client ID yet";
+        }
+        catch (OperationCanceledException)
+        {
+            MicrosoftAuthStatus = "Microsoft sign-in was cancelled.";
+            LauncherStatus = "Microsoft sign-in cancelled";
+        }
+        catch (Exception ex)
+        {
+            MicrosoftAuthStatus = $"Microsoft sign-in failed: {ex.Message}";
+            LauncherStatus = "Microsoft sign-in failed";
+        }
+        finally
+        {
+            IsAccountAuthBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task SignOutSelectedMicrosoftAsync()
+    {
+        if (IsBusy || IsInstallBusy || IsAccountAuthBusy || IsGameRunning
+            || SelectedAccount is not { IsMicrosoft: true } account)
+            return;
+
+        IsAccountAuthBusy = true;
+        LauncherStatus = $"Signing out {account.DisplayName}…";
+        try
+        {
+            await _microsoftAuth.SignOutAsync(account);
+            Accounts.Remove(account);
+            SelectedAccount = Accounts.FirstOrDefault();
+            MicrosoftAuthStatus =
+                $"Signed out {account.DisplayName}. Its cached Microsoft refresh credentials were removed from this device.";
+            LauncherStatus = $"Signed out {account.DisplayName}";
+        }
+        catch (Exception ex)
+        {
+            MicrosoftAuthStatus = $"Could not sign out: {ex.Message}";
+            LauncherStatus = "Microsoft sign-out failed";
+        }
+        finally
+        {
+            IsAccountAuthBusy = false;
+        }
+    }
+
+    [RelayCommand]
     private void ExplainMicrosoftSignIn()
     {
-        MicrosoftAuthStatus = "The Microsoft → Xbox Live → XSTS → Minecraft Services flow is planned, but Minecraft Services now rejects unapproved third-party application IDs. Nexo will use its own approved client ID only; it will not borrow another launcher's identity.";
-        LauncherStatus = "Microsoft sign-in is waiting for UN_Nexo app registration approval";
+        MicrosoftAuthStatus =
+            $"UN_Nexo uses its own public Client ID {MsalMicrosoftAccessTokenProvider.ClientId}, the system browser, Xbox Live/XSTS and Minecraft Services. No client secret is embedded and another launcher's identity is never reused.";
+    }
+
+    private void ReplaceAccountInList(LauncherAccount previous, LauncherAccount current)
+    {
+        var index = Accounts.IndexOf(previous);
+        if (index >= 0)
+            Accounts[index] = current;
+        else if (Accounts.All(item => item.Id != current.Id))
+            Accounts.Add(current);
+
+        if (SelectedAccount?.Id == previous.Id)
+            SelectedAccount = current;
     }
 
     [RelayCommand]

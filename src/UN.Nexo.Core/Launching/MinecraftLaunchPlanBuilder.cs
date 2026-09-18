@@ -11,22 +11,75 @@ namespace UN.Nexo.Core.Launching;
 
 public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 {
+    public Task<MinecraftLaunchPlan> BuildAsync(
+        GameInstance instance,
+        LauncherAccount account,
+        IEnumerable<JavaInstallation> installations,
+        CancellationToken cancellationToken = default)
+        => BuildAsync(instance, account, installations, credentials: null, cancellationToken);
+
     public async Task<MinecraftLaunchPlan> BuildAsync(
         GameInstance instance,
         LauncherAccount account,
         IEnumerable<JavaInstallation> installations,
+        MinecraftLaunchCredentials? credentials,
         CancellationToken cancellationToken = default)
     {
         if (!instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
             && !instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
                 $"Loader '{instance.Loader}' cannot be launched in this build yet.");
-        if (!account.IsOffline)
-            throw new InvalidOperationException(
-                "Microsoft sign-in is not available yet. Select an offline profile for local play.");
-        if (!Regex.IsMatch(account.DisplayName, "^[A-Za-z0-9_]{3,16}$")
-            || !Guid.TryParse(account.Uuid, out var uuid))
-            throw new InvalidDataException("The selected offline profile is invalid.");
+
+        string playerName;
+        Guid uuid;
+        string authAccessToken;
+        string authSession;
+        string userType;
+        string clientId;
+        string xuid;
+
+        if (account.IsOffline)
+        {
+            if (!Regex.IsMatch(account.DisplayName, "^[A-Za-z0-9_]{3,16}$")
+                || !Guid.TryParse(account.Uuid, out uuid))
+                throw new InvalidDataException("The selected offline profile is invalid.");
+
+            playerName = account.DisplayName;
+            authAccessToken = "0";
+            authSession = "0";
+            userType = "legacy";
+            clientId = "0";
+            xuid = "0";
+        }
+        else if (account.IsMicrosoft)
+        {
+            if (credentials is null
+                || !string.Equals(credentials.AccountId, account.Id, StringComparison.Ordinal)
+                || !string.Equals(credentials.PlayerName, account.DisplayName, StringComparison.Ordinal)
+                || !Guid.TryParse(account.Uuid, out uuid)
+                || !Guid.TryParse(credentials.Uuid, out var credentialUuid)
+                || credentialUuid != uuid
+                || string.IsNullOrWhiteSpace(credentials.AccessToken)
+                || !string.Equals(
+                    credentials.ClientId,
+                    MsalMicrosoftAccessTokenProvider.ClientId,
+                    StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(credentials.Xuid))
+                throw new InvalidDataException(
+                    "The selected Microsoft profile does not have valid Minecraft launch credentials.");
+
+            playerName = credentials.PlayerName;
+            authAccessToken = credentials.AccessToken;
+            authSession = $"token:{credentials.AccessToken}:{uuid:N}";
+            userType = "msa";
+            clientId = credentials.ClientId;
+            xuid = credentials.Xuid;
+        }
+        else
+        {
+            throw new InvalidDataException($"Unsupported launcher account type '{account.Type}'.");
+        }
+
         if (RuntimeInformation.OSArchitecture != Architecture.X64)
             throw new PlatformNotSupportedException("Minecraft launch currently requires x64.");
 
@@ -168,14 +221,14 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
         var substitutions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["auth_player_name"] = account.DisplayName,
+            ["auth_player_name"] = playerName,
             ["auth_uuid"] = uuid.ToString("N"),
-            ["auth_access_token"] = "0",
-            ["auth_session"] = "0",
-            ["user_type"] = "legacy",
+            ["auth_access_token"] = authAccessToken,
+            ["auth_session"] = authSession,
+            ["user_type"] = userType,
             ["user_properties"] = "{}",
-            ["clientid"] = "0",
-            ["auth_xuid"] = "0",
+            ["clientid"] = clientId,
+            ["auth_xuid"] = xuid,
             ["version_name"] = resolved.LaunchVersionId,
             ["version_type"] = versionType,
             ["game_directory"] = gameRoot,

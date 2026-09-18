@@ -277,9 +277,13 @@
                 <StackPanel Spacing="12">
                   <TextBlock Text="Microsoft account" FontSize="19" FontWeight="SemiBold" />
                   <TextBlock Text="{Binding MicrosoftAuthStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  <Button Content="Microsoft sign-in status" Command="{Binding ExplainMicrosoftSignInCommand}" HorizontalAlignment="Left" Padding="15,9" />
+                  <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Classes="primary" Content="Sign in with Microsoft" Command="{Binding SignInMicrosoftCommand}" Padding="15,9" />
+                    <Button Content="Sign out selected" Command="{Binding SignOutSelectedMicrosoftCommand}" Padding="15,9" />
+                    <Button Content="How it works" Command="{Binding ExplainMicrosoftSignInCommand}" Padding="15,9" />
+                  </StackPanel>
                   <Border Background="#0E141C" CornerRadius="9" Padding="12">
-                    <TextBlock Text="Nexo will use its own Microsoft application registration and the official Microsoft → Xbox Live → XSTS → Minecraft Services flow. Third-party launcher client IDs will not be copied or spoofed." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+                    <TextBlock Text="Nexo uses its own public Microsoft Client ID with the system browser, then exchanges the Microsoft session through Xbox Live/XSTS and Minecraft Services. Refresh credentials are kept in the operating system credential store; accounts.json contains profile metadata only." Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   </Border>
                 </StackPanel>
               </Border>

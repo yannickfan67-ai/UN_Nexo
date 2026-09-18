@@ -6,7 +6,7 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.6.5-dev
+## Current milestone — v0.7.5-dev
 
 The current development line includes:
 
@@ -25,7 +25,7 @@ The current development line includes:
 - Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
 - Response-body idle timeouts so a source that returns headers and then stops sending data cannot leave preparation stuck forever
 - Explicit user cancellation remains cancellation and is not silently converted into a source retry
-- Persistent local profiles, kept clearly separate from Microsoft authentication
+- Offline local profiles plus Microsoft account profiles, kept as distinct account types
 - Java discovery through `JAVA_HOME`, `PATH` and common platform install locations
 - Automatic exact-major Java selection from Minecraft version metadata
 - Automatic SHA-256-verified Eclipse Temurin runtime acquisition when a required Java major is missing
@@ -93,11 +93,13 @@ When the selected Minecraft version requires a Java major that is not present lo
 
 Server Hub can save a server address and launch a prepared instance directly toward it. Modern Minecraft versions that advertise Quick Play support use `--quickPlayMultiplayer`; older versions use the legacy `--server` / `--port` path.
 
-Authenticated public/online-mode servers still require Microsoft authentication, which is intentionally not spoofed with another launcher's Client ID. Friend-to-friend room-code networking is planned around interoperability with the Terracotta / EasyTier / Scaffolding ecosystem rather than creating another incompatible private protocol.
+Authenticated public/online-mode servers can use a signed-in Microsoft profile. UN_Nexo uses its own registered public Client ID and does not spoof another launcher's identity. Friend-to-friend room-code networking is planned around interoperability with the Terracotta / EasyTier / Scaffolding ecosystem rather than creating another incompatible private protocol.
 
 ## Microsoft account status
 
-Microsoft/Xbox/XSTS/Minecraft Services sign-in is planned. UN_Nexo will use only its own approved Microsoft application registration; it will not reuse or impersonate another launcher's Client ID. Until that registration is approved, the UI keeps Microsoft sign-in unavailable rather than presenting a broken or misleading login flow.
+UN_Nexo now implements Microsoft public-client sign-in through the system browser, then exchanges the Microsoft session through Xbox Live, XSTS and Minecraft Services. Refresh credentials are persisted with the operating system-backed MSAL secure cache; `accounts.json` stores only profile metadata and the non-secret MSAL account identifier. Before an online launch, Nexo silently refreshes the Microsoft session, verifies the Minecraft entitlement/profile and passes the resulting short-lived Minecraft access token only in memory to the launch plan.
+
+The registered UN_Nexo Client ID is `ac6485d3-1fd4-42d1-89c0-40ffee68d915`. Minecraft Services can still reject a newly registered third-party Client ID with `Invalid app registration` until Microsoft/Minecraft authorizes it; Nexo reports that condition explicitly and will not substitute another launcher's Client ID. See [`docs/microsoft-auth.md`](docs/microsoft-auth.md) for the flow and storage model.
 
 ## Project layout
 
@@ -129,7 +131,7 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 
 ## Current limitations
 
-- Microsoft account sign-in is not enabled yet
+- Live Microsoft/Minecraft sign-in still depends on Minecraft Services authorizing the registered UN_Nexo Client ID
 - Runtime overrides are global; per-instance memory/JVM overrides are not implemented yet
 - Friend-to-friend room-code/P2P networking is not included yet
 - Fabric, Forge and NeoForge installers are not included yet
@@ -142,7 +144,7 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 
 1. Add crash diagnosis and safe diagnostic export on top of launch traces and repair findings
 2. Add resumable downloads, retries/backoff, speed reporting and cancel/retry UX
-3. Complete Microsoft AppID approval and authenticated Microsoft/Xbox/XSTS/Minecraft Services login
+3. Complete live Minecraft Services authorization/acceptance for the UN_Nexo Client ID and real-account acceptance testing
 4. Add per-instance runtime overrides and richer managed-Java controls
 5. Add instance import, duplicate, rename, delete and safe world backup/restore
 6. Add Fabric first, then NeoForge and Forge support

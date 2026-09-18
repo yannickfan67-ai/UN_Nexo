@@ -19,6 +19,7 @@ internal static class Program
             ("Java major parsing", TestJavaMajorAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
+            ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
@@ -309,7 +310,7 @@ internal static class Program
                     "arguments":{
                       "jvm":["-Djava.library.path=${natives_directory}","-cp","${classpath}","-Dnexo.launcher=${launcher_version}"],
                       "game":[
-                        "--username","${auth_player_name}","--version","${version_name}","--gameDir","${game_directory}","--assetsDir","${assets_root}","--assetIndex","${assets_index_name}","--uuid","${auth_uuid}","--accessToken","${auth_access_token}","--userType","${user_type}","--versionType","${version_type}",
+                        "--username","${auth_player_name}","--version","${version_name}","--gameDir","${game_directory}","--assetsDir","${assets_root}","--assetIndex","${assets_index_name}","--uuid","${auth_uuid}","--accessToken","${auth_access_token}","--userType","${user_type}","--clientId","${clientid}","--xuid","${auth_xuid}","--versionType","${version_type}",
                         {"rules":[{"action":"allow","features":{"is_quick_play_multiplayer":true}}],"value":["--quickPlayMultiplayer","${quickPlayMultiplayer}"]}
                       ]
                     }
@@ -349,9 +350,45 @@ internal static class Program
             Contains(plan.Arguments, gameRoot, "game directory should remain one argument even with spaces");
             Contains(plan.Arguments, "net.minecraft.client.main.Main", "main class");
             if (modern)
+            {
                 ContainsPrefix(plan.Arguments, "-Dnexo.launcher=", "launcher version substitution");
+
+                var microsoftUuid = Guid.NewGuid();
+                var microsoftAccount = new LauncherAccount(
+                    "microsoft:" + microsoftUuid.ToString("N"),
+                    "microsoft",
+                    "OnlineTester",
+                    microsoftUuid.ToString("D"),
+                    DateTimeOffset.UtcNow)
+                {
+                    AuthenticationId = "test-home-account"
+                };
+                const string minecraftAccessToken = "TEST-LAUNCH-ACCESS-TOKEN";
+                const string testXuid = "2814639012345678";
+                var microsoftCredentials = new MinecraftLaunchCredentials(
+                    microsoftAccount.Id,
+                    microsoftAccount.DisplayName,
+                    microsoftAccount.Uuid,
+                    minecraftAccessToken,
+                    MsalMicrosoftAccessTokenProvider.ClientId,
+                    testXuid);
+
+                var onlinePlan = await new MinecraftLaunchPlanBuilder(paths).BuildAsync(
+                    instance,
+                    microsoftAccount,
+                    installations,
+                    microsoftCredentials);
+                Contains(onlinePlan.Arguments, "OnlineTester", "Microsoft username substitution");
+                Contains(onlinePlan.Arguments, microsoftUuid.ToString("N"), "Microsoft UUID substitution");
+                Contains(onlinePlan.Arguments, minecraftAccessToken, "Minecraft access token substitution");
+                Contains(onlinePlan.Arguments, "msa", "Microsoft user type substitution");
+                Contains(onlinePlan.Arguments, MsalMicrosoftAccessTokenProvider.ClientId, "Microsoft Client ID substitution");
+                Contains(onlinePlan.Arguments, testXuid, "Microsoft XUID substitution");
+            }
             else
+            {
                 Contains(plan.Arguments, "-Djava.library.path=" + Path.Combine(gameRoot, "natives", version), "legacy native path");
+            }
 
             var target = MinecraftServerTarget.Parse("play.example.net:25566");
             var serverPlan = await new MinecraftServerLaunchDecorator(paths).ApplyAsync(plan, instance, target);

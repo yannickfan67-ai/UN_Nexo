@@ -43,6 +43,60 @@ public sealed partial class AccountStoreService
         return account;
     }
 
+    public async Task<LauncherAccount> UpsertMicrosoftAsync(
+        string displayName,
+        string minecraftUuid,
+        string authenticationId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedName = displayName?.Trim() ?? string.Empty;
+        if (!OfflineNameRegex().IsMatch(normalizedName))
+            throw new InvalidDataException("Minecraft returned an invalid profile name.");
+        if (!Guid.TryParse(minecraftUuid, out var parsedUuid))
+            throw new InvalidDataException("Minecraft returned an invalid profile UUID.");
+        if (string.IsNullOrWhiteSpace(authenticationId) || authenticationId.Length > 512)
+            throw new InvalidDataException("Microsoft returned an invalid account cache identity.");
+
+        var normalizedUuid = parsedUuid.ToString("D");
+        var accountId = "microsoft:" + parsedUuid.ToString("N");
+        using var lease = await PathKeyedLock.AcquireAsync(GetAccountsPath(), cancellationToken);
+        var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+
+        var existingIndex = accounts.FindIndex(account =>
+            account is not null && string.Equals(account.Id, accountId, StringComparison.Ordinal));
+        var createdAt = existingIndex >= 0 ? accounts[existingIndex].CreatedAt : DateTimeOffset.UtcNow;
+        var account = new LauncherAccount(
+            accountId,
+            "microsoft",
+            normalizedName,
+            normalizedUuid,
+            createdAt)
+        {
+            AuthenticationId = authenticationId
+        };
+
+        if (existingIndex >= 0)
+            accounts[existingIndex] = account;
+        else
+            accounts.Add(account);
+
+        await SaveAtomicAsync(accounts, cancellationToken);
+        return account;
+    }
+
+    public async Task RemoveAsync(string accountId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(accountId))
+            return;
+
+        using var lease = await PathKeyedLock.AcquireAsync(GetAccountsPath(), cancellationToken);
+        var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+        var removed = accounts.RemoveAll(account =>
+            account is not null && string.Equals(account.Id, accountId, StringComparison.Ordinal));
+        if (removed > 0)
+            await SaveAtomicAsync(accounts, cancellationToken);
+    }
+
     private async Task<IReadOnlyList<LauncherAccount>> ReadAccountsAsync(
         bool tolerateReadErrors,
         CancellationToken cancellationToken)

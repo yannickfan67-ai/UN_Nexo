@@ -24,6 +24,11 @@ public sealed class MinecraftCrashDiagnosisService
         @"(?im)(?<key>--accessToken\s+)(?<value>\S+)",
         RegexOptions.Compiled);
 
+    private static readonly Regex JsonCredentialRegex = new(
+        @"(?im)(?<prefix>[""'](?:access_token|refresh_token|identityToken|RpsTicket|Token|auth_access_token|authorization)[""']\s*:\s*[""'])(?<value>[^""'\r\n]{8,})(?<suffix>[""'])",
+        RegexOptions.Compiled);
+
+
     private static readonly Regex BearerRegex = new(
         @"(?im)(?<key>Bearer\s+)(?<value>[A-Za-z0-9._~+/-]{8,}=*)",
         RegexOptions.Compiled);
@@ -221,6 +226,8 @@ public sealed class MinecraftCrashDiagnosisService
             return string.Empty;
 
         var result = text;
+        result = JsonCredentialRegex.Replace(result, match =>
+            match.Groups["prefix"].Value + "<REDACTED>" + match.Groups["suffix"].Value);
         result = AccessTokenArgumentRegex.Replace(result, match => match.Groups["key"].Value + "<REDACTED>");
         result = BearerRegex.Replace(result, match => match.Groups["key"].Value + "<REDACTED>");
         result = TokenAssignmentRegex.Replace(result, match =>
