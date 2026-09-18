@@ -20,6 +20,7 @@ internal static class Program
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
+            ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
@@ -258,6 +259,120 @@ internal static class Program
         Equal("2001:db8::1", ipv6.Host, "IPv6 host parsing");
         Equal("[2001:db8::1]:25570", ipv6.Authority, "IPv6 authority formatting");
         return Task.CompletedTask;
+    }
+
+    private static async Task TestAssetIndexIdContainmentAsync()
+    {
+        var unsafeIds = new[]
+        {
+            "../escaped",
+            "a/b",
+            @"a\b",
+            ".",
+            "..",
+            "/rooted",
+            @"C:\escaped",
+            "name:stream"
+        };
+
+        foreach (var assetId in unsafeIds)
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-asset-id-tests",
+                Guid.NewGuid().ToString("N"));
+            try
+            {
+                var paths = new NexoPathService(root);
+                var handler = new AssetIndexIdHandler(assetId);
+                using var client = new HttpClient(handler);
+                var installer = new MinecraftVanillaInstallService(
+                    client,
+                    paths,
+                    new DownloadSourceService(),
+                    TimeSpan.FromSeconds(2));
+                var instance = new GameInstance(
+                    "asset-id-test",
+                    "Asset id test",
+                    "asset-id-test",
+                    "vanilla",
+                    DateTimeOffset.UtcNow);
+                var version = new MinecraftVersionInfo(
+                    "asset-id-test",
+                    "release",
+                    "https://metadata.example.test/version.json",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    string.Empty,
+                    0);
+
+                try
+                {
+                    await installer.InstallAsync(instance, version);
+                    throw new Exception($"Unsafe assetIndex.id '{assetId}' should be rejected.");
+                }
+                catch (InvalidDataException ex)
+                {
+                    ContainsText(ex.Message, "assetIndex.id", "unsafe asset id rejection");
+                }
+
+                Equal(0, handler.AssetIndexRequests,
+                    $"unsafe assetIndex.id '{assetId}' must be rejected before the asset-index HTTP request");
+                var assetsRoot = Path.Combine(paths.GetInstanceGameDirectory(instance.Id), "assets");
+                Equal(false, File.Exists(Path.Combine(assetsRoot, "escaped.json")),
+                    "traversal asset id must not publish an escaped index file");
+                Equal(false, File.Exists(Path.Combine(assetsRoot, "escaped.json.part")),
+                    "traversal asset id must not publish an escaped temporary index file");
+            }
+            finally
+            {
+                try { Directory.Delete(root, recursive: true); } catch { }
+            }
+        }
+
+        var validRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-asset-id-tests",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new NexoPathService(validRoot);
+            var handler = new AssetIndexIdHandler("1.21");
+            using var client = new HttpClient(handler);
+            var installer = new MinecraftVanillaInstallService(
+                client,
+                paths,
+                new DownloadSourceService(),
+                TimeSpan.FromSeconds(2));
+            var instance = new GameInstance(
+                "asset-id-valid",
+                "Asset id valid",
+                "asset-id-valid",
+                "vanilla",
+                DateTimeOffset.UtcNow);
+            var version = new MinecraftVersionInfo(
+                "asset-id-valid",
+                "release",
+                "https://metadata.example.test/version.json",
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                string.Empty,
+                0);
+
+            await installer.InstallAsync(instance, version);
+            Equal(1, handler.AssetIndexRequests, "valid asset id should request its index exactly once");
+            Equal(true,
+                File.Exists(Path.Combine(
+                    paths.GetInstanceGameDirectory(instance.Id),
+                    "assets",
+                    "indexes",
+                    "1.21.json")),
+                "valid asset id should remain under assets/indexes");
+        }
+        finally
+        {
+            try { Directory.Delete(validRoot, recursive: true); } catch { }
+        }
     }
 
     private static async Task TestManifestStreamingFallbackAsync()
@@ -547,6 +662,41 @@ internal static class Program
         }
 
         throw new InvalidOperationException($"{message}: expected {typeof(TException).Name}.");
+    }
+
+    private sealed class AssetIndexIdHandler(string assetId) : HttpMessageHandler
+    {
+        public int AssetIndexRequests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
+            if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+            {
+                var encodedId = System.Text.Json.JsonSerializer.Serialize(assetId);
+                var metadata =
+                    "{\"id\":\"asset-id-test\",\"assetIndex\":{\"id\":"
+                    + encodedId
+                    + ",\"url\":\"https://assets.example.test/index.json\"},\"libraries\":[]}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+                });
+            }
+
+            if (uri.Host.Equals("assets.example.test", StringComparison.OrdinalIgnoreCase))
+            {
+                AssetIndexRequests++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"objects\":{}}", Encoding.UTF8, "application/json")
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
     }
 
     private sealed class ManifestFallbackHandler : HttpMessageHandler
