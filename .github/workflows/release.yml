@@ -122,13 +122,13 @@ jobs:
             -d 'libc6 (>= 2.35)' -d libgcc-s1 -d libstdc++6 \
             -d libfontconfig1 -d fontconfig -d libfreetype6 -d fonts-noto-cjk \
             -d libx11-6 -d libx11-xcb1 -d libxcb1 -d libxext6 \
-            -d libxi6 -d libxtst6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 \
+            -d libxi6 -d libxtst6 -d libxrandr2 -d libxcursor1 -d libgl1 -d libice6 -d libsm6 -d libsecret-1-0 \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.deb" .
           fpm -s dir -t rpm -n un-nexo -v "$BASE_VERSION" --iteration "$ITERATION" -a x86_64 \
             --description "UN_Nexo - a modern, lightweight and extensible Minecraft launcher" \
             --url "https://github.com/yannickfan67-ai/UN_Nexo" --maintainer "UN_Nexo project" \
             -d glibc -d libgcc -d libstdc++ -d fontconfig -d freetype -d google-noto-sans-cjk-fonts \
-            -d libX11 -d libXcursor -d libXi -d libXtst -d libXrandr -d libXext -d mesa-libGL -d libICE -d libSM \
+            -d libX11 -d libXcursor -d libXi -d libXtst -d libXrandr -d libXext -d mesa-libGL -d libICE -d libSM -d libsecret \
             -C package-root -p "release/UN_Nexo-${VERSION}-linux-x64.rpm" .
       - name: Validate DEB dependencies and CJK fallback with APT
         shell: bash
@@ -138,7 +138,7 @@ jobs:
           DEB="UN_Nexo-${VERSION}-linux-x64.deb"
           dpkg-deb -f "release/$DEB" Depends
           docker run --rm -v "$PWD/release:/packages:ro" ubuntu:24.04 bash -lc \
-            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libxtst6 | grep -q 'install ok installed' && ldconfig -p | grep -q 'libXtst.so.6' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
+            "apt-get update >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y /packages/$DEB >/dev/null && dpkg-query -W -f='\${Status}\n' un-nexo | grep -q 'install ok installed' && dpkg-query -W -f='\${Status}\n' libxtst6 | grep -q 'install ok installed' && dpkg-query -W -f='${Status}\n' libsecret-1-0 | grep -q 'install ok installed' && ldconfig -p | grep -q 'libXtst.so.6' && fc-match 'Noto Sans CJK SC' | grep -qi 'NotoSansCJK'"
       - name: Smoke test packaged DEB UI
         shell: bash
         run: |
