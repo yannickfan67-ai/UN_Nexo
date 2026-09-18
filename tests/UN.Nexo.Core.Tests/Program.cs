@@ -18,6 +18,7 @@ internal static class Program
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
             ("Java major parsing", TestJavaMajorAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
+            ("Managed Java concurrency and publication", ManagedJavaPublicationRegression.RunAsync),
             ("Managed Java metadata hardening", TestManagedJavaMetadataHardeningAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
@@ -166,7 +167,10 @@ internal static class Program
             var handler = new ManagedJavaHandler(archiveBytes, checksum);
             using var client = new HttpClient(handler);
             var paths = new NexoPathService(temp);
-            var service = new JavaRuntimeProvisionService(client, paths);
+            var service = new JavaRuntimeProvisionService(
+                client,
+                paths,
+                runtimeValidator: static (_, _, _) => Task.FromResult(true));
 
             var installation = await service.EnsureJavaAsync(8);
             Equal(8, MinecraftLaunchPlanBuilder.JavaMajor(installation.Version), "managed Java major");
