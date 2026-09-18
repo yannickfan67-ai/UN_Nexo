@@ -13,6 +13,7 @@ try
     await RunInheritedLaunchRegressionAsync(root);
     await RunInheritanceLoopRegressionAsync(root);
     await RunFabricMetaRegressionAsync();
+    await UN.Nexo.Fabric.Tests.FabricMetaSizeRegression.RunAsync();
     await RunFabricPrepareValidationRegressionAsync();
     RunMavenPathRegression();
     Console.WriteLine("Fabric regression checks passed.");
