@@ -25,7 +25,13 @@ public sealed partial class InstanceRepairWindow : Window
         _downloadSources = new DownloadSourceService();
         _settings = new LauncherSettingsService(paths);
 
-        var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        var httpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromMinutes(10)
+        };
         httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("UN_Nexo/repair");
         var installer = new MinecraftVanillaInstallService(httpClient, paths, _downloadSources);
         var manifest = new MinecraftVersionManifestService(httpClient, _downloadSources);
