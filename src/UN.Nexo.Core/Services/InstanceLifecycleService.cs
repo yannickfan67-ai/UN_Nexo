@@ -240,12 +240,21 @@ public sealed class InstanceLifecycleService
         var inspected = await ReadBackupAsync(backupPath, cancellationToken);
         if (!inspected.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
             throw new InvalidOperationException("The backup file was replaced and now belongs to a different instance.");
-        var world = inspected.Worlds.FirstOrDefault(item => item.Name.Equals(worldName, StringComparison.Ordinal));
+        var world = inspected.Worlds.FirstOrDefault(
+            item => item is not null && item.Name.Equals(worldName, StringComparison.Ordinal));
         if (world is null)
             throw new InvalidOperationException("The selected world is not present in this backup.");
         if (world.FileCount < 0 || world.UncompressedBytes < 0
             || world.UncompressedBytes > long.MaxValue - FreeSpaceReserveBytes)
             throw new InvalidDataException("The backup contains invalid world file totals.");
+
+        Dictionary<string, WorldBackupFile>? expectedFiles = null;
+        if (inspected.Schema == BackupSchema)
+        {
+            if (world.Files is null)
+                throw new InvalidDataException("Backup file integrity metadata is missing.");
+            expectedFiles = world.Files.ToDictionary(item => item.Path, StringComparer.Ordinal);
+        }
 
         var instanceRoot = _paths.GetInstanceDirectory(instance.Id);
         var savesRoot = Path.Combine(_paths.GetInstanceGameDirectory(instance.Id), "saves");
@@ -263,6 +272,9 @@ public sealed class InstanceLifecycleService
             var prefix = world.ArchivePrefix.TrimEnd('/') + "/";
             var extractedFiles = 0;
             long extractedBytes = 0;
+            var verifiedPaths = expectedFiles is null
+                ? null
+                : new HashSet<string>(StringComparer.Ordinal);
             foreach (var entry in archive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -282,6 +294,20 @@ public sealed class InstanceLifecycleService
                     continue;
                 }
 
+                WorldBackupFile? expectedFile = null;
+                if (expectedFiles is not null)
+                {
+                    if (!expectedFiles.TryGetValue(relative, out expectedFile))
+                        throw new InvalidDataException(
+                            $"Backup contains unexpected world file '{relative}'.");
+                    if (!verifiedPaths!.Add(relative))
+                        throw new InvalidDataException(
+                            $"Backup contains duplicate world file '{relative}'.");
+                    if (entry.Length != expectedFile.Size)
+                        throw new InvalidDataException(
+                            $"Backup file '{relative}' size does not match its manifest.");
+                }
+
                 if (extractedFiles >= world.FileCount
                     || entry.Length > world.UncompressedBytes - extractedBytes)
                     throw new InvalidDataException("The backup exceeds its declared world file totals.");
@@ -295,14 +321,42 @@ public sealed class InstanceLifecycleService
                     FileShare.None,
                     128 * 1024,
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
-                await input.CopyToAsync(output, cancellationToken);
+                using var hash = expectedFile is null
+                    ? null
+                    : IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[128 * 1024];
+                long fileBytes = 0;
+                while (true)
+                {
+                    var read = await input.ReadAsync(buffer.AsMemory(), cancellationToken);
+                    if (read == 0)
+                        break;
+
+                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    hash?.AppendData(buffer, 0, read);
+                    fileBytes = checked(fileBytes + read);
+                }
+
+                if (expectedFile is not null)
+                {
+                    if (fileBytes != expectedFile.Size)
+                        throw new InvalidDataException(
+                            $"Backup file '{relative}' extracted size does not match its manifest.");
+                    var digest = Convert.ToHexString(hash!.GetHashAndReset()).ToLowerInvariant();
+                    if (!string.Equals(digest, expectedFile.Sha256, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException(
+                            $"Backup file '{relative}' failed SHA-256 verification.");
+                }
+
                 extractedFiles++;
-                extractedBytes = checked(extractedBytes + output.Length);
+                extractedBytes = checked(extractedBytes + fileBytes);
             }
 
             // Validate before moving the current world into restore-safety.
             if (extractedFiles != world.FileCount || extractedBytes != world.UncompressedBytes)
                 throw new InvalidDataException("The backup world files do not match the manifest totals.");
+            if (expectedFiles is not null && verifiedPaths!.Count != expectedFiles.Count)
+                throw new InvalidDataException("Backup is missing one or more world files from its manifest.");
 
             cancellationToken.ThrowIfCancellationRequested();
 
