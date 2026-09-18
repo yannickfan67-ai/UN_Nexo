@@ -14,10 +14,15 @@ public sealed class MinecraftRuntimeInspector(NexoPathService paths)
             using var resolved = await new MinecraftVersionMetadataResolver()
                 .ResolveAsync(paths.GetInstanceGameDirectory(instance.Id), instance.VersionId, cancellationToken);
             var root = resolved.Document.RootElement;
-            return root.TryGetProperty("javaVersion", out var javaVersion)
-                && javaVersion.TryGetProperty("majorVersion", out var major)
-                ? major.GetInt32()
-                : 8;
+            if (!root.TryGetProperty("javaVersion", out var javaVersion))
+                return 8;
+            if (javaVersion.ValueKind != JsonValueKind.Object
+                || !javaVersion.TryGetProperty("majorVersion", out var major)
+                || major.ValueKind != JsonValueKind.Number
+                || !major.TryGetInt32(out var value)
+                || value <= 0)
+                return null;
+            return value;
         }
         catch (JsonException)
         {
