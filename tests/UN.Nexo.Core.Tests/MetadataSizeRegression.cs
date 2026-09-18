@@ -32,7 +32,7 @@ internal static class MetadataSizeRegression
         var catalog = await new MinecraftVersionManifestService(client, sources)
             .GetCatalogAsync();
 
-        Assert(catalog.Latest.Release == "1.21.4",
+        Assert(catalog.Latest.LatestRelease == "1.21.4",
             "Oversized mirror catalog should fall back to the official candidate.");
         Assert(handler.Hosts.Count == 2,
             "Oversized mirror catalog should try the fallback candidate.");
@@ -74,7 +74,7 @@ internal static class MetadataSizeRegression
             client,
             new DownloadSourceService()).GetCatalogAsync();
 
-        Assert(catalog.Latest.Release == "1.21.4",
+        Assert(catalog.Latest.LatestRelease == "1.21.4",
             "Just-under-limit manifest should remain accepted.");
     }
 
