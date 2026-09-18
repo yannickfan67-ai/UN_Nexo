@@ -183,6 +183,13 @@ jobs:
           ### Security fix in 0.7.1-dev
           - Rejects imported Fabric `downloads.artifact.path` values that escape the selected instance's `game/libraries` directory, including traversal and rooted paths, before any HTTP request or file write.
 
+          ### Modrinth integration in 0.7.5-dev
+          - Adds an Installed / Modrinth view to the per-instance Mods manager.
+          - Searches the public Modrinth API using the selected Minecraft version and loader, with no private API key or closed backend.
+          - Matches existing managed JARs by SHA-1, reports compatible updates, and only changes files after an explicit Install/Update action.
+          - Verifies provider filename, HTTPS CDN host, declared size and SHA-1 before publishing a downloaded JAR through Nexo's existing path-safe mod service.
+          - Preserves disabled state when explicitly updating a disabled Modrinth-managed mod and keeps local Install JAR support available.
+
           ### Fabric and instance management
           - Adds launch support for inherited Minecraft version profiles and Fabric Loader/KnotClient.
           - Adds a Fabric Manager that queries compatible loader versions, creates isolated Fabric instances, and prepares imported Fabric profiles.
@@ -207,7 +214,7 @@ jobs:
           ### Current limitations
           - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved Microsoft application registration.
           - Forge support is still under development and is not included in this release.
-          - Sodium/Iris compatibility installation is not included yet.
+          - Dedicated Sodium/Iris compatibility presets are not included yet; compatible releases can now be found and installed through Modrinth.
           - Per-instance runtime overrides and friend-to-friend room-code/P2P networking are not implemented yet.
           - Real Linux Mint/Cinnamon game-menu behavior remains an on-device acceptance check.
 
