@@ -559,8 +559,8 @@ public sealed class InstanceLifecycleService
     {
         if (string.IsNullOrWhiteSpace(value)
             || value.Length > maxLength
-            || value.StartsWith('/', StringComparison.Ordinal)
-            || value.EndsWith('/', StringComparison.Ordinal)
+            || value.StartsWith("/", StringComparison.Ordinal)
+            || value.EndsWith("/", StringComparison.Ordinal)
             || value.Contains('\\')
             || value.Any(char.IsControl))
             return false;
