@@ -1,4 +1,6 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
@@ -9,8 +11,17 @@ public sealed class FabricInstallService(
     HttpClient httpClient,
     NexoPathService paths,
     MinecraftVanillaInstallService vanillaInstaller,
-    FabricMetaService fabricMeta)
+    FabricMetaService fabricMeta,
+    TimeSpan? transferIdleTimeout = null)
 {
+    private const int MaxChecksumBytes = 1024;
+    private readonly TimeSpan _transferIdleTimeout = transferIdleTimeout is null
+        ? TimeSpan.FromSeconds(30)
+        : transferIdleTimeout.Value > TimeSpan.Zero
+            ? transferIdleTimeout.Value
+            : throw new ArgumentOutOfRangeException(
+                nameof(transferIdleTimeout),
+                "Fabric transfer idle timeout must be positive.");
     public async Task PrepareAsync(
         GameInstance instance,
         MinecraftVersionInfo baseVersion,
@@ -278,7 +289,8 @@ public sealed class FabricInstallService(
                 result.Add(new LibraryDownload(
                     url,
                     MinecraftLaunchPlanBuilder.Within(librariesRoot, relative),
-                    sha1));
+                    sha1,
+                    ChecksumUrl: null));
                 continue;
             }
 
@@ -291,10 +303,12 @@ public sealed class FabricInstallService(
                 continue;
             var relativePath = MavenArtifactPath.FromCoordinate(coordinate);
             var urlPath = relativePath.Replace(Path.DirectorySeparatorChar, '/');
+            var libraryUrl = baseUrl.TrimEnd('/') + "/" + urlPath;
             result.Add(new LibraryDownload(
-                baseUrl.TrimEnd('/') + "/" + urlPath,
+                libraryUrl,
                 MinecraftLaunchPlanBuilder.Within(librariesRoot, relativePath),
-                null));
+                Sha1: null,
+                ChecksumUrl: libraryUrl + ".sha1"));
         }
 
         return result
@@ -304,9 +318,20 @@ public sealed class FabricInstallService(
             .ToList();
     }
 
-    private async Task DownloadLibraryAsync(LibraryDownload library, CancellationToken cancellationToken)
+    private async Task DownloadLibraryAsync(
+        LibraryDownload library,
+        CancellationToken cancellationToken)
     {
-        if (await IsValidAsync(library.Path, library.Sha1, cancellationToken))
+        var expectedSha1 = library.Sha1;
+        if (string.IsNullOrWhiteSpace(expectedSha1)
+            && !string.IsNullOrWhiteSpace(library.ChecksumUrl))
+        {
+            expectedSha1 = await DownloadSha1Async(
+                library.ChecksumUrl,
+                cancellationToken);
+        }
+
+        if (await IsValidAsync(library.Path, expectedSha1, cancellationToken))
             return;
 
         Directory.CreateDirectory(Path.GetDirectoryName(library.Path)!);
@@ -320,25 +345,110 @@ public sealed class FabricInstallService(
                 cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var output = new FileStream(
+            await using (var output = new FileStream(
                 temp,
                 FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.None,
                 128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            await input.CopyToAsync(output, cancellationToken);
-            await output.FlushAsync(cancellationToken);
-            output.Close();
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                await CopyWithIdleTimeoutAsync(
+                    input,
+                    output,
+                    new Uri(library.Url).Host,
+                    cancellationToken);
+                await output.FlushAsync(cancellationToken);
+            }
 
-            if (!await IsValidAsync(temp, library.Sha1, cancellationToken))
-                throw new InvalidDataException($"Downloaded Fabric library failed verification: {library.Url}");
+            if (!await IsValidAsync(temp, expectedSha1, cancellationToken))
+                throw new InvalidDataException(
+                    $"Downloaded Fabric library failed verification: {library.Url}");
+
             File.Move(temp, library.Path, overwrite: true);
         }
         catch
         {
             TryDeleteFile(temp);
             throw;
+        }
+    }
+
+    private async Task<string> DownloadSha1Async(
+        string url,
+        CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync(
+            url,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        if (response.Content.Headers.ContentLength is > MaxChecksumBytes)
+            throw new InvalidDataException(
+                $"Fabric checksum response is too large: {url}");
+
+        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var output = new MemoryStream();
+        await CopyWithIdleTimeoutAsync(
+            input,
+            output,
+            new Uri(url).Host,
+            cancellationToken,
+            MaxChecksumBytes);
+
+        var text = Encoding.ASCII.GetString(output.ToArray()).Trim();
+        var token = text.Split(
+                (char[]?)null,
+                StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        if (token is null
+            || token.Length != 40
+            || token.Any(character => !Uri.IsHexDigit(character)))
+            throw new InvalidDataException(
+                $"Fabric checksum response is invalid: {url}");
+
+        return token.ToLowerInvariant();
+    }
+
+    private async Task CopyWithIdleTimeoutAsync(
+        Stream input,
+        Stream output,
+        string source,
+        CancellationToken cancellationToken,
+        long? maxBytes = null)
+    {
+        var buffer = new byte[128 * 1024];
+        long total = 0;
+
+        while (true)
+        {
+            using var idle = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+            idle.CancelAfter(_transferIdleTimeout);
+
+            int read;
+            try
+            {
+                read = await input.ReadAsync(buffer.AsMemory(), idle.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Fabric transfer from {source} made no progress for {_transferIdleTimeout.TotalSeconds:0.###} seconds.");
+            }
+
+            if (read == 0)
+                return;
+
+            total = checked(total + read);
+            if (maxBytes is not null && total > maxBytes.Value)
+                throw new InvalidDataException(
+                    $"Fabric metadata transfer from {source} exceeded the {maxBytes.Value}-byte limit.");
+
+            await output.WriteAsync(
+                buffer.AsMemory(0, read),
+                cancellationToken);
         }
     }
 
@@ -350,12 +460,29 @@ public sealed class FabricInstallService(
         var info = new FileInfo(path);
         if (!info.Exists || info.Length <= 0)
             return false;
-        if (string.IsNullOrWhiteSpace(expectedSha1))
-            return true;
 
-        await using var stream = File.OpenRead(path);
-        var hash = await SHA1.HashDataAsync(stream, cancellationToken);
-        return Convert.ToHexString(hash).Equals(expectedSha1, StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(expectedSha1))
+        {
+            await using var stream = File.OpenRead(path);
+            var hash = await SHA1.HashDataAsync(stream, cancellationToken);
+            return Convert.ToHexString(hash)
+                .Equals(expectedSha1, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return IsReadableJar(path);
+    }
+
+    private static bool IsReadableJar(string path)
+    {
+        try
+        {
+            using var archive = ZipFile.OpenRead(path);
+            return archive.Entries.Any(entry => !string.IsNullOrEmpty(entry.Name));
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException)
+        {
+            return false;
+        }
     }
 
     private static async Task WriteProfileAtomicAsync(
@@ -418,5 +545,9 @@ public sealed class FabricInstallService(
         }
     }
 
-    private sealed record LibraryDownload(string Url, string Path, string? Sha1);
+    private sealed record LibraryDownload(
+        string Url,
+        string Path,
+        string? Sha1,
+        string? ChecksumUrl);
 }
