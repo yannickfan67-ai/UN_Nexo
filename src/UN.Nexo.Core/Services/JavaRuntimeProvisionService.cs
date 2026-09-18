@@ -11,6 +11,7 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class JavaRuntimeProvisionService
 {
+    private const int MaxAdoptiumMetadataBytes = 1024 * 1024;
     private static readonly HttpClient SharedClient = CreateSharedClient();
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
@@ -202,9 +203,18 @@ public sealed class JavaRuntimeProvisionService
                   "&page=0&page_size=1&project=jdk&sort_method=DEFAULT&sort_order=DESC&vendor=eclipse";
         using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
+        if (response.Content.Headers.ContentLength is > MaxAdoptiumMetadataBytes)
+            throw new InvalidDataException(
+                $"Adoptium metadata response exceeds the {MaxAdoptiumMetadataBytes}-byte limit.");
+
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var buffered = new MemoryStream();
-        await CopyWithIdleTimeoutAsync(stream, buffered, "api.adoptium.net", cancellationToken);
+        await CopyWithIdleTimeoutAsync(
+            stream,
+            buffered,
+            "api.adoptium.net",
+            cancellationToken,
+            MaxAdoptiumMetadataBytes);
         buffered.Position = 0;
         using var document = await JsonDocument.ParseAsync(buffered, cancellationToken: cancellationToken);
         if (document.RootElement.ValueKind != JsonValueKind.Array
@@ -212,6 +222,9 @@ public sealed class JavaRuntimeProvisionService
             throw new InvalidOperationException($"No supported Java {major} runtime was returned by Adoptium.");
 
         var release = document.RootElement[0];
+        if (release.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Adoptium release metadata must be an object.");
+
         JsonElement binary = default;
         if (release.TryGetProperty("binary", out var legacyBinary)
             && legacyBinary.ValueKind == JsonValueKind.Object)
@@ -237,18 +250,28 @@ public sealed class JavaRuntimeProvisionService
             || package.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Adoptium returned no downloadable Java package.");
 
-        var link = package.TryGetProperty("link", out var linkElement) ? linkElement.GetString() : null;
-        var checksum = package.TryGetProperty("checksum", out var checksumElement) ? checksumElement.GetString() : null;
-        var version = release.TryGetProperty("version_data", out var versionData)
-                      && versionData.TryGetProperty("semver", out var semver)
-            ? semver.GetString()
-            : null;
-        if (string.IsNullOrWhiteSpace(link)
-            || !Uri.TryCreate(link, UriKind.Absolute, out var packageUri)
+        var link = RequireMetadataString(package, "link", "package.link");
+        var checksum = RequireMetadataString(package, "checksum", "package.checksum");
+
+        string? version = null;
+        if (release.TryGetProperty("version_data", out var versionData))
+        {
+            if (versionData.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException(
+                    "Adoptium metadata property 'version_data' must be an object.");
+            if (versionData.TryGetProperty("semver", out var semver))
+            {
+                if (semver.ValueKind != JsonValueKind.String)
+                    throw new InvalidDataException(
+                        "Adoptium metadata property 'version_data.semver' must be a string.");
+                version = semver.GetString();
+            }
+        }
+
+        if (!Uri.TryCreate(link, UriKind.Absolute, out var packageUri)
             || packageUri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidDataException("Adoptium returned an invalid Java package URL.");
-        if (string.IsNullOrWhiteSpace(checksum)
-            || checksum.Length != 64
+        if (checksum.Length != 64
             || checksum.Any(character => !Uri.IsHexDigit(character)))
             throw new InvalidDataException("Adoptium returned an invalid Java package checksum.");
         if (string.IsNullOrWhiteSpace(version))
@@ -301,14 +324,22 @@ public sealed class JavaRuntimeProvisionService
         Stream input,
         Stream output,
         string source,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? maxBytes = null)
     {
         var buffer = new byte[64 * 1024];
+        long total = 0;
         while (true)
         {
             var read = await ReadWithIdleTimeoutAsync(input, buffer, source, cancellationToken);
             if (read == 0)
                 return;
+
+            total += read;
+            if (maxBytes is not null && total > maxBytes.Value)
+                throw new InvalidDataException(
+                    $"Transfer from {source} exceeded the {maxBytes.Value}-byte metadata limit.");
+
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
     }
@@ -330,6 +361,20 @@ public sealed class JavaRuntimeProvisionService
             throw new TimeoutException(
                 $"Transfer from {source} made no progress for {_transferIdleTimeout.TotalSeconds:0.#} seconds.");
         }
+    }
+
+    private static string RequireMetadataString(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value)
+            || value.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(value.GetString()))
+            throw new InvalidDataException(
+                $"Adoptium metadata property '{displayName}' must be a non-empty string.");
+
+        return value.GetString()!;
     }
 
     private static async Task<bool> ValidateRuntimeAsync(
