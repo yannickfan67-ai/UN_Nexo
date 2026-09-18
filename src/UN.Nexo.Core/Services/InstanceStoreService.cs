@@ -73,13 +73,17 @@ public sealed class InstanceStoreService
         string? loaderVersion = null,
         CancellationToken cancellationToken = default)
     {
+        var normalizedName = RequireValue(name, nameof(name), "Instance name");
+        var normalizedVersionId = RequireValue(versionId, nameof(versionId), "Minecraft version");
+        var normalizedLoader = RequireValue(loader, nameof(loader), "Loader");
+
         _paths.EnsureDirectories();
         var id = Guid.NewGuid().ToString("N");
         var instance = new GameInstance(
             id,
-            name.Trim(),
-            versionId.Trim(),
-            loader.Trim(),
+            normalizedName,
+            normalizedVersionId,
+            normalizedLoader,
             DateTimeOffset.UtcNow,
             string.IsNullOrWhiteSpace(baseVersionId) ? null : baseVersionId.Trim(),
             string.IsNullOrWhiteSpace(loaderVersion) ? null : loaderVersion.Trim());
@@ -111,6 +115,14 @@ public sealed class InstanceStoreService
             TryDeleteDirectory(directory);
             throw;
         }
+    }
+
+    private static string RequireValue(string value, string parameterName, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new ArgumentException($"{displayName} is required.", parameterName);
+
+        return value.Trim();
     }
 
     private static void TryDeleteDirectory(string path)
