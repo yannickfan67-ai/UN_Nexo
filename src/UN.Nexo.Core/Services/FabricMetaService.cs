@@ -25,8 +25,11 @@ public sealed class FabricMetaService(HttpClient httpClient)
         var versions = new List<FabricLoaderVersion>();
         foreach (var item in document.RootElement.EnumerateArray())
         {
-            if (!item.TryGetProperty("loader", out var loader)
-                || !loader.TryGetProperty("version", out var versionElement))
+            if (item.ValueKind != JsonValueKind.Object
+                || !item.TryGetProperty("loader", out var loader)
+                || loader.ValueKind != JsonValueKind.Object
+                || !loader.TryGetProperty("version", out var versionElement)
+                || versionElement.ValueKind != JsonValueKind.String)
                 continue;
             var version = versionElement.GetString();
             if (string.IsNullOrWhiteSpace(version))

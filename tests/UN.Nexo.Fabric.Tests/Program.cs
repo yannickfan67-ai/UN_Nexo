@@ -111,6 +111,8 @@ static async Task RunInheritedLaunchRegressionAsync(string root)
     {
         var metadata = resolved.Document.RootElement;
         Assert(resolved.ClientVersionId == "1.21.4", "Inherited profile should use the parent client JAR.");
+        Assert(metadata.GetProperty("mainClass").GetString() == "net.minecraft.client.main.Main" == false,
+            "Child main class should override parent main class.");
         Assert(metadata.GetProperty("mainClass").GetString() == "net.fabricmc.loader.impl.launch.knot.KnotClient",
             "Child main class should override parent main class.");
         Assert(metadata.GetProperty("libraries").GetArrayLength() == 2,
@@ -175,7 +177,7 @@ static async Task RunFabricMetaRegressionAsync()
     using var client = new HttpClient(handler);
     var service = new FabricMetaService(client);
     var versions = await service.GetLoaderVersionsAsync("1.21.4");
-    Assert(versions.Count == 2, "Fabric Meta loader list should be parsed.");
+    Assert(versions.Count == 2, "Malformed Fabric Meta entries should be skipped without losing healthy loaders.");
     Assert(versions[0].Version == "0.16.9" && versions[0].Stable,
         "Stable loader should be preferred.");
 
@@ -233,7 +235,12 @@ sealed class FabricMetaHandler : HttpMessageHandler
             : """
               [
                 {"loader":{"version":"0.16.8","stable":false}},
-                {"loader":{"version":"0.16.9","stable":true}}
+                123,
+                {"loader":[]},
+                {"loader":{"version":123,"stable":true}},
+                {"loader":{"version":"0.16.9","stable":true}},
+                {"loader":{"version":null}},
+                {"loader":{"version":"","stable":"yes"}}
               ]
               """;
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
