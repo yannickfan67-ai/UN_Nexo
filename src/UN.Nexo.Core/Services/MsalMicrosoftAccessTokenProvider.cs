@@ -106,8 +106,7 @@ public sealed class MsalMicrosoftAccessTokenProvider : IMicrosoftAccessTokenProv
 
             var storageBuilder = new StorageCreationPropertiesBuilder(
                 "msal.cache",
-                cacheDirectory,
-                ClientId);
+                cacheDirectory);
 
             if (OperatingSystem.IsLinux())
             {
