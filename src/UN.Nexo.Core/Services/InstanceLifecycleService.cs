@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using UN.Nexo.Core.Models;
@@ -7,7 +8,13 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class InstanceLifecycleService
 {
-    private const int BackupSchema = 1;
+    private const int LegacyBackupSchema = 1;
+    private const int BackupSchema = 2;
+    private const int MaxBackupManifestBytes = 512 * 1024;
+    private const int MaxBackupWorlds = 4096;
+    private const int MaxBackupWorldNameLength = 255;
+    private const int MaxArchivePrefixLength = 512;
+    private const int MaxBackupFilePathLength = 4096;
     private const long FreeSpaceReserveBytes = 64L * 1024 * 1024;
     private readonly NexoPathService _paths;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -136,12 +143,15 @@ public sealed class InstanceLifecycleService
                     var worldPath = worlds[index];
                     var worldName = Path.GetFileName(worldPath);
                     var prefix = $"worlds/{index:D4}";
-                    var (bytes, count) = await AddDirectoryToArchiveAsync(
+                    var (bytes, count, files) = await AddDirectoryToArchiveAsync(
                         archive,
                         worldPath,
                         prefix,
                         cancellationToken);
-                    worldEntries.Add(new WorldBackupWorld(worldName, prefix, bytes, count));
+                    worldEntries.Add(new WorldBackupWorld(worldName, prefix, bytes, count)
+                    {
+                        Files = files
+                    });
                 }
 
                 var manifest = new BackupManifest(
@@ -168,7 +178,10 @@ public sealed class InstanceLifecycleService
                 createdAt,
                 finalPath,
                 archiveBytes,
-                worldEntries);
+                worldEntries)
+            {
+                Schema = BackupSchema
+            };
         }
         catch
         {
@@ -330,15 +343,20 @@ public sealed class InstanceLifecycleService
         using var archive = ZipFile.OpenRead(path);
         var entry = archive.GetEntry("manifest.json")
             ?? throw new InvalidDataException("Backup manifest is missing.");
-        await using var stream = entry.Open();
-        var manifest = await JsonSerializer.DeserializeAsync<BackupManifest>(stream, _json, cancellationToken)
-            ?? throw new InvalidDataException("Backup manifest is invalid.");
-        if (manifest.Schema != BackupSchema)
-            throw new InvalidDataException($"Unsupported backup schema {manifest.Schema}.");
-        if (string.IsNullOrWhiteSpace(manifest.Id)
-            || string.IsNullOrWhiteSpace(manifest.InstanceId)
-            || manifest.Worlds is null)
-            throw new InvalidDataException("Backup manifest is incomplete.");
+        var manifestBytes = await ReadManifestBytesAsync(entry, cancellationToken);
+
+        BackupManifest manifest;
+        try
+        {
+            manifest = JsonSerializer.Deserialize<BackupManifest>(manifestBytes, _json)
+                ?? throw new InvalidDataException("Backup manifest is invalid.");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Backup manifest contains malformed JSON.", ex);
+        }
+
+        ValidateBackupManifest(manifest);
 
         return new WorldBackupInfo(
             manifest.Id,
@@ -348,28 +366,181 @@ public sealed class InstanceLifecycleService
             manifest.CreatedAt,
             path,
             new FileInfo(path).Length,
-            manifest.Worlds);
+            manifest.Worlds)
+        {
+            Schema = manifest.Schema
+        };
     }
 
-    private async Task<(long Bytes, int Files)> AddDirectoryToArchiveAsync(
-        ZipArchive archive,
-        string sourceRoot,
-        string archivePrefix,
+    private static async Task<byte[]> ReadManifestBytesAsync(
+        ZipArchiveEntry entry,
         CancellationToken cancellationToken)
+    {
+        if (entry.Length > MaxBackupManifestBytes)
+            throw new InvalidDataException(
+                $"Backup manifest exceeds the {MaxBackupManifestBytes}-byte limit.");
+
+        await using var input = entry.Open();
+        await using var output = new MemoryStream();
+        var buffer = new byte[32 * 1024];
+        var total = 0;
+
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0)
+                break;
+
+            total += read;
+            if (total > MaxBackupManifestBytes)
+                throw new InvalidDataException(
+                    $"Backup manifest exceeds the {MaxBackupManifestBytes}-byte limit.");
+
+            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+
+        return output.ToArray();
+    }
+
+    private static void ValidateBackupManifest(BackupManifest manifest)
+    {
+        if (manifest.Schema is not (LegacyBackupSchema or BackupSchema))
+            throw new InvalidDataException($"Unsupported backup schema {manifest.Schema}.");
+        if (string.IsNullOrWhiteSpace(manifest.Id)
+            || string.IsNullOrWhiteSpace(manifest.InstanceId)
+            || string.IsNullOrWhiteSpace(manifest.InstanceName)
+            || string.IsNullOrWhiteSpace(manifest.Kind)
+            || manifest.Worlds is null)
+            throw new InvalidDataException("Backup manifest is incomplete.");
+        if (manifest.Worlds.Count == 0 || manifest.Worlds.Count > MaxBackupWorlds)
+            throw new InvalidDataException("Backup manifest contains an invalid world count.");
+
+        var worldNames = new HashSet<string>(StringComparer.Ordinal);
+        var prefixes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var world in manifest.Worlds)
+        {
+            if (world is null)
+                throw new InvalidDataException("Backup manifest contains a null world entry.");
+            ValidateWorldName(world.Name);
+            ValidateArchivePrefix(world.ArchivePrefix);
+            if (!worldNames.Add(world.Name))
+                throw new InvalidDataException($"Backup manifest contains duplicate world '{world.Name}'.");
+            if (!prefixes.Add(world.ArchivePrefix))
+                throw new InvalidDataException(
+                    $"Backup manifest contains duplicate archive prefix '{world.ArchivePrefix}'.");
+            if (world.FileCount < 0
+                || world.UncompressedBytes < 0
+                || world.UncompressedBytes > long.MaxValue - FreeSpaceReserveBytes)
+                throw new InvalidDataException("Backup manifest contains invalid world file totals.");
+
+            if (manifest.Schema == LegacyBackupSchema)
+                continue;
+
+            if (world.Files is null || world.Files.Count != world.FileCount)
+                throw new InvalidDataException(
+                    $"Backup world '{world.Name}' has incomplete file integrity metadata.");
+
+            var paths = new HashSet<string>(StringComparer.Ordinal);
+            long totalBytes = 0;
+            foreach (var file in world.Files)
+            {
+                if (file is null)
+                    throw new InvalidDataException(
+                        $"Backup world '{world.Name}' contains a null file entry.");
+                ValidateBackupFilePath(file.Path);
+                if (!paths.Add(file.Path))
+                    throw new InvalidDataException(
+                        $"Backup world '{world.Name}' contains duplicate file path '{file.Path}'.");
+                if (file.Size < 0)
+                    throw new InvalidDataException(
+                        $"Backup file '{file.Path}' has an invalid size.");
+                if (!IsSha256(file.Sha256))
+                    throw new InvalidDataException(
+                        $"Backup file '{file.Path}' has an invalid SHA-256 digest.");
+                try
+                {
+                    totalBytes = checked(totalBytes + file.Size);
+                }
+                catch (OverflowException ex)
+                {
+                    throw new InvalidDataException(
+                        $"Backup world '{world.Name}' file sizes overflow the supported range.",
+                        ex);
+                }
+            }
+
+            if (totalBytes != world.UncompressedBytes)
+                throw new InvalidDataException(
+                    $"Backup world '{world.Name}' file sizes do not match its declared total.");
+        }
+    }
+
+    private static void ValidateWorldName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length > MaxBackupWorldNameLength
+            || value is "." or ".."
+            || Path.IsPathRooted(value)
+            || value.Contains('/')
+            || value.Contains('\\')
+            || value.Any(char.IsControl)
+            || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new InvalidDataException("Backup manifest contains an invalid world name.");
+    }
+
+    private static void ValidateArchivePrefix(string value)
+    {
+        if (!IsNormalizedArchiveRelativePath(value, MaxArchivePrefixLength))
+            throw new InvalidDataException("Backup manifest contains an invalid archive prefix.");
+    }
+
+    private static void ValidateBackupFilePath(string value)
+    {
+        if (!IsNormalizedArchiveRelativePath(value, MaxBackupFilePathLength))
+            throw new InvalidDataException("Backup manifest contains an invalid file path.");
+    }
+
+    private static bool IsNormalizedArchiveRelativePath(string value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)
+            || value.Length > maxLength
+            || value.StartsWith('/', StringComparison.Ordinal)
+            || value.EndsWith('/', StringComparison.Ordinal)
+            || value.Contains('\\')
+            || value.Any(char.IsControl))
+            return false;
+
+        var parts = value.Split('/');
+        return parts.Length > 0
+               && parts.All(part => part.Length > 0 && part is not "." and not "..");
+    }
+
+    private static bool IsSha256(string? value)
+        => value is { Length: 64 } && value.All(Uri.IsHexDigit);
+
+    private async Task<(long Bytes, int Files, IReadOnlyList<WorldBackupFile> Integrity)>
+        AddDirectoryToArchiveAsync(
+            ZipArchive archive,
+            string sourceRoot,
+            string archivePrefix,
+            CancellationToken cancellationToken)
     {
         long totalBytes = 0;
         var fileCount = 0;
+        var integrity = new List<WorldBackupFile>();
+
         foreach (var file in EnumerateFilesSafe(sourceRoot))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var relative = Path.GetRelativePath(sourceRoot, file).Replace(Path.DirectorySeparatorChar, '/');
-            if (relative.Contains("../", StringComparison.Ordinal) || relative.StartsWith("..", StringComparison.Ordinal))
+            var relative = Path.GetRelativePath(sourceRoot, file)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            if (!IsNormalizedArchiveRelativePath(relative, MaxBackupFilePathLength))
                 throw new InvalidDataException("A world file escaped its save directory.");
 
-            var info = new FileInfo(file);
-            totalBytes = checked(totalBytes + info.Length);
-            fileCount++;
-            var entry = archive.CreateEntry($"{archivePrefix}/{relative}", CompressionLevel.Optimal);
+            var entry = archive.CreateEntry(
+                $"{archivePrefix}/{relative}",
+                CompressionLevel.Optimal);
             await using var input = new FileStream(
                 file,
                 FileMode.Open,
@@ -378,10 +549,30 @@ public sealed class InstanceLifecycleService
                 128 * 1024,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
             await using var output = entry.Open();
-            await input.CopyToAsync(output, cancellationToken);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[128 * 1024];
+            long archivedBytes = 0;
+
+            while (true)
+            {
+                var read = await input.ReadAsync(buffer.AsMemory(), cancellationToken);
+                if (read == 0)
+                    break;
+
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                hash.AppendData(buffer, 0, read);
+                archivedBytes = checked(archivedBytes + read);
+            }
+
+            totalBytes = checked(totalBytes + archivedBytes);
+            fileCount++;
+            integrity.Add(new WorldBackupFile(
+                relative,
+                archivedBytes,
+                Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant()));
         }
 
-        return (totalBytes, fileCount);
+        return (totalBytes, fileCount, integrity);
     }
 
     private async Task CopyCloneTreeAsync(
