@@ -99,7 +99,7 @@ internal static class LaunchMetadataRegression
                     "numeric artifact path",
                     baseMetadata.Replace(
                         "\"libraries\":[]",
-                        "\"libraries\":[{\"downloads\":{\"artifact\":{\"path\":123}}}]}",
+                        "\"libraries\":[{\"downloads\":{\"artifact\":{\"path\":123}}}]",
                         StringComparison.Ordinal)
                 ),
                 (
