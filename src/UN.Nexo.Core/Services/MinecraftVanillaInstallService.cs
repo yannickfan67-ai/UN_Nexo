@@ -467,7 +467,11 @@ public sealed class MinecraftVanillaInstallService
 
             try
             {
-                using var response = await _httpClient.GetAsync(candidate, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                using var response = await TrustedHttpDownload.SendGetAsync(
+                    _httpClient,
+                    candidate,
+                    stage,
+                    cancellationToken);
                 if (!response.IsSuccessStatusCode)
                 {
                     lastException = new HttpRequestException($"HTTP {(int)response.StatusCode} from {new Uri(candidate).Host}.");
