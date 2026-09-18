@@ -105,6 +105,8 @@ internal static class MicrosoftAuthRegression
 
             Assert((await accounts.GetAllAsync()).Count == 0,
                 "Rejected Minecraft app registration must not publish an account profile.");
+            Assert(provider.SignOutCalls == 1,
+                "Rejected Minecraft app registration must roll back the cached Microsoft identity.");
         }
         finally
         {
@@ -135,6 +137,8 @@ internal static class MicrosoftAuthRegression
 
             Assert((await accounts.GetAllAsync()).Count == 0,
                 "Account without Minecraft Java entitlement must not be persisted as launchable.");
+            Assert(provider.SignOutCalls == 1,
+                "Missing Minecraft entitlement must roll back the cached Microsoft identity.");
         }
         finally
         {
