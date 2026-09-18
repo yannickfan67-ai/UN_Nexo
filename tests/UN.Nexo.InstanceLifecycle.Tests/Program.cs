@@ -37,6 +37,7 @@ internal static class Program
             await TestCloneWithoutWorldsAsync(lifecycle, paths, source);
             await TestCloneWithWorldsAsync(lifecycle, paths, source);
             var backup = await TestBackupAsync(lifecycle, source);
+            await BackupIntegrityRegression.RunAsync(lifecycle, paths, source, backup);
             await TestRestoreSafetyAsync(lifecycle, paths, source, backup);
             await TestIncompleteRestorePreservesCurrentWorldAsync(lifecycle, paths, source, backup);
             await TestCancelledCloneLeavesNoInstanceAsync(lifecycle, store, source);
