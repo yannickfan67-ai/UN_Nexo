@@ -1,5 +1,4 @@
 using System.Net;
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,11 +8,7 @@ namespace UN.Nexo.Core.Tests;
 
 internal static class ModrinthProviderRegression
 {
-    [ModuleInitializer]
-    internal static void Run()
-        => RunAsync().GetAwaiter().GetResult();
-
-    private static async Task RunAsync()
+    internal static async Task RunAsync()
     {
         var root = Path.Combine(Path.GetTempPath(), "un-nexo-modrinth-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
