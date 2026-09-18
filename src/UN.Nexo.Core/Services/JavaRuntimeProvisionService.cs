@@ -518,11 +518,11 @@ public sealed class JavaRuntimeProvisionService
         using var file = File.OpenRead(archivePath);
         using var gzip = new GZipStream(file, CompressionMode.Decompress);
         using var reader = new TarReader(gzip, leaveOpen: false);
-        TarEntry? entry;
-        while ((entry = reader.GetNextEntry()) is not null)
+        TarEntry? tarEntry;
+        while ((tarEntry = reader.GetNextEntry()) is not null)
         {
-            var target = ResolveArchiveEntry(root, entry.Name);
-            switch (entry.EntryType)
+            var target = ResolveArchiveEntry(root, tarEntry.Name);
+            switch (tarEntry.EntryType)
             {
                 case TarEntryType.Directory:
                     CreateDirectoryTreeSafe(root, target);
@@ -541,17 +541,17 @@ public sealed class JavaRuntimeProvisionService
                                FileAccess.Write,
                                FileShare.None))
                     {
-                        entry.DataStream?.CopyTo(output);
+                        tarEntry.DataStream?.CopyTo(output);
                     }
                     break;
 
                 case TarEntryType.SymbolicLink:
-                    CreateSafeTarSymlink(root, target, entry);
+                    CreateSafeTarSymlink(root, target, tarEntry);
                     break;
 
                 default:
                     throw new InvalidDataException(
-                        $"Managed Java TAR contains unsupported entry type {entry.EntryType}: {entry.Name}");
+                        $"Managed Java TAR contains unsupported entry type {tarEntry.EntryType}: {tarEntry.Name}");
             }
         }
     }
