@@ -69,7 +69,68 @@ public sealed class ServerStoreService
         var path = GetPath();
         if (!File.Exists(path)) return [];
         await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<List<ServerFavorite>>(stream, _json, cancellationToken) ?? [];
+        var items = await JsonSerializer.DeserializeAsync<List<ServerFavorite?>>(
+            stream,
+            _json,
+            cancellationToken) ?? [];
+        return ValidateFavorites(items);
+    }
+
+    private static IReadOnlyList<ServerFavorite> ValidateFavorites(
+        IReadOnlyList<ServerFavorite?> items)
+    {
+        var result = new List<ServerFavorite>(items.Count);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var index = 0; index < items.Count; index++)
+        {
+            var item = items[index]
+                ?? throw new InvalidDataException(
+                    $"Server favorite entry {index} is null.");
+
+            if (string.IsNullOrWhiteSpace(item.Id)
+                || item.Id.Length > 512
+                || item.Id.Any(char.IsControl))
+                throw new InvalidDataException(
+                    $"Server favorite entry {index} has an invalid id.");
+            if (!ids.Add(item.Id))
+                throw new InvalidDataException(
+                    $"Server favorite store contains duplicate id '{item.Id}'.");
+
+            var name = item.Name?.Trim() ?? string.Empty;
+            if (name.Length is < 1 or > 80 || name.Any(char.IsControl))
+                throw new InvalidDataException(
+                    $"Server favorite '{item.Id}' has an invalid name.");
+
+            MinecraftServerTarget target;
+            try
+            {
+                target = MinecraftServerTarget.Parse(item.Address);
+            }
+            catch (Exception ex) when (ex is ArgumentException or FormatException)
+            {
+                throw new InvalidDataException(
+                    $"Server favorite '{item.Id}' has an invalid address.",
+                    ex);
+            }
+
+            var defaultInstanceId = string.IsNullOrWhiteSpace(item.DefaultInstanceId)
+                ? null
+                : item.DefaultInstanceId.Trim();
+            if (defaultInstanceId is { Length: > 512 }
+                || defaultInstanceId?.Any(char.IsControl) == true)
+                throw new InvalidDataException(
+                    $"Server favorite '{item.Id}' has an invalid default instance id.");
+
+            result.Add(item with
+            {
+                Name = name,
+                Address = target.Authority,
+                DefaultInstanceId = defaultInstanceId
+            });
+        }
+
+        return result;
     }
 
     private async Task SaveUnlockedAsync(IReadOnlyList<ServerFavorite> items, CancellationToken cancellationToken)
