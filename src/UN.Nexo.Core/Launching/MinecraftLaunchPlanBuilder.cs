@@ -441,7 +441,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
     private static void ValidateArtifact(JsonElement artifact, string name)
     {
         RequireObject(artifact, name);
-        RequireString(artifact, "path", required: false);
+        RequireString(artifact, "path", required: true);
         if (artifact.TryGetProperty("size", out var size)
             && (size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var parsed) || parsed < 0))
             throw InvalidMetadata($"{name}.size", "a non-negative integer");
