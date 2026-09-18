@@ -177,7 +177,7 @@ internal static class BackupIntegrityRegression
         await CreateManifestOnlyArchiveAsync(nearLimitPath, nearLimitJson);
 
         var oversizedPath = Path.Combine(backupRoot, "oversized-manifest.zip");
-        var oversizedPadding = paddingLength + 2;
+        var oversizedPadding = paddingLength + 3;
         var oversizedJson = validPrefix.Replace(
                 "\"id\":\"" + nearId + "\"",
                 "\"id\":\"oversized\"",
