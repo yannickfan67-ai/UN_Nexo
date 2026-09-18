@@ -7,7 +7,8 @@ public sealed record ImportVersionCandidate(
     string MetadataPath,
     bool HasClientJar,
     bool IsSupportedLoader,
-    string Detail)
+    string Detail,
+    string? LoaderVersion = null)
 {
     public string DisplayName => Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
         ? VersionId
