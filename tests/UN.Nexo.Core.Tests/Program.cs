@@ -690,7 +690,8 @@ internal static class Program
         try
         {
             var paths = new NexoPathService(root);
-            var gameRoot = paths.GetInstanceGameDirectory("server-test");
+            var instanceId = Guid.NewGuid().ToString("N");
+            var gameRoot = paths.GetInstanceGameDirectory(instanceId);
             var versionsRoot = Path.Combine(gameRoot, "versions");
             Directory.CreateDirectory(versionsRoot);
 
@@ -735,7 +736,7 @@ internal static class Program
                 [],
                 Path.Combine(gameRoot, "logs", "server-test.log"));
             var quickInstance = new GameInstance(
-                    Guid.NewGuid().ToString("N"),
+                instanceId,
                 "Inherited Quick Play",
                 "quick-child",
                 "fabric",
