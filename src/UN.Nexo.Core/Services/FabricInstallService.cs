@@ -339,9 +339,10 @@ public sealed class FabricInstallService(
         TryDeleteFile(temp);
         try
         {
-            using var response = await httpClient.GetAsync(
+            using var response = await TrustedHttpDownload.SendGetAsync(
+                httpClient,
                 library.Url,
-                HttpCompletionOption.ResponseHeadersRead,
+                "Fabric library",
                 cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -378,9 +379,10 @@ public sealed class FabricInstallService(
         string url,
         CancellationToken cancellationToken)
     {
-        using var response = await httpClient.GetAsync(
+        using var response = await TrustedHttpDownload.SendGetAsync(
+            httpClient,
             url,
-            HttpCompletionOption.ResponseHeadersRead,
+            "Fabric library checksum",
             cancellationToken);
         response.EnsureSuccessStatusCode();
 
