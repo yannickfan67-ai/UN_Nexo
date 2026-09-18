@@ -2,8 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="UN.Nexo.Desktop.Views.ModManagerWindow"
         Title="Nexo Mods"
-        Width="880" Height="650"
-        MinWidth="720" MinHeight="520"
+        Width="940" Height="700"
+        MinWidth="760" MinHeight="560"
         WindowStartupLocation="CenterOwner"
         Background="#0B0F14">
   <Window.Styles>
@@ -29,7 +29,7 @@
   <Grid Margin="24" RowDefinitions="Auto,16,Auto,16,*,16,Auto">
     <StackPanel>
       <TextBlock Text="Instance mods" FontSize="30" FontWeight="SemiBold" />
-      <TextBlock Text="Install local Fabric mod JARs into the selected Nexo instance. Each instance keeps its own isolated game/mods directory." Classes="muted" Margin="0,5,0,0" TextWrapping="Wrap" />
+      <TextBlock Text="Manage local JARs or browse compatible public Modrinth projects for the selected instance." Classes="muted" Margin="0,5,0,0" TextWrapping="Wrap" />
     </StackPanel>
 
     <Border Grid.Row="2" Classes="card">
@@ -46,46 +46,124 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <TextBlock x:Name="InstanceDetail" Text="Choose a Fabric instance." Classes="muted" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap" />
+          <TextBlock x:Name="InstanceDetail" Text="Choose an instance." Classes="muted" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap" />
         </StackPanel>
         <Button Grid.Column="1" Content="Refresh" Click="OnRefreshClicked" Padding="14,9" VerticalAlignment="Bottom" />
       </Grid>
     </Border>
 
-    <Border Grid.Row="4" Classes="card">
-      <Grid RowDefinitions="Auto,12,*,12,Auto">
-        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-          <StackPanel>
-            <TextBlock Text="Installed mods" FontSize="20" FontWeight="SemiBold" />
-            <TextBlock x:Name="ModsDirectoryLabel" Text="No instance selected." Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
-          </StackPanel>
-          <Button Grid.Column="1" x:Name="InstallButton" Classes="primary" Content="Install JAR…" Click="OnInstallClicked" IsEnabled="False" />
-        </Grid>
+    <TabControl Grid.Row="4" Background="Transparent">
+      <TabItem Header="Installed">
+        <Border Classes="card" Margin="0,10,0,0">
+          <Grid RowDefinitions="Auto,12,*,12,Auto">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <StackPanel>
+                <TextBlock Text="Installed mods" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock x:Name="ModsDirectoryLabel" Text="No instance selected." Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+              <Button Grid.Column="1" x:Name="InstallButton" Classes="primary" Content="Install JAR…" Click="OnInstallClicked" IsEnabled="False" />
+            </Grid>
 
-        <ListBox Grid.Row="2" x:Name="ModsList" SelectionChanged="OnModSelectionChanged" Background="Transparent" BorderThickness="0">
-          <ListBox.ItemTemplate>
-            <DataTemplate>
-              <Grid Margin="7,7" ColumnDefinitions="*,Auto" ColumnSpacing="16">
-                <StackPanel>
-                  <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                  <TextBlock Text="{Binding FileName}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                  <TextBlock Text="{Binding StatusLabel}" FontWeight="SemiBold" HorizontalAlignment="Right" />
-                  <TextBlock Text="{Binding SizeLabel}" Classes="muted" FontSize="11" HorizontalAlignment="Right" />
-                </StackPanel>
+            <ListBox Grid.Row="2" x:Name="ModsList" SelectionChanged="OnModSelectionChanged" Background="Transparent" BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="7,7" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                    <StackPanel>
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding FileName}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                      <TextBlock Text="{Binding StatusLabel}" FontWeight="SemiBold" HorizontalAlignment="Right" />
+                      <TextBlock Text="{Binding SizeLabel}" Classes="muted" FontSize="11" HorizontalAlignment="Right" />
+                    </StackPanel>
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="9">
+              <Button x:Name="ToggleButton" Content="Disable selected" Click="OnToggleClicked" IsEnabled="False" Padding="14,9" />
+              <Button Grid.Column="1" x:Name="RemoveButton" Content="Remove selected" Click="OnRemoveClicked" IsEnabled="False" Padding="14,9" />
+              <TextBlock Grid.Column="2" x:Name="CountLabel" Text="0 mods" Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Right" />
+            </Grid>
+          </Grid>
+        </Border>
+      </TabItem>
+
+      <TabItem Header="Modrinth">
+        <Border Classes="card" Margin="0,10,0,0">
+          <Grid RowDefinitions="Auto,12,*,12,Auto">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+              <TextBox x:Name="ModrinthSearchBox"
+                       Watermark="Search Modrinth (for example: Sodium)"
+                       MinHeight="40" />
+              <Button Grid.Column="1"
+                      x:Name="ModrinthSearchButton"
+                      Classes="primary"
+                      Content="Search"
+                      Click="OnModrinthSearchClicked"
+                      IsEnabled="False" />
+            </Grid>
+
+            <ListBox Grid.Row="2"
+                     x:Name="ModrinthResultsList"
+                     SelectionChanged="OnModrinthSelectionChanged"
+                     Background="Transparent"
+                     BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid Margin="7,8" ColumnDefinitions="*,Auto" ColumnSpacing="18">
+                    <StackPanel>
+                      <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                        <TextBlock Text="{Binding SourceLabel}" Classes="muted" FontSize="10" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1" Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      </Grid>
+                      <TextBlock Text="{Binding Subtitle}" Classes="muted" FontSize="11" Margin="0,2,0,0" />
+                      <TextBlock Text="{Binding Description}" Classes="muted" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" MaxHeight="42" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding InstallState}" VerticalAlignment="Center" Classes="muted" FontSize="11" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Grid Grid.Row="4" RowDefinitions="Auto,8,Auto">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock x:Name="SelectedModrinthDetail"
+                           Text="Search Modrinth to find mods compatible with this instance."
+                           Classes="muted"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           x:Name="ModrinthResultCount"
+                           Text="0 results"
+                           Classes="muted"
+                           VerticalAlignment="Center" />
               </Grid>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-
-        <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="9">
-          <Button x:Name="ToggleButton" Content="Disable selected" Click="OnToggleClicked" IsEnabled="False" Padding="14,9" />
-          <Button Grid.Column="1" x:Name="RemoveButton" Content="Remove selected" Click="OnRemoveClicked" IsEnabled="False" Padding="14,9" />
-          <TextBlock Grid.Column="2" x:Name="CountLabel" Text="0 mods" Classes="muted" VerticalAlignment="Center" HorizontalAlignment="Right" />
-        </Grid>
-      </Grid>
-    </Border>
+              <Grid Grid.Row="2" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="9">
+                <Button x:Name="ModrinthInstallButton"
+                        Classes="primary"
+                        Content="Install selected"
+                        Click="OnModrinthInstallClicked"
+                        IsEnabled="False" />
+                <Button Grid.Column="1"
+                        x:Name="OpenProjectButton"
+                        Content="Open project page"
+                        Click="OnOpenProjectClicked"
+                        IsEnabled="False"
+                        Padding="14,9" />
+                <TextBlock Grid.Column="2"
+                           Text="Public Modrinth API · no private API key"
+                           Classes="muted"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Right" />
+              </Grid>
+            </Grid>
+          </Grid>
+        </Border>
+      </TabItem>
+    </TabControl>
 
     <Border Grid.Row="6" Background="#101720" CornerRadius="10" Padding="12">
       <TextBlock x:Name="OperationStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
