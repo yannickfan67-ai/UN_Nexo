@@ -183,20 +183,32 @@ public sealed class MinecraftVanillaInstallService
     {
         await using var stream = File.OpenRead(indexPath);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        if (!document.RootElement.TryGetProperty("objects", out var objects))
-            return;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("objects", out var objects)
+            || objects.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Asset index must contain an 'objects' object.");
 
         var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var property in objects.EnumerateObject())
         {
-            if (property.Value.TryGetProperty("hash", out var hashElement))
-            {
-                var hash = hashElement.GetString();
-                if (!string.IsNullOrWhiteSpace(hash))
-                    hashes.Add(hash);
-            }
+            if (property.Value.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException(
+                    $"Asset index entry '{property.Name}' must be an object.");
+            if (!property.Value.TryGetProperty("hash", out var hashElement)
+                || hashElement.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException(
+                    $"Asset index entry '{property.Name}' must contain a string 'hash'.");
+
+            var hash = hashElement.GetString();
+            if (!IsSha1(hash))
+                throw new InvalidDataException(
+                    $"Asset index entry '{property.Name}' contains an invalid SHA-1 hash.");
+
+            hashes.Add(hash!.ToLowerInvariant());
         }
 
+        var objectsRoot = Path.Combine(assetsRoot, "objects");
         var assetHashes = hashes.ToArray();
         var completed = 0;
         Report(progress, new InstallProgress("Assets", 0, assetHashes.Length));
@@ -207,7 +219,7 @@ public sealed class MinecraftVanillaInstallService
             async (hash, token) =>
             {
                 var prefix = hash[..2];
-                var target = Path.Combine(assetsRoot, "objects", prefix, hash);
+                var target = ResolveAssetObjectPath(objectsRoot, hash);
                 var url = $"https://resources.download.minecraft.net/{prefix}/{hash}";
                 var before = Volatile.Read(ref completed);
                 await DownloadFileAsync(url, target, hash, "Assets", before, assetHashes.Length, progress, token);
@@ -215,6 +227,30 @@ public sealed class MinecraftVanillaInstallService
                 Report(progress, new InstallProgress("Assets", value, assetHashes.Length, hash));
             });
     }
+
+    private static string ResolveAssetObjectPath(string objectsRoot, string hash)
+    {
+        if (!IsSha1(hash))
+            throw new InvalidDataException("Asset object hash must be a 40-character hexadecimal SHA-1.");
+
+        var canonicalHash = hash.ToLowerInvariant();
+        var root = Path.GetFullPath(objectsRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var target = Path.GetFullPath(
+            Path.Combine(root, canonicalHash[..2], canonicalHash));
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var rootPrefix = root + Path.DirectorySeparatorChar;
+
+        if (!target.StartsWith(rootPrefix, comparison))
+            throw new InvalidDataException("Asset object path escapes assets/objects.");
+
+        return target;
+    }
+
+    private static bool IsSha1(string? value)
+        => value is { Length: 40 } && value.All(Uri.IsHexDigit);
 
     private List<DownloadJob> CollectLibraryDownloads(JsonElement root, string librariesRoot, string nativesRoot)
     {
