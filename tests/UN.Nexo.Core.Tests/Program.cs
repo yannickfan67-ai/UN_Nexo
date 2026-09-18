@@ -21,6 +21,7 @@ internal static class Program
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
+            ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
@@ -375,6 +376,148 @@ internal static class Program
         }
     }
 
+    private static async Task TestAssetIndexSchemaAndHashValidationAsync()
+    {
+        async Task RunInvalidAsync(string indexBody, string label)
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-asset-index-validation-tests",
+                Guid.NewGuid().ToString("N"));
+            try
+            {
+                var paths = new NexoPathService(root);
+                var handler = new AssetIndexContentHandler(indexBody, Encoding.UTF8.GetBytes("unused"));
+                using var client = new HttpClient(handler);
+                var installer = new MinecraftVanillaInstallService(
+                    client,
+                    paths,
+                    new DownloadSourceService(),
+                    TimeSpan.FromSeconds(2));
+                var instance = new GameInstance(
+                    "asset-index-validation",
+                    "Asset index validation",
+                    "asset-index-validation",
+                    "vanilla",
+                    DateTimeOffset.UtcNow);
+                var version = new MinecraftVersionInfo(
+                    "asset-index-validation",
+                    "release",
+                    "https://metadata.example.test/version.json",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    string.Empty,
+                    0);
+
+                try
+                {
+                    await installer.InstallAsync(instance, version);
+                    throw new Exception($"Invalid asset index fixture '{label}' should be rejected.");
+                }
+                catch (InvalidDataException)
+                {
+                }
+
+                Equal(0, handler.ResourceRequests,
+                    $"invalid asset index '{label}' must be rejected before resource downloads");
+                Equal(false,
+                    File.Exists(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json")),
+                    $"invalid asset index '{label}' must not publish prepared state");
+            }
+            finally
+            {
+                try { Directory.Delete(root, recursive: true); } catch { }
+            }
+        }
+
+        foreach (var fixture in new (string Label, string Body)[]
+        {
+            ("missing objects", "{}"),
+            ("null objects", "{\"objects\":null}"),
+            ("array objects", "{\"objects\":[]}"),
+            ("numeric asset entry", "{\"objects\":{\"x\":123}}"),
+            ("null hash", "{\"objects\":{\"x\":{\"hash\":null}}}"),
+            ("numeric hash", "{\"objects\":{\"x\":{\"hash\":123}}}")
+        })
+            await RunInvalidAsync(fixture.Body, fixture.Label);
+
+        foreach (var hash in new[]
+        {
+            string.Empty,
+            "a",
+            new string('a', 39),
+            new string('a', 41),
+            new string('g', 40),
+            "../" + new string('a', 37),
+            @"aa\..\..\escape"
+        })
+        {
+            var encodedHash = System.Text.Json.JsonSerializer.Serialize(hash);
+            await RunInvalidAsync(
+                "{\"objects\":{\"x\":{\"hash\":" + encodedHash + "}}}",
+                "hash " + encodedHash);
+        }
+
+        var assetBytes = Encoding.UTF8.GetBytes("valid asset payload");
+        var lowerHash = Convert.ToHexString(SHA1.HashData(assetBytes)).ToLowerInvariant();
+        foreach (var hash in new[] { lowerHash, lowerHash.ToUpperInvariant() })
+        {
+            var root = Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-asset-index-validation-tests",
+                Guid.NewGuid().ToString("N"));
+            try
+            {
+                var paths = new NexoPathService(root);
+                var indexBody =
+                    "{\"objects\":{\"minecraft/test.txt\":{\"hash\":\""
+                    + hash
+                    + "\"}}}";
+                var handler = new AssetIndexContentHandler(indexBody, assetBytes);
+                using var client = new HttpClient(handler);
+                var installer = new MinecraftVanillaInstallService(
+                    client,
+                    paths,
+                    new DownloadSourceService(),
+                    TimeSpan.FromSeconds(2));
+                var instance = new GameInstance(
+                    "asset-index-valid",
+                    "Asset index valid",
+                    "asset-index-valid",
+                    "vanilla",
+                    DateTimeOffset.UtcNow);
+                var version = new MinecraftVersionInfo(
+                    "asset-index-valid",
+                    "release",
+                    "https://metadata.example.test/version.json",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    string.Empty,
+                    0);
+
+                await installer.InstallAsync(instance, version);
+
+                Equal(1, handler.ResourceRequests,
+                    "valid asset hash should download exactly one resource");
+                var expected = Path.Combine(
+                    paths.GetInstanceGameDirectory(instance.Id),
+                    "assets",
+                    "objects",
+                    lowerHash[..2],
+                    lowerHash);
+                Equal(true, File.Exists(expected),
+                    "valid asset hash should be canonicalized under assets/objects");
+                Equal(true,
+                    File.Exists(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json")),
+                    "valid asset index should publish prepared state");
+            }
+            finally
+            {
+                try { Directory.Delete(root, recursive: true); } catch { }
+            }
+        }
+    }
+
     private static async Task TestManifestStreamingFallbackAsync()
     {
         var sources = new DownloadSourceService();
@@ -662,6 +805,46 @@ internal static class Program
         }
 
         throw new InvalidOperationException($"{message}: expected {typeof(TException).Name}.");
+    }
+
+    private sealed class AssetIndexContentHandler(string indexBody, byte[] assetBytes) : HttpMessageHandler
+    {
+        public int ResourceRequests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
+            if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+            {
+                const string metadata =
+                    "{\"id\":\"asset-index-validation\",\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://assets.example.test/index.json\"},\"libraries\":[]}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+                });
+            }
+
+            if (uri.Host.Equals("assets.example.test", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(indexBody, Encoding.UTF8, "application/json")
+                });
+            }
+
+            if (uri.Host.Equals("resources.download.minecraft.net", StringComparison.OrdinalIgnoreCase))
+            {
+                ResourceRequests++;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(assetBytes)
+                });
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
     }
 
     private sealed class AssetIndexIdHandler(string assetId) : HttpMessageHandler
