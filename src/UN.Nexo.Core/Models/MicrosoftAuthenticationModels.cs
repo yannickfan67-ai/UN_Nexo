@@ -17,6 +17,14 @@ public sealed record MicrosoftMinecraftSession(
     LauncherAccount Account,
     MinecraftLaunchCredentials Credentials);
 
-public sealed class MicrosoftAuthenticationRequiredException(string message) : InvalidOperationException(message);
+public sealed class MicrosoftAuthenticationRequiredException : InvalidOperationException
+{
+    public MicrosoftAuthenticationRequiredException(string message) : base(message) { }
+    public MicrosoftAuthenticationRequiredException(string message, Exception innerException)
+        : base(message, innerException) { }
+}
 
-public sealed class MinecraftApplicationNotAuthorizedException(string message) : InvalidOperationException(message);
+public sealed class MinecraftApplicationNotAuthorizedException : InvalidOperationException
+{
+    public MinecraftApplicationNotAuthorizedException(string message) : base(message) { }
+}
