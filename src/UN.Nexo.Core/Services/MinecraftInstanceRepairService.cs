@@ -15,6 +15,7 @@ public sealed class MinecraftInstanceRepairService
     private readonly JavaDiscoveryService _javaDiscovery;
     private readonly MinecraftRuntimeInspector _runtimeInspector;
     private readonly JavaRuntimeProvisionService _runtimeProvisioner;
+    private readonly FabricInstallService? _fabricInstaller;
 
     public MinecraftInstanceRepairService(
         NexoPathService paths,
@@ -22,7 +23,8 @@ public sealed class MinecraftInstanceRepairService
         MinecraftVersionManifestService manifest,
         JavaDiscoveryService javaDiscovery,
         MinecraftRuntimeInspector runtimeInspector,
-        JavaRuntimeProvisionService runtimeProvisioner)
+        JavaRuntimeProvisionService runtimeProvisioner,
+        FabricInstallService? fabricInstaller = null)
     {
         _paths = paths;
         _installer = installer;
@@ -30,6 +32,7 @@ public sealed class MinecraftInstanceRepairService
         _javaDiscovery = javaDiscovery;
         _runtimeInspector = runtimeInspector;
         _runtimeProvisioner = runtimeProvisioner;
+        _fabricInstaller = fabricInstaller;
     }
 
     public async Task<InstanceHealthReport> CheckAsync(
@@ -91,8 +94,8 @@ public sealed class MinecraftInstanceRepairService
 
         using (versionDocument)
         {
-            var root = versionDocument.RootElement;
-            if (!TryValidateVersionMetadata(root, out var metadataError))
+            var rawRoot = versionDocument.RootElement;
+            if (!TryValidateVersionMetadata(rawRoot, out var metadataError))
             {
                 issues.Add(new InstanceHealthIssue(
                     "version-metadata-invalid",
@@ -103,9 +106,52 @@ public sealed class MinecraftInstanceRepairService
                     "Run Repair to replace the invalid version metadata."));
                 return BuildReport(instance, issues, null);
             }
+        }
+
+        ResolvedMinecraftVersion resolved;
+        try
+        {
+            resolved = await new MinecraftVersionMetadataResolver()
+                .ResolveAsync(gameRoot, instance.VersionId, cancellationToken);
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or JsonException
+            or IOException
+            or InvalidOperationException)
+        {
+            issues.Add(new InstanceHealthIssue(
+                "version-metadata-inheritance-invalid",
+                "Version metadata",
+                InstanceHealthLevel.Error,
+                $"Version inheritance cannot be resolved: {ex.Message}",
+                versionJsonPath,
+                "Run Repair to restore the loader/base version metadata."));
+            return BuildReport(instance, issues, null);
+        }
+
+        using (resolved)
+        {
+            var root = resolved.Document.RootElement;
+            if (!TryValidateVersionMetadata(root, out var resolvedError))
+            {
+                issues.Add(new InstanceHealthIssue(
+                    "version-metadata-inheritance-invalid",
+                    "Version metadata",
+                    InstanceHealthLevel.Error,
+                    $"Resolved version metadata is structurally invalid: {resolvedError}",
+                    versionJsonPath,
+                    "Run Repair to restore the loader/base version metadata."));
+                return BuildReport(instance, issues, null);
+            }
 
             progress?.Report("Checking Minecraft client…");
-            await CheckClientAsync(instance, root, versionRoot, issues, cancellationToken);
+            await CheckClientAsync(
+                resolved.ClientVersionId,
+                root,
+                gameRoot,
+                issues,
+                cancellationToken);
 
             progress?.Report("Checking libraries and natives…");
             var nativeArchives = await CheckLibrariesAsync(root, gameRoot, issues, cancellationToken);
@@ -125,15 +171,52 @@ public sealed class MinecraftInstanceRepairService
         IProgress<string>? statusProgress = null,
         CancellationToken cancellationToken = default)
     {
-        statusProgress?.Report($"Finding Minecraft {instance.VersionId} metadata…");
+        statusProgress?.Report("Finding Minecraft metadata…");
         var catalog = await _manifest.GetCatalogAsync(cancellationToken);
-        var version = catalog.Versions.FirstOrDefault(item =>
-            string.Equals(item.Id, instance.VersionId, StringComparison.Ordinal));
-        if (version is null)
-            throw new InvalidOperationException($"Minecraft {instance.VersionId} is not present in the official version catalog.");
 
-        statusProgress?.Report("Repairing game files…");
-        await _installer.InstallAsync(instance, version, installProgress, cancellationToken);
+        if (instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase))
+        {
+            var version = catalog.Versions.FirstOrDefault(item =>
+                string.Equals(item.Id, instance.VersionId, StringComparison.Ordinal));
+            if (version is null)
+                throw new InvalidOperationException(
+                    $"Minecraft {instance.VersionId} is not present in the official version catalog.");
+
+            statusProgress?.Report("Repairing Vanilla game files…");
+            await _installer.InstallAsync(instance, version, installProgress, cancellationToken);
+        }
+        else if (instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_fabricInstaller is null)
+                throw new InvalidOperationException(
+                    "Fabric repair support is not configured for this launcher session.");
+
+            var baseVersionId = !string.IsNullOrWhiteSpace(instance.BaseVersionId)
+                ? instance.BaseVersionId
+                : await _fabricInstaller.GetBaseVersionIdAsync(instance, cancellationToken);
+            if (string.IsNullOrWhiteSpace(baseVersionId))
+                throw new InvalidDataException(
+                    "Fabric instance does not declare a base Minecraft version.");
+
+            var baseVersion = catalog.Versions.FirstOrDefault(item =>
+                string.Equals(item.Id, baseVersionId, StringComparison.Ordinal));
+            if (baseVersion is null)
+                throw new InvalidOperationException(
+                    $"Minecraft {baseVersionId} is not present in the official version catalog.");
+
+            statusProgress?.Report(
+                $"Repairing Fabric profile and Minecraft {baseVersionId} base files…");
+            await _fabricInstaller.PrepareAsync(
+                instance,
+                baseVersion,
+                installProgress,
+                cancellationToken);
+        }
+        else
+        {
+            throw new NotSupportedException(
+                $"Repair is not implemented for loader '{instance.Loader}'.");
+        }
 
         statusProgress?.Report("Rebuilding legacy/virtual asset views…");
         await RebuildMappedAssetsAsync(instance, cancellationToken);
@@ -155,9 +238,9 @@ public sealed class MinecraftInstanceRepairService
     }
 
     private async Task CheckClientAsync(
-        GameInstance instance,
+        string clientVersionId,
         JsonElement root,
-        string versionRoot,
+        string gameRoot,
         ICollection<InstanceHealthIssue> issues,
         CancellationToken cancellationToken)
     {
@@ -165,7 +248,11 @@ public sealed class MinecraftInstanceRepairService
             || !downloads.TryGetProperty("client", out var client))
             return;
 
-        var jarPath = Path.Combine(versionRoot, $"{instance.VersionId}.jar");
+        var jarPath = Path.Combine(
+            gameRoot,
+            "versions",
+            clientVersionId,
+            clientVersionId + ".jar");
         var sha1 = client.TryGetProperty("sha1", out var shaElement) ? shaElement.GetString() : null;
         var result = await InspectFileAsync(jarPath, sha1, cancellationToken);
         if (result == FileHealth.Healthy)
@@ -512,12 +599,9 @@ public sealed class MinecraftInstanceRepairService
     private async Task RebuildMappedAssetsAsync(GameInstance instance, CancellationToken cancellationToken)
     {
         var gameRoot = _paths.GetInstanceGameDirectory(instance.Id);
-        var versionPath = Path.Combine(gameRoot, "versions", instance.VersionId, instance.VersionId + ".json");
-        if (!File.Exists(versionPath))
-            return;
-
-        using var version = await ReadJsonAsync(versionPath, cancellationToken);
-        var root = version.RootElement;
+        using var resolved = await new MinecraftVersionMetadataResolver()
+            .ResolveAsync(gameRoot, instance.VersionId, cancellationToken);
+        var root = resolved.Document.RootElement;
         if (!root.TryGetProperty("assetIndex", out var assetIndex))
             return;
 
