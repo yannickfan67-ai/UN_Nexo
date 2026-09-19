@@ -86,75 +86,106 @@ public sealed class DiagnosticBundleService
             ?? throw new InvalidOperationException("The diagnostic archive path has no parent directory.");
         Directory.CreateDirectory(directory);
 
-        var temporaryPath = fullArchivePath + ".partial";
+        using var publishLease = await PathKeyedLock.AcquireAsync(
+            fullArchivePath,
+            cancellationToken);
+        var temporaryPath =
+            fullArchivePath + "." + Guid.NewGuid().ToString("N") + ".partial";
         try
         {
-            if (File.Exists(temporaryPath))
-                File.Delete(temporaryPath);
-
             await using (var stream = new FileStream(
                              temporaryPath,
                              FileMode.CreateNew,
                              FileAccess.ReadWrite,
                              FileShare.None,
                              64 * 1024,
-                             useAsync: true))
-            using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+                             FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                await WriteTextEntryAsync(
-                    archive,
-                    "diagnosis.txt",
-                    _diagnosis.Sanitize(_diagnosis.BuildSummary(sanitizedDiagnosis), secretValues),
-                    cancellationToken);
-
-                var manifest = new StringBuilder()
-                    .AppendLine("UN_Nexo sanitized diagnostic package")
-                    .AppendLine($"Created: {createdAt:O}")
-                    .AppendLine($"Exit code: {(exitCode?.ToString() ?? "unknown")}")
-                    .AppendLine($"Diagnosis code: {sanitizedDiagnosis.Code}")
-                    .AppendLine($"Included log count: {logs.Count}")
-                    .AppendLine()
-                    .AppendLine("Source logs (paths sanitized):");
-                foreach (var path in logs)
-                    manifest.AppendLine("- " + _diagnosis.Sanitize(path, secretValues));
-                manifest.AppendLine()
-                    .AppendLine("Access tokens, explicit secrets, and the current user home path are redacted before files are written to this archive.");
-
-                await WriteTextEntryAsync(archive, "manifest.txt", manifest.ToString(), cancellationToken);
-
-                for (var index = 0; index < logs.Count; index++)
+                using (var archive = new ZipArchive(
+                           stream,
+                           ZipArchiveMode.Create,
+                           leaveOpen: true))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var path = logs[index];
-                    string text;
-                    try
-                    {
-                        text = await _diagnosis.ReadLogTailAsync(path, ExportTailBytes, cancellationToken);
-                    }
-                    catch (IOException ex)
-                    {
-                        text = $"<could not read log: {ex.Message}>";
-                    }
-                    catch (UnauthorizedAccessException ex)
-                    {
-                        text = $"<could not read log: {ex.Message}>";
-                    }
+                    await WriteTextEntryAsync(
+                        archive,
+                        "diagnosis.txt",
+                        _diagnosis.Sanitize(
+                            _diagnosis.BuildSummary(sanitizedDiagnosis),
+                            secretValues),
+                        cancellationToken);
 
-                    text = _diagnosis.Sanitize(text, secretValues);
-                    var entryName = $"logs/{index + 1:D2}-{SafeEntryName(Path.GetFileName(path))}";
-                    await WriteTextEntryAsync(archive, entryName, text, cancellationToken);
+                    var manifest = new StringBuilder()
+                        .AppendLine("UN_Nexo sanitized diagnostic package")
+                        .AppendLine($"Created: {createdAt:O}")
+                        .AppendLine($"Exit code: {(exitCode?.ToString() ?? "unknown")}")
+                        .AppendLine($"Diagnosis code: {sanitizedDiagnosis.Code}")
+                        .AppendLine($"Included log count: {logs.Count}")
+                        .AppendLine()
+                        .AppendLine("Source logs (paths sanitized):");
+                    foreach (var path in logs)
+                        manifest.AppendLine("- " + _diagnosis.Sanitize(path, secretValues));
+                    manifest.AppendLine()
+                        .AppendLine("Access tokens, explicit secrets, and the current user home path are redacted before files are written to this archive.");
+
+                    await WriteTextEntryAsync(
+                        archive,
+                        "manifest.txt",
+                        manifest.ToString(),
+                        cancellationToken);
+
+                    for (var index = 0; index < logs.Count; index++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var path = logs[index];
+                        string text;
+                        try
+                        {
+                            text = await _diagnosis.ReadLogTailAsync(
+                                path,
+                                ExportTailBytes,
+                                cancellationToken);
+                        }
+                        catch (IOException ex)
+                        {
+                            text = $"<could not read log: {ex.Message}>";
+                        }
+                        catch (UnauthorizedAccessException ex)
+                        {
+                            text = $"<could not read log: {ex.Message}>";
+                        }
+
+                        text = _diagnosis.Sanitize(text, secretValues);
+                        var entryName =
+                            $"logs/{index + 1:D2}-{SafeEntryName(Path.GetFileName(path))}";
+                        await WriteTextEntryAsync(
+                            archive,
+                            entryName,
+                            text,
+                            cancellationToken);
+                    }
                 }
+
+                await stream.FlushAsync(cancellationToken);
             }
 
-            if (File.Exists(fullArchivePath))
-                File.Delete(fullArchivePath);
-            File.Move(temporaryPath, fullArchivePath);
-            return new DiagnosticExportResult(fullArchivePath, logs.Count, createdAt);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, fullArchivePath, overwrite: true);
+            return new DiagnosticExportResult(
+                fullArchivePath,
+                logs.Count,
+                createdAt);
         }
-        catch
+        finally
         {
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { }
-            throw;
+            try
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
+            catch
+            {
+                // Best-effort cleanup; never delete the existing destination.
+            }
         }
     }
 
