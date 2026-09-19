@@ -27,7 +27,7 @@ public enum ModProviderDependencyType
 }
 
 public sealed record ModProviderDependency(
-    string ProjectId,
+    string? ProjectId,
     string? VersionId,
     ModProviderDependencyType Type);
 
