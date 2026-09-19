@@ -9,7 +9,7 @@ public interface IModDependencyProvider : IModProvider
         CancellationToken cancellationToken = default);
 
     Task<ModProviderVersion?> GetCompatibleVersionAsync(
-        string projectId,
+        string? projectId,
         string? versionId,
         string minecraftVersion,
         string loader,
