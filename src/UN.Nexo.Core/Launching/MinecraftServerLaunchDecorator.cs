@@ -7,6 +7,11 @@ namespace UN.Nexo.Core.Launching;
 
 public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
 {
+    private static readonly IReadOnlyDictionary<string, bool> QuickPlayMultiplayerFeatures =
+        new Dictionary<string, bool>(StringComparer.Ordinal)
+        {
+            ["is_quick_play_multiplayer"] = true
+        };
     public async Task<MinecraftLaunchPlan> ApplyAsync(
         MinecraftLaunchPlan plan,
         GameInstance instance,
@@ -52,39 +57,50 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
         {
             if (item.ValueKind == JsonValueKind.String)
             {
-                if (item.GetString()?.Contains("quickPlayMultiplayer", StringComparison.Ordinal) == true)
+                if (ContainsQuickPlayArgument(item.GetString()))
                     return true;
                 continue;
             }
 
             if (item.ValueKind != JsonValueKind.Object)
                 throw InvalidMetadata("arguments.game[]", "a string or object");
-            if (!item.TryGetProperty("rules", out var rules))
+            if (!MinecraftRules.Allows(item, QuickPlayMultiplayerFeatures))
                 continue;
-            if (rules.ValueKind != JsonValueKind.Array)
-                throw InvalidMetadata("arguments.game[].rules", "an array");
+            if (!item.TryGetProperty("value", out var value))
+                throw InvalidMetadata(
+                    "arguments.game[].value",
+                    "a string or array of strings");
 
-            foreach (var rule in rules.EnumerateArray())
+            if (value.ValueKind == JsonValueKind.String)
             {
-                if (rule.ValueKind != JsonValueKind.Object)
-                    throw InvalidMetadata("arguments.game[].rules[]", "an object");
-                if (!rule.TryGetProperty("features", out var features))
-                    continue;
-                if (features.ValueKind != JsonValueKind.Object)
-                    throw InvalidMetadata("arguments.game[].rules[].features", "an object");
-                if (!features.TryGetProperty("is_quick_play_multiplayer", out var enabled))
-                    continue;
-                if (enabled.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                if (ContainsQuickPlayArgument(value.GetString()))
+                    return true;
+                continue;
+            }
+
+            if (value.ValueKind != JsonValueKind.Array)
+                throw InvalidMetadata(
+                    "arguments.game[].value",
+                    "a string or array of strings");
+
+            foreach (var part in value.EnumerateArray())
+            {
+                if (part.ValueKind != JsonValueKind.String)
                     throw InvalidMetadata(
-                        "arguments.game[].rules[].features.is_quick_play_multiplayer",
-                        "a boolean");
-                if (enabled.ValueKind == JsonValueKind.True)
+                        "arguments.game[].value[]",
+                        "a string");
+                if (ContainsQuickPlayArgument(part.GetString()))
                     return true;
             }
         }
 
         return false;
     }
+
+    private static bool ContainsQuickPlayArgument(string? value)
+        => value?.Contains(
+            "quickPlayMultiplayer",
+            StringComparison.Ordinal) == true;
 
     private static InvalidDataException InvalidMetadata(string propertyName, string expected)
         => new($"Minecraft version metadata property '{propertyName}' must be {expected}.");
