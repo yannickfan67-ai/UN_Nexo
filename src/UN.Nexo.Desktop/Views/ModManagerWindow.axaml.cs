@@ -99,9 +99,11 @@ public sealed partial class ModManagerWindow : Window
             return;
         }
 
-        var isFabric = string.Equals(instance.Loader, "fabric", StringComparison.OrdinalIgnoreCase);
+        var supportsLocalMods = SupportsProvider(instance.Loader);
         InstanceDetail.Text = $"{instance.Name} · {instance.MinecraftVersionId} · {instance.Loader}" +
-            (isFabric ? string.Empty : " · Local JAR installation remains limited to Fabric; provider browsing follows the instance loader.");
+            (supportsLocalMods
+                ? string.Empty
+                : " · Local JAR installation is available only for supported modded loaders; provider browsing follows the instance loader.");
         ModsDirectoryLabel.Text = _mods.GetModsDirectory(instance.Id);
 
         try
@@ -109,7 +111,10 @@ public sealed partial class ModManagerWindow : Window
             var mods = _mods.List(instance.Id);
             ModsList.ItemsSource = mods;
             CountLabel.Text = $"{mods.Count} mod{(mods.Count == 1 ? string.Empty : "s")}";
-            InstallButton.IsEnabled = !_busy && isFabric && _viewModel?.IsGameRunning != true;
+            InstallButton.IsEnabled =
+                !_busy
+                && supportsLocalMods
+                && _viewModel?.IsGameRunning != true;
             UpdateSelectionButtons();
         }
         catch (Exception ex)
@@ -158,9 +163,10 @@ public sealed partial class ModManagerWindow : Window
             RefreshMods();
             return;
         }
-        if (!string.Equals(instance.Loader, "fabric", StringComparison.OrdinalIgnoreCase))
+        if (!SupportsProvider(instance.Loader))
         {
-            OperationStatus.Text = "Local mod installation is currently available for Fabric instances only.";
+            OperationStatus.Text =
+                $"Local mod installation is not available for loader '{instance.Loader}'.";
             return;
         }
         if (!StorageProvider.CanOpen)
