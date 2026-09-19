@@ -399,25 +399,233 @@ public sealed class MinecraftVanillaInstallService
         return "linux";
     }
 
-    private static void ExtractNativeArchive(string archivePath, string targetDirectory, IReadOnlyList<string> excludes)
+    internal static void ExtractNativeArchive(
+        string archivePath,
+        string targetDirectory,
+        IReadOnlyList<string> excludes)
     {
-        Directory.CreateDirectory(targetDirectory);
-        using var archive = ZipFile.OpenRead(archivePath);
-        var targetRoot = Path.GetFullPath(targetDirectory) + Path.DirectorySeparatorChar;
+        var targetRoot = Path.GetFullPath(targetDirectory);
+        ValidateExistingPathChain(targetRoot);
 
-        foreach (var entry in archive.Entries)
+        var parent = Path.GetDirectoryName(targetRoot)
+            ?? throw new InvalidDataException("Native extraction target has no parent directory.");
+        Directory.CreateDirectory(parent);
+        ValidateExistingPathChain(parent);
+
+        var staging = Path.Combine(
+            parent,
+            ".native-extract-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(staging);
+
+        try
         {
-            var normalized = entry.FullName.Replace('\\', '/');
-            if (string.IsNullOrWhiteSpace(entry.Name)
-                || excludes.Any(prefix => normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            using (var archive = ZipFile.OpenRead(archivePath))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    var relative = ValidateArchiveRelativePath(entry.FullName);
+                    if (IsZipSymlink(entry))
+                        throw new InvalidDataException(
+                            $"Native archive contains a symbolic-link entry: {entry.FullName}");
+
+                    if (excludes.Any(prefix =>
+                            relative.StartsWith(
+                                prefix.Replace('\\', '/'),
+                                StringComparison.OrdinalIgnoreCase)))
+                        continue;
+
+                    var stagedPath = ResolveContained(staging, relative);
+                    if (entry.FullName.EndsWith("/", StringComparison.Ordinal)
+                        || string.IsNullOrWhiteSpace(entry.Name))
+                    {
+                        Directory.CreateDirectory(stagedPath);
+                        continue;
+                    }
+
+                    Directory.CreateDirectory(
+                        Path.GetDirectoryName(stagedPath)
+                        ?? throw new InvalidDataException("Native archive entry has no parent directory."));
+                    using var input = entry.Open();
+                    using var output = new FileStream(
+                        stagedPath,
+                        FileMode.CreateNew,
+                        FileAccess.Write,
+                        FileShare.None);
+                    input.CopyTo(output);
+                }
+            }
+
+            ValidateNativePublishPlan(staging, targetRoot);
+            PublishNativeTree(staging, targetRoot);
+        }
+        finally
+        {
+            TryDeleteDirectory(staging);
+        }
+    }
+
+    private static string ValidateArchiveRelativePath(string value)
+    {
+        var normalized = value.Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(normalized)
+            || normalized.StartsWith("/", StringComparison.Ordinal)
+            || Path.IsPathRooted(normalized)
+            || normalized.Any(char.IsControl))
+            throw new InvalidDataException($"Unsafe native archive entry: {value}");
+
+        var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0 || parts.Any(part => part is "." or ".."))
+            throw new InvalidDataException($"Unsafe native archive entry: {value}");
+
+        return string.Join('/', parts);
+    }
+
+    private static string ResolveContained(string root, string relative)
+    {
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var result = Path.GetFullPath(
+            Path.Combine(
+                fullRoot,
+                relative.Replace('/', Path.DirectorySeparatorChar)));
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!result.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison))
+            throw new InvalidDataException("Native archive entry escaped the extraction root.");
+        return result;
+    }
+
+    private static void ValidateNativePublishPlan(string staging, string targetRoot)
+    {
+        ValidateExistingPathChain(targetRoot);
+
+        foreach (var directory in Directory.EnumerateDirectories(
+                     staging,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(staging, directory);
+            var destination = ResolveContained(
+                targetRoot,
+                relative.Replace(Path.DirectorySeparatorChar, '/'));
+            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: false);
+        }
+
+        foreach (var file in Directory.EnumerateFiles(
+                     staging,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(staging, file);
+            var destination = ResolveContained(
+                targetRoot,
+                relative.Replace(Path.DirectorySeparatorChar, '/'));
+            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: true);
+        }
+    }
+
+    private static void ValidateTargetComponents(
+        string targetRoot,
+        string destination,
+        bool finalMustBeFile)
+    {
+        var fullRoot = Path.GetFullPath(targetRoot);
+        var relative = Path.GetRelativePath(fullRoot, destination);
+        var parts = relative.Split(
+            Path.DirectorySeparatorChar,
+            StringSplitOptions.RemoveEmptyEntries);
+        var current = fullRoot;
+
+        if (Directory.Exists(current) || File.Exists(current))
+            RejectReparsePoint(current);
+
+        for (var index = 0; index < parts.Length; index++)
+        {
+            current = Path.Combine(current, parts[index]);
+            var isFinal = index == parts.Length - 1;
+            if (!Directory.Exists(current) && !File.Exists(current))
                 continue;
 
-            var destination = Path.GetFullPath(Path.Combine(targetDirectory, normalized.Replace('/', Path.DirectorySeparatorChar)));
-            if (!destination.StartsWith(targetRoot, StringComparison.Ordinal))
-                continue;
+            RejectReparsePoint(current);
+            if (!isFinal && File.Exists(current))
+                throw new InvalidDataException(
+                    $"Native extraction path collides with a file: {current}");
+            if (isFinal && finalMustBeFile && Directory.Exists(current))
+                throw new InvalidDataException(
+                    $"Native extraction file collides with a directory: {current}");
+        }
+    }
 
+    private static void PublishNativeTree(string staging, string targetRoot)
+    {
+        Directory.CreateDirectory(targetRoot);
+        RejectReparsePoint(targetRoot);
+
+        foreach (var directory in Directory.EnumerateDirectories(
+                     staging,
+                     "*",
+                     SearchOption.AllDirectories)
+                 .OrderBy(path => path.Count(character =>
+                     character == Path.DirectorySeparatorChar)))
+        {
+            var relative = Path.GetRelativePath(staging, directory);
+            var destination = ResolveContained(
+                targetRoot,
+                relative.Replace(Path.DirectorySeparatorChar, '/'));
+            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: false);
+            Directory.CreateDirectory(destination);
+            RejectReparsePoint(destination);
+        }
+
+        foreach (var file in Directory.EnumerateFiles(
+                     staging,
+                     "*",
+                     SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(staging, file);
+            var destination = ResolveContained(
+                targetRoot,
+                relative.Replace(Path.DirectorySeparatorChar, '/'));
+            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: true);
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            entry.ExtractToFile(destination, overwrite: true);
+            File.Move(file, destination, overwrite: true);
+        }
+    }
+
+    private static void ValidateExistingPathChain(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var current = new DirectoryInfo(full);
+        while (current is not null)
+        {
+            if (current.Exists)
+                RejectReparsePoint(current.FullName);
+            current = current.Parent;
+        }
+    }
+
+    private static void RejectReparsePoint(string path)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException(
+                $"Native extraction path contains a symbolic link/reparse point: {path}");
+    }
+
+    private static bool IsZipSymlink(ZipArchiveEntry entry)
+    {
+        var unixMode = (entry.ExternalAttributes >> 16) & 0xF000;
+        return unixMode == 0xA000;
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
         }
     }
 
