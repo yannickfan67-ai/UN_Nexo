@@ -121,18 +121,22 @@ internal static class Program
                 Equal(1, result.IncludedLogs, "included log count");
                 Equal(true, File.Exists(result.ArchivePath), "archive exists");
 
-                using var archive = ZipFile.OpenRead(result.ArchivePath);
-                Equal(true, archive.GetEntry("diagnosis.txt") is not null, "diagnosis entry");
-                Equal(true, archive.GetEntry("manifest.txt") is not null, "manifest entry");
-                Equal(true, archive.Entries.Any(entry => entry.FullName.StartsWith("logs/", StringComparison.Ordinal)), "log entry");
-
-                var combined = new System.Text.StringBuilder();
-                foreach (var entry in archive.Entries)
+                string packageText;
+                using (var archive = ZipFile.OpenRead(result.ArchivePath))
                 {
-                    using var reader = new StreamReader(entry.Open());
-                    combined.Append(await reader.ReadToEndAsync());
+                    Equal(true, archive.GetEntry("diagnosis.txt") is not null, "diagnosis entry");
+                    Equal(true, archive.GetEntry("manifest.txt") is not null, "manifest entry");
+                    Equal(true, archive.Entries.Any(entry => entry.FullName.StartsWith("logs/", StringComparison.Ordinal)), "log entry");
+
+                    var combined = new System.Text.StringBuilder();
+                    foreach (var entry in archive.Entries)
+                    {
+                        using var reader = new StreamReader(entry.Open());
+                        combined.Append(await reader.ReadToEndAsync());
+                    }
+                    packageText = combined.ToString();
                 }
-                var packageText = combined.ToString();
+
                 DoesNotContain(packageText, token, "archive explicit secret");
                 DoesNotContain(packageText, "abcdefghijklmnop", "archive Bearer token");
                 DoesNotContain(packageText, "zip-json-secret", "archive JSON access token");
