@@ -177,7 +177,7 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '\r\n' < VERSION)"
           TAG="v${VERSION}"
-          printf '## UN_Nexo %s\\n\\n' "$VERSION" > RELEASE_NOTES.md
+          printf '## UN_Nexo %s\n\n' "$VERSION" > RELEASE_NOTES.md
           cat >> RELEASE_NOTES.md <<'EOF'
           ### Loader support
           - Adds first-class Quilt, Forge and NeoForge instance preparation and launch alongside Vanilla/Fabric.
