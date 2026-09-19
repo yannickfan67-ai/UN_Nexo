@@ -177,58 +177,47 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '\r\n' < VERSION)"
           TAG="v${VERSION}"
-          cat > RELEASE_NOTES.md <<EOF
-          ## UN_Nexo ${VERSION}
+          printf '## UN_Nexo %s\\n\\n' "$VERSION" > RELEASE_NOTES.md
+          cat >> RELEASE_NOTES.md <<'EOF'
+          ### Loader support
+          - Adds first-class Quilt, Forge and NeoForge instance preparation and launch alongside Vanilla/Fabric.
+          - Quilt uses bounded Quilt Meta v3 metadata and verified official Maven libraries.
+          - Forge and NeoForge use their official metadata/Maven installers, SHA-1 verification, bounded transfers, isolated per-instance install targets and inherited launch profiles.
+          - Loader managers expose compatible version discovery, create/prepare/repair flows, cancellation/progress, automatic prepare-before-launch and Java requirement inheritance.
+          - Mod management now treats Fabric, Quilt, Forge and NeoForge as supported modded loaders.
 
-          ### Modrinth update integrity
-          - Modrinth installs/updates now hold one instance operation lease for the complete filesystem mutation instead of releasing it between install/remove/disable steps.
-          - Disabled mods are published directly to the new `.jar.disabled` final name, eliminating the temporary enabled window during updates.
-          - Filename-changing updates publish the new final file and remove the old file before releasing the instance lease; cancellation while waiting for old-file removal rolls the new file back and preserves the previous mod.
-          - Installed-mod listing and Modrinth SHA-1 matching reject top-level symlink/reparse-point JARs, with a second physical-file validation immediately after open so outside targets are not fingerprinted or submitted to `version_files`.
-          - Windows/Linux regressions verify competing Play-style instance acquisition cannot interleave with an update, cancellation rollback, and linked-JAR fingerprint suppression.
+          ### Mod ecosystem
+          - Restores CurseForge as a provider without embedding a private API key. Direct access reads `UN_NEXO_CURSEFORGE_API_KEY` at runtime; a compatible HTTPS proxy base can be supplied separately.
+          - Keeps Modrinth credential-free for ordinary browse/install flows.
+          - Adds provider-neutral compatible recommendations while excluding already-installed projects and preserving an explicit install step.
+          - Resolves required dependency graphs recursively, rejects cycles/conflicts/incompatible edges before mutation, stages and verifies every artifact first, then publishes the batch atomically under one instance operation lease.
+          - Provider updates preserve disabled state and roll back to a recoverable previous mod set if publication fails.
 
-          ### Lock-sidecar integrity
-          - Cross-process lock ownership is now represented only by the exclusive OS file handle; lock sidecars are contentless and are no longer truncated or rewritten with metadata.
-          - Persisted-store and per-instance coordination share one lock implementation and reject symlink/reparse-point sidecars before and immediately after open.
-          - Real symlink regressions on Windows/Linux verify a linked lock cannot modify its target while existing contention, cancellation and crash-release behavior remains intact.
+          ### Filesystem and backup hardening
+          - Managed data, instances and Java runtime roots reject symlinks/junctions/reparse points and are revalidated at mutation/publication boundaries.
+          - Backup storage and world restore require physical managed roots, reject linked backup ZIPs/destinations, and fail closed if paths are replaced during the operation.
+          - Quilt library publication now validates the complete managed Maven parent chain before opening its temporary file and again before final publication, preventing writes through linked library directories.
+          - Diagnostic export remains restricted to explicitly trusted physical log roots and revalidates them immediately before reads.
 
-          ### Cross-process instance and store safety
-          - Mod install, enable/disable and removal now participate in the shared instance operation coordinator, so another Nexo process cannot rewrite an instance while it is being played, repaired, backed up or otherwise mutated.
-          - Mod-manager toggle/remove actions await the coordinated async mutation path instead of blocking the desktop UI.
-          - Account and server-favorite read/modify/write transactions now serialize across cooperating Nexo processes with an OS-owned lock handle, preventing last-writer-wins lost updates.
-          - Instance-name uniqueness and launcher/runtime settings publication are also coordinated across processes.
-          - Regression coverage exercises same-instance waiting, two-process server-favorite additions, cancellation while queued and recovery after killing a lock-holder process.
-
-          ### Diagnostic export hardening
-          - Diagnostic preview/export now requires explicit trusted log roots instead of treating any existing caller-provided path as eligible.
-          - Symlink/reparse-point source files and linked parent components are rejected, and source authorization is revalidated immediately before every log read.
-          - Windows and Linux regressions cover an allowed-root symlink targeting an outside secret plus replacement of a previously previewed regular log with a symlink before export.
-          - Existing bounded-tail limits, token/home-path sanitization and atomic ZIP replacement remain in place.
-
-          ### Microsoft account status
-          - The launcher continues to use UN_Nexo's own Microsoft public-client registration and the Microsoft -> Xbox Live -> XSTS -> Minecraft Services chain.
-          - A Minecraft Services `403 Invalid app registration` now points directly to the official AppID review route: https://aka.ms/mce-reviewappid.
-          - Token-bearing authentication errors remain redacted and a rejected AppID still rolls back the cached Microsoft identity instead of publishing a half-authenticated account.
-          - Live Microsoft/Minecraft acceptance remains tracked in #22 until the UN_Nexo Client ID is approved by Minecraft Services and a licensed real account completes sign-in plus launch.
-
-          ### Avalonia 12 maintenance
-          - Replaces obsolete TextBox `Watermark` and Window `SystemDecorations` XAML properties with their Avalonia 12 equivalents.
-          - The Linux compiler warning count from these deprecated properties is removed; the remaining XAML loader warnings are the two dependency-injected windows that intentionally have no public parameterless constructor.
+          ### Microsoft account continuity
+          - UN_Nexo continues to use its own Microsoft public-client registration and the Microsoft -> Xbox Live -> XSTS -> Minecraft Services chain.
+          - Previously verified licensed Microsoft profiles may use the restricted-region continuity path only in CN/RU and only after a transient online-session failure; generic offline profiles are not promoted into licensed profiles.
+          - Explicit authorization, entitlement and identity failures never trigger that continuity path, and region-detection failure fails closed.
+          - Live Microsoft/Minecraft acceptance remains tracked in #22 until Minecraft Services approves the UN_Nexo AppID and a licensed real account completes sign-in plus launch.
 
           ### Packaging and regression coverage
-          - Windows and Ubuntu build/regression matrices remain green after the concurrency and authentication changes.
-          - Linux desktop Xvfb smoke and the self-contained Windows x64 portable publish remain part of pull-request validation.
-          - Release CI still runs Core, Diagnostics, Server Status, Instance Lifecycle, Import, Fabric, Stability and Repair regressions before publication.
+          - Windows and Ubuntu run the complete regression matrix, including loader, path, backup and provider coverage.
+          - Pull requests additionally publish a self-contained Windows x64 portable build and run the Linux desktop under Xvfb.
+          - Release CI publishes the Windows single-file executable plus Linux DEB/RPM packages after the release regression suite succeeds.
 
           ### Current limitations
-          - Microsoft account code is implemented, but live Minecraft Services use still depends on Minecraft approving the registered UN_Nexo Client ID and real-account acceptance. UN_Nexo will not borrow another launcher's Client ID.
-          - Fabric preparation/repair is available; Forge and NeoForge installers are not included yet.
+          - Microsoft account code is implemented, but live Minecraft Services use still depends on AppID approval and real-account acceptance. UN_Nexo does not substitute another launcher's Client ID.
           - HTTP Range resume, per-instance runtime overrides and friend-to-friend room-code/P2P networking are not included yet.
-          - Modrinth-compatible mod management is available; resource-pack/shader management is not included yet.
+          - Mod management covers JAR mods through Modrinth/CurseForge; resource-pack and shader management are not included yet.
           - Real Linux Mint/Cinnamon behavior remains an on-device acceptance check.
 
           This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
-          EOF
+          EOFF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "UN_Nexo $TAG" --notes-file RELEASE_NOTES.md --prerelease
