@@ -15,8 +15,9 @@ public sealed partial class ModManagerWindow : Window
     private readonly NexoPathService _paths;
     private readonly InstanceModService _mods;
     private readonly HttpClient _modrinthHttpClient;
-    private readonly IModProvider _modrinth;
+    private readonly IModDependencyProvider _modrinth;
     private ModProviderVersion? _selectedModrinthVersion;
+    private ModDependencyPlan? _selectedModrinthPlan;
     private int _modrinthSelectionGeneration;
     private bool _busy;
 
@@ -318,6 +319,7 @@ public sealed partial class ModManagerWindow : Window
     {
         var generation = ++_modrinthSelectionGeneration;
         _selectedModrinthVersion = null;
+        _selectedModrinthPlan = null;
         UpdateModrinthSelectionButtons();
 
         if (SelectedInstance is not { } instance || SelectedModrinthItem is not { } item)
@@ -342,18 +344,35 @@ public sealed partial class ModManagerWindow : Window
             {
                 SelectedModrinthDetail.Text = "Modrinth has no installable JAR matching this Minecraft version and loader.";
             }
-            else if (item.Installed is null)
-            {
-                SelectedModrinthDetail.Text = $"Latest compatible version: {version.VersionNumber}.";
-            }
-            else if (item.Installed.IsCurrent(version))
-            {
-                SelectedModrinthDetail.Text = $"Installed version {item.Installed.VersionNumber} is current.";
-            }
             else
             {
                 SelectedModrinthDetail.Text =
-                    $"Update available: {item.Installed.VersionNumber} → {version.VersionNumber}.";
+                    $"Resolving required dependencies for {item.Project.Title} {version.VersionNumber}…";
+                var plan = await new ModDependencyPlanner(_modrinth).BuildAsync(
+                    item.Project,
+                    version,
+                    instance.MinecraftVersionId,
+                    instance.Loader);
+                if (generation != _modrinthSelectionGeneration)
+                    return;
+
+                _selectedModrinthPlan = plan;
+                var dependencies = plan.InstallOrder
+                    .Where(entry => !entry.IsRoot)
+                    .Select(entry => entry.Project.Title)
+                    .ToArray();
+                var dependencyText = dependencies.Length == 0
+                    ? "No required dependencies."
+                    : $"Required dependencies ({dependencies.Length}): {string.Join(", ", dependencies)}.";
+
+                var versionText = item.Installed is null
+                    ? $"Latest compatible version: {version.VersionNumber}."
+                    : item.Installed.IsCurrent(version)
+                        ? $"Installed version {item.Installed.VersionNumber} is current."
+                        : $"Update available: {item.Installed.VersionNumber} → {version.VersionNumber}.";
+
+                SelectedModrinthDetail.Text =
+                    $"{versionText} {dependencyText} The complete plan is downloaded first and published together.";
             }
         }
         catch (Exception ex)
@@ -385,27 +404,39 @@ public sealed partial class ModManagerWindow : Window
             _busy = true;
             RefreshMods();
             UpdateModrinthSelectionButtons();
-            OperationStatus.Text = $"Downloading {item.Project.Title} {version.VersionNumber} from Modrinth…";
-
-            var result = await _modrinth.InstallAsync(
-                instance.Id,
-                item.Project,
-                version,
-                item.Installed,
-                _mods);
-
-            var match = new ModProviderInstalledMatch(
-                _modrinth.ProviderId,
-                result.Project.ProjectId,
-                result.Version.VersionId,
-                result.Version.VersionNumber,
-                result.InstalledMod.FileName,
-                result.InstalledMod.IsEnabled);
-
-            ReplaceBrowserItem(item, new ModrinthBrowserItem(item.Project, match));
+            var plan = _selectedModrinthPlan
+                ?? throw new InvalidOperationException(
+                    "Resolve the Modrinth dependency plan before installing.");
             OperationStatus.Text =
-                $"Installed {result.Project.Title} {result.Version.VersionNumber} into '{instance.Name}'.";
-            SelectedModrinthDetail.Text = $"Installed version {result.Version.VersionNumber} is current.";
+                $"Downloading {plan.InstallOrder.Count} planned mod file{(plan.InstallOrder.Count == 1 ? string.Empty : "s")} from Modrinth…";
+
+            var installedBefore = _mods.List(instance.Id);
+            var matchesBefore = await _modrinth.MatchInstalledAsync(
+                _mods.GetModsDirectory(instance.Id),
+                installedBefore);
+            var result = await new ModDependencyInstaller(_modrinth, _mods).InstallAsync(
+                instance.Id,
+                plan,
+                matchesBefore);
+
+            var installedAfter = _mods.List(instance.Id);
+            var matchesAfter = await _modrinth.MatchInstalledAsync(
+                _mods.GetModsDirectory(instance.Id),
+                installedAfter);
+            var rootMatch = matchesAfter.TryGetValue(
+                item.Project.ProjectId,
+                out var currentRoot)
+                ? currentRoot
+                : item.Installed;
+
+            ReplaceBrowserItem(
+                item,
+                new ModrinthBrowserItem(item.Project, rootMatch));
+            OperationStatus.Text = result.Installed.Count == 0
+                ? $"'{item.Project.Title}' and all required dependencies are already current."
+                : $"Published {result.Installed.Count} mod file{(result.Installed.Count == 1 ? string.Empty : "s")} atomically into '{instance.Name}'.";
+            SelectedModrinthDetail.Text =
+                $"Install plan complete · {plan.RequiredDependencyCount} required dependenc{(plan.RequiredDependencyCount == 1 ? "y" : "ies")} · root {version.VersionNumber}.";
         }
         catch (Exception ex)
         {
@@ -451,6 +482,7 @@ public sealed partial class ModManagerWindow : Window
     {
         _modrinthSelectionGeneration++;
         _selectedModrinthVersion = null;
+        _selectedModrinthPlan = null;
         ModrinthResultsList.ItemsSource = Array.Empty<ModrinthBrowserItem>();
         ModrinthResultCount.Text = "0 results";
         SelectedModrinthDetail.Text = SelectedInstance is null
@@ -479,6 +511,7 @@ public sealed partial class ModManagerWindow : Window
         var canInstall = !_busy
                          && item is not null
                          && _selectedModrinthVersion is not null
+                         && _selectedModrinthPlan is not null
                          && _viewModel?.IsGameRunning != true;
         ModrinthInstallButton.IsEnabled = canInstall;
         ModrinthInstallButton.Content = item?.Installed is null
