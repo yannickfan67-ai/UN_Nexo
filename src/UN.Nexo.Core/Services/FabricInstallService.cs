@@ -15,6 +15,7 @@ public sealed class FabricInstallService(
     TimeSpan? transferIdleTimeout = null)
 {
     private const int MaxChecksumBytes = 1024;
+    private readonly InstanceOperationCoordinator _operations = new(paths);
     private readonly TimeSpan _transferIdleTimeout = transferIdleTimeout is null
         ? TimeSpan.FromSeconds(30)
         : transferIdleTimeout.Value > TimeSpan.Zero
@@ -22,14 +23,46 @@ public sealed class FabricInstallService(
             : throw new ArgumentOutOfRangeException(
                 nameof(transferIdleTimeout),
                 "Fabric transfer idle timeout must be positive.");
-    public async Task PrepareAsync(
+    public Task PrepareAsync(
         GameInstance instance,
         MinecraftVersionInfo baseVersion,
         IProgress<InstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
+        => PrepareCoreAsync(
+            instance,
+            baseVersion,
+            progress,
+            cancellationToken,
+            acquireOperationLease: true);
+
+    internal Task PrepareWithinOperationAsync(
+        GameInstance instance,
+        MinecraftVersionInfo baseVersion,
+        IProgress<InstallProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => PrepareCoreAsync(
+            instance,
+            baseVersion,
+            progress,
+            cancellationToken,
+            acquireOperationLease: false);
+
+    private async Task PrepareCoreAsync(
+        GameInstance instance,
+        MinecraftVersionInfo baseVersion,
+        IProgress<InstallProgress>? progress,
+        CancellationToken cancellationToken,
+        bool acquireOperationLease)
     {
         if (!instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Fabric preparation requires a Fabric instance.");
+
+        await using IAsyncDisposable? operationLease = acquireOperationLease
+            ? await _operations.AcquireAsync(
+                instance.Id,
+                "prepare-fabric",
+                cancellationToken)
+            : null;
 
         var instanceRoot = paths.GetInstanceDirectory(instance.Id);
         var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
@@ -82,7 +115,11 @@ public sealed class FabricInstallService(
                     BaseVersionId = null,
                     LoaderVersion = null
                 };
-                await vanillaInstaller.InstallAsync(vanillaProxy, baseVersion, progress, cancellationToken);
+                await vanillaInstaller.InstallWithinOperationAsync(
+                    vanillaProxy,
+                    baseVersion,
+                    progress,
+                    cancellationToken);
                 if (File.Exists(statePath))
                     File.Delete(statePath);
                 Report(progress, new InstallProgress("Vanilla base", 1, 1, baseVersion.Id));
