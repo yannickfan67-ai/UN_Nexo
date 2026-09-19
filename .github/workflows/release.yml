@@ -180,41 +180,47 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
-          ### Security fix in 0.7.1-dev
-          - Rejects imported Fabric `downloads.artifact.path` values that escape the selected instance's `game/libraries` directory, including traversal and rooted paths, before any HTTP request or file write.
+          ### Security and authentication hardening in 0.7.6-dev
+          - Adds UN_Nexo's own Microsoft public-client sign-in flow, Xbox/XSTS/Minecraft Services exchange, OS-backed refresh credential storage, silent refresh, sign-out and token redaction without borrowing another launcher's Client ID.
+          - Rejects credential-bearing authentication redirects before they can be followed and bounds stalled authentication response bodies.
+          - Expands path containment and typed-metadata validation across Vanilla, Fabric, Repair, Import, managed Java, Modrinth and asset-index handling.
+          - Constrains metadata-driven download targets, redirect destinations and archive extraction so untrusted metadata cannot escape managed roots or silently redirect required artifacts to arbitrary endpoints.
 
-          ### Modrinth integration in 0.7.5-dev
-          - Adds an Installed / Modrinth view to the per-instance Mods manager.
-          - Searches the public Modrinth API using the selected Minecraft version and loader, with no private API key or closed backend.
-          - Matches existing managed JARs by SHA-1, reports compatible updates, and only changes files after an explicit Install/Update action.
-          - Verifies provider filename, HTTPS CDN host, declared size and SHA-1 before publishing a downloaded JAR through Nexo's existing path-safe mod service.
-          - Preserves disabled state when explicitly updating a disabled Modrinth-managed mod and keeps local Install JAR support available.
+          ### Vanilla, Fabric and launch integrity
+          - Vanilla Prepare now validates version identity plus required client/asset-index metadata before publishing prepared state, downloads declared logging configuration, and supports legacy Maven-name libraries through trusted checksum sidecars.
+          - Hashless required binaries are no longer treated as verified merely because a file exists; declared sizes/content lengths are enforced and SHA-1 metadata is validated when available.
+          - Launch verifies client/library/native/asset integrity, repairs same-size corruption in virtual/resources-derived assets, and rejects incomplete or stale extracted native runtimes before Java starts.
+          - Native classifier archives are rebuilt into an operation-unique staging tree and atomically replace the version native directory, removing stale files left by changed metadata.
+          - Inherited metadata now replaces parent Maven versions by logical artifact identity while keeping distinct classifiers/extensions, improving Fabric classpaths and inherited Quick Play/Repair behavior.
+          - ARM64/aarch64 rule handling and launcher feature-rule evaluation are aligned with the runtime model.
 
-          ### Fabric and instance management
-          - Adds launch support for inherited Minecraft version profiles and Fabric Loader/KnotClient.
-          - Adds a Fabric Manager that queries compatible loader versions, creates isolated Fabric instances, and prepares imported Fabric profiles.
-          - Keeps loader libraries, mods and game data scoped to the selected Nexo instance.
+          ### Import, backup, diagnostics and server reliability
+          - Import rejects sources overlapping Nexo's managed data root and isolates wrong-typed version metadata without aborting healthy sibling discovery.
+          - World backups use bounded manifests and per-file integrity metadata; restore rejects missing, unexpected or same-size corrupted files before publishing a save.
+          - Install state and diagnostic ZIP replacement are atomic; diagnostic preview explicitly discloses that it is a bounded sanitized excerpt and states the export limits.
+          - Server Hub preserves stale default-instance links as an actionable error instead of launching a different selected instance, resolves Minecraft Java SRV records for hostname-only targets, and keeps valid status data when optional latency ping times out.
+          - Minecraft process tracking, launcher logs, managed Java publication/provisioning and persisted account/server stores received additional isolation, bounds and corruption handling.
 
-          ### Import, backup and recovery
-          - Imports existing .minecraft/game directories through a scan-and-preview flow while leaving the source untouched.
-          - Adds independent instance cloning plus manual world backup and restore with staging and restore-safety copies.
-          - Rejects incomplete or size-mismatched world backup archives before replacing the active save.
+          ### Instance-scoped concurrency
+          - Vanilla/Fabric Prepare, Repair, Clone, Backup/Restore, normal Play and Server Hub now share one instance operation coordinator.
+          - Different instances remain concurrent, while same-instance mutations are serialized by canonical instance path and cooperating Nexo processes also coordinate through a per-instance FileShare.None lock.
+          - Per-instance install cancellation replaces the old process-local global prepare gate, and closing backup/clone workflows cancels and cleans staged work instead of leaving a detached mutation running.
+          - Play and Server Hub hold the instance lease for the Minecraft process lifetime so Nexo cannot restore, repair or rewrite the same instance underneath a running game.
 
-          ### Server and diagnostics improvements
-          - Adds live Java server status, latency, player counts, protocol-aware compatibility hints and default-instance links in Server Hub.
-          - Adds persistent crash diagnosis, sanitized diagnostic previews and bounded ZIP diagnostic export.
-          - Bundles a CJK fallback font so portable/Linux builds do not depend solely on host CJK fonts.
+          ### Modrinth integration carried forward from 0.7.5-dev
+          - Installed / Modrinth browsing remains available per instance using the public Modrinth API with no private API key or closed backend.
+          - Compatible projects are filtered by the selected Minecraft version and loader; managed JARs are matched by SHA-1 and explicit install/update actions verify provider filename, CDN host, declared size and SHA-1 before publication.
+          - Disabled state is preserved during explicit managed updates and local Install JAR remains available.
 
-          ### Runtime and reliability hardening
-          - Blocks JVM argument-file, classpath, heap-limit and alternate module/JAR entry-point bypasses of launcher-managed options.
-          - Preserves startup tracing, bounded network operations, repair checks, Java runtime validation and download fallback behavior.
-          - Release CI now runs Core, Diagnostics, Server Status, Instance Lifecycle, Import, Fabric, Stability and Repair regressions before publishing.
-          - Windows and Linux packages remain self-contained for the .NET runtime; Linux DEB packaging is installed and UI-smoke-tested under Xvfb.
+          ### Packaging and regression coverage
+          - Release CI runs Core, Diagnostics, Server Status, Instance Lifecycle, Import, Fabric, Stability and Repair regressions before publication.
+          - Windows x64 remains a self-contained single-file build; Linux x64 publishes DEB and RPM packages with dependency validation and an Xvfb UI smoke test.
+          - 0.7.6-dev includes the accumulated fixes for the security, integrity, compatibility and reliability issues closed since 0.7.5-dev, including auth redirect/body safety, asset/library/native integrity, metadata shape validation, import containment, backup integrity and instance-operation races.
 
           ### Current limitations
-          - Microsoft account sign-in is not enabled yet while UN_Nexo obtains its own approved Microsoft application registration.
+          - Microsoft account code is implemented, but live Minecraft Services acceptance still depends on the registered UN_Nexo Client ID being authorized by the service. Real-account sign-in/launch remains an external acceptance item tracked in #22.
           - Forge support is still under development and is not included in this release.
-          - Dedicated Sodium/Iris compatibility presets are not included yet; compatible releases can now be found and installed through Modrinth.
+          - Dedicated Sodium/Iris compatibility presets are not included yet; compatible releases can be found and installed through Modrinth.
           - Per-instance runtime overrides and friend-to-friend room-code/P2P networking are not implemented yet.
           - Real Linux Mint/Cinnamon game-menu behavior remains an on-device acceptance check.
 
