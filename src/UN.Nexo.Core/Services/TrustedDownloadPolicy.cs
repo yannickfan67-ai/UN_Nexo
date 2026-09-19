@@ -13,6 +13,8 @@ internal static class TrustedDownloadPolicy
         "assets.minecraft.net",
         "meta.fabricmc.net",
         "maven.fabricmc.net",
+        "meta.quiltmc.org",
+        "maven.quiltmc.org",
         "bmclapi2.bangbang93.com"
     };
 
