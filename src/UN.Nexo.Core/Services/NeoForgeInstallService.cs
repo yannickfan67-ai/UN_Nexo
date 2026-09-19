@@ -9,7 +9,9 @@ namespace UN.Nexo.Core.Services;
 public sealed record NeoForgeInstallerProcessResult(
     int ExitCode,
     string StandardOutput,
-    string StandardError);
+    string StandardError,
+    bool StandardOutputTruncated = false,
+    bool StandardErrorTruncated = false);
 
 public sealed class NeoForgeInstallService
 {
@@ -297,6 +299,12 @@ public sealed class NeoForgeInstallService
                     LastUsefulLine(result.StandardError)
                     ?? LastUsefulLine(result.StandardOutput)
                     ?? $"exit code {result.ExitCode}";
+                if (result.StandardErrorTruncated
+                    || result.StandardOutputTruncated)
+                {
+                    detail +=
+                        " (installer output was truncated; retained tail is in the installer log)";
+                }
                 throw new InvalidOperationException(
                     $"NeoForge installer failed: {detail}");
             }
@@ -989,47 +997,19 @@ public sealed class NeoForgeInstallService
             ProcessStartInfo startInfo,
             CancellationToken cancellationToken)
     {
-        using var process =
-            new Process
-            {
-                StartInfo = startInfo
-            };
-        if (!process.Start())
-        {
-            throw new InvalidOperationException(
-                "Failed to start the NeoForge installer process.");
-        }
-
-        var stdoutTask =
-            process.StandardOutput.ReadToEndAsync(
+        var capture =
+            await InstallerProcessRunner.RunAsync(
+                startInfo,
+                "NeoForge installer",
+                MaxInstallerLogChars,
                 cancellationToken);
-        var stderrTask =
-            process.StandardError.ReadToEndAsync(
-                cancellationToken);
-
-        try
-        {
-            await process.WaitForExitAsync(
-                cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                if (!process.HasExited)
-                    process.Kill(
-                        entireProcessTree: true);
-            }
-            catch
-            {
-            }
-            throw;
-        }
 
         return new NeoForgeInstallerProcessResult(
-            process.ExitCode,
-            await stdoutTask,
-            await stderrTask);
+            capture.ExitCode,
+            capture.StandardOutput.Text,
+            capture.StandardError.Text,
+            capture.StandardOutput.Truncated,
+            capture.StandardError.Truncated);
     }
 
     private static async Task WriteInstallerLogAsync(
@@ -1057,10 +1037,16 @@ public sealed class NeoForgeInstallService
                     $"Java: {startInfo.FileName}")
                 .AppendLine(
                     $"Exit code: {result.ExitCode}")
-                .AppendLine("--- stdout ---")
+                .AppendLine(
+                    result.StandardOutputTruncated
+                        ? "--- stdout (truncated; tail retained) ---"
+                        : "--- stdout ---")
                 .AppendLine(
                     Limit(result.StandardOutput))
-                .AppendLine("--- stderr ---")
+                .AppendLine(
+                    result.StandardErrorTruncated
+                        ? "--- stderr (truncated; tail retained) ---"
+                        : "--- stderr ---")
                 .AppendLine(
                     Limit(result.StandardError))
                 .ToString();
