@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -24,8 +25,10 @@ public sealed class MinecraftProcessService
         @"^\d{8}-\d{6}-[0-9a-f]{32}\.log$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
+    private static readonly ConcurrentDictionary<string, byte> RunningInstances =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private readonly LauncherRuntimeSettingsService _runtimeSettings;
-    private int _running;
 
     public MinecraftProcessService()
         : this(new LauncherRuntimeSettingsService(new NexoPathService()))
@@ -42,8 +45,17 @@ public sealed class MinecraftProcessService
         IProgress<string>? output = null,
         CancellationToken cancellationToken = default)
     {
-        if (Interlocked.CompareExchange(ref _running, 1, 0) != 0)
-            throw new InvalidOperationException("A game is already running.");
+        var instanceId = string.IsNullOrWhiteSpace(plan.InstanceId)
+            ? null
+            : plan.InstanceId.Trim();
+        var registered = false;
+        if (instanceId is not null)
+        {
+            registered = RunningInstances.TryAdd(instanceId, 0);
+            if (!registered)
+                throw new InvalidOperationException(
+                    $"Minecraft instance '{instanceId}' is already running.");
+        }
 
         try
         {
@@ -252,7 +264,8 @@ public sealed class MinecraftProcessService
         }
         finally
         {
-            Interlocked.Exchange(ref _running, 0);
+            if (registered && instanceId is not null)
+                RunningInstances.TryRemove(instanceId, out _);
         }
     }
 
