@@ -6,8 +6,15 @@ public sealed class InstanceModService
 {
     private const string DisabledSuffix = ".disabled";
     private readonly NexoPathService _paths;
+    private readonly InstanceOperationCoordinator _operations;
 
-    public InstanceModService(NexoPathService paths) => _paths = paths;
+    public InstanceModService(
+        NexoPathService paths,
+        InstanceOperationCoordinator? operations = null)
+    {
+        _paths = paths;
+        _operations = operations ?? new InstanceOperationCoordinator(paths);
+    }
     public string GetModsDirectory(string instanceId) => Path.Combine(_paths.GetInstanceGameDirectory(instanceId), "mods");
 
     public IReadOnlyList<InstalledMod> List(string instanceId)
@@ -26,7 +33,13 @@ public sealed class InstanceModService
         if (!fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Only .jar files can be installed as mods.");
         ValidateManagedFileName(fileName, false);
 
-        using var lease = await PathKeyedLock.AcquireAsync(GetMutationKey(instanceId, fileName), cancellationToken);
+        await using var operationLease = await _operations.AcquireAsync(
+            instanceId,
+            "mod install",
+            cancellationToken);
+        using var lease = await PathKeyedLock.AcquireAsync(
+            GetMutationKey(instanceId, fileName),
+            cancellationToken);
         var modsDirectory = VerifyModsDirectory(instanceId, create: true)!;
         var destinationPath = ResolveManagedPath(modsDirectory, fileName, false);
         var disabledPath = ResolveManagedPath(modsDirectory, fileName + DisabledSuffix, true);
@@ -49,29 +62,71 @@ public sealed class InstanceModService
     }
 
     public InstalledMod SetEnabled(string instanceId, string fileName, bool enabled)
+        => SetEnabledAsync(instanceId, fileName, enabled).GetAwaiter().GetResult();
+
+    public async Task<InstalledMod> SetEnabledAsync(
+        string instanceId,
+        string fileName,
+        bool enabled,
+        CancellationToken cancellationToken = default)
     {
         ValidateManagedFileName(fileName, true);
-        using var lease = PathKeyedLock.Acquire(GetMutationKey(instanceId, fileName));
-        var modsDirectory = VerifyModsDirectory(instanceId, create: false) ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
+
+        // Lock ordering is always instance lease first, then the per-mod path lock.
+        await using var operationLease = await _operations.AcquireAsync(
+            instanceId,
+            enabled ? "mod enable" : "mod disable",
+            cancellationToken);
+        using var lease = await PathKeyedLock.AcquireAsync(
+            GetMutationKey(instanceId, fileName),
+            cancellationToken);
+
+        var modsDirectory = VerifyModsDirectory(instanceId, create: false)
+            ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
         var currentPath = ResolveManagedPath(modsDirectory, fileName, true);
-        if (!File.Exists(currentPath)) throw new FileNotFoundException("The selected mod no longer exists.", currentPath);
+        if (!File.Exists(currentPath))
+            throw new FileNotFoundException("The selected mod no longer exists.", currentPath);
+
         var currentlyEnabled = fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
-        if (currentlyEnabled == enabled) return CreateModel(currentPath);
-        var targetFileName = enabled ? fileName[..^DisabledSuffix.Length] : fileName + DisabledSuffix;
+        if (currentlyEnabled == enabled)
+            return CreateModel(currentPath);
+
+        var targetFileName = enabled
+            ? fileName[..^DisabledSuffix.Length]
+            : fileName + DisabledSuffix;
         var targetPath = ResolveManagedPath(modsDirectory, targetFileName, true);
-        if (File.Exists(targetPath)) throw new IOException($"Cannot change mod state because '{targetFileName}' already exists.");
+        if (File.Exists(targetPath))
+            throw new IOException($"Cannot change mod state because '{targetFileName}' already exists.");
+
         VerifyPhysicalDirectory(modsDirectory);
         File.Move(currentPath, targetPath);
         return CreateModel(targetPath);
     }
 
     public void Remove(string instanceId, string fileName)
+        => RemoveAsync(instanceId, fileName).GetAwaiter().GetResult();
+
+    public async Task RemoveAsync(
+        string instanceId,
+        string fileName,
+        CancellationToken cancellationToken = default)
     {
         ValidateManagedFileName(fileName, true);
-        using var lease = PathKeyedLock.Acquire(GetMutationKey(instanceId, fileName));
-        var modsDirectory = VerifyModsDirectory(instanceId, create: false) ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
+
+        await using var operationLease = await _operations.AcquireAsync(
+            instanceId,
+            "mod remove",
+            cancellationToken);
+        using var lease = await PathKeyedLock.AcquireAsync(
+            GetMutationKey(instanceId, fileName),
+            cancellationToken);
+
+        var modsDirectory = VerifyModsDirectory(instanceId, create: false)
+            ?? throw new DirectoryNotFoundException("The instance mods directory does not exist.");
         var path = ResolveManagedPath(modsDirectory, fileName, true);
-        if (!File.Exists(path)) throw new FileNotFoundException("The selected mod no longer exists.", path);
+        if (!File.Exists(path))
+            throw new FileNotFoundException("The selected mod no longer exists.", path);
+
         VerifyPhysicalDirectory(modsDirectory);
         File.Delete(path);
     }
