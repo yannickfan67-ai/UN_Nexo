@@ -47,4 +47,4 @@ Nexo does not log the authentication request/response bodies or complete launch 
 
 Microsoft/Xbox authentication can succeed while Minecraft Services still returns HTTP 403 with `Invalid app registration` for an application that has not been authorized on the Minecraft side.
 
-UN_Nexo treats that as a separate application-authorization error. The launcher does not work around it by borrowing a Client ID from the official launcher, Prism Launcher, or any other project. Once Minecraft Services authorizes the UN_Nexo registration, the same flow can continue without changing user account storage.
+UN_Nexo treats that as a separate application-authorization error. New or rejected application IDs can be submitted for Minecraft AppID review through Microsoft's official short link: [https://aka.ms/mce-reviewappid](https://aka.ms/mce-reviewappid). The launcher does not work around approval by borrowing a Client ID from the official launcher, Prism Launcher, or any other project. Once Minecraft Services authorizes the UN_Nexo registration, the same flow can continue without changing user account storage.
