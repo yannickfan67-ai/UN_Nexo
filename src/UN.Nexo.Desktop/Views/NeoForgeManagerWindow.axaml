@@ -1,6 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="UN.Nexo.Desktop.Views.NeoNeoForgeManagerWindow"
+        x:Class="UN.Nexo.Desktop.Views.NeoForgeManagerWindow"
         Title="Nexo NeoForge Manager"
         Width="900" Height="690"
         MinWidth="760" MinHeight="590"
