@@ -36,6 +36,7 @@ internal static class Program
             ("Native extraction containment", NativeExtractionRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Launch metadata shape validation", LaunchMetadataRegression.RunAsync),
+            ("Launch artifact and derived asset integrity", LaunchIntegrityRegression.RunAsync),
             ("Version metadata resolver typing", VersionMetadataResolverRegression.RunAsync),
             ("Rule features and ARM64 compatibility", RuleArchitectureRegression.RunAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
@@ -1011,9 +1012,17 @@ internal static class Program
             Directory.CreateDirectory(Path.GetDirectoryName(launchWrapperPath)!);
             await File.WriteAllBytesAsync(launchWrapperPath, [2]);
 
-            var assetHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-            var objectPath = Path.Combine(assetsRoot, "objects", "aa", assetHash);
-            await File.WriteAllBytesAsync(objectPath, [3]);
+            var assetBytes = new byte[] { 3 };
+            var assetHash = Convert.ToHexString(
+                    SHA1.HashData(assetBytes))
+                .ToLowerInvariant();
+            var objectPath = Path.Combine(
+                assetsRoot,
+                "objects",
+                assetHash[..2],
+                assetHash);
+            Directory.CreateDirectory(Path.GetDirectoryName(objectPath)!);
+            await File.WriteAllBytesAsync(objectPath, assetBytes);
             await File.WriteAllTextAsync(
                 Path.Combine(assetsRoot, "indexes", "legacy.json"),
                 "{\"virtual\":true,\"objects\":{\"lang/en_US.lang\":{\"hash\":\"" + assetHash + "\"}}}");
