@@ -70,17 +70,22 @@ public sealed record ModProviderInstallResult(
 public sealed record ModProviderStagedInstall(
     ModProviderProject Project,
     ModProviderVersion Version,
-    string StagedPath,
-    string CleanupDirectory);
+    string StagedPath);
 
 public sealed record ModDependencyPlanEntry(
     ModProviderProject Project,
     ModProviderVersion Version,
     bool IsRoot);
 
+public sealed record ModProviderIncompatibility(
+    string SourceProjectId,
+    string SourceTitle,
+    ModProviderDependency Dependency);
+
 public sealed record ModDependencyPlan(
     IReadOnlyList<ModDependencyPlanEntry> InstallOrder,
-    IReadOnlyList<ModProviderDependency> OptionalDependencies)
+    IReadOnlyList<ModProviderDependency> OptionalDependencies,
+    IReadOnlyList<ModProviderIncompatibility> Incompatibilities)
 {
     public int RequiredDependencyCount => Math.Max(0, InstallOrder.Count - 1);
 }

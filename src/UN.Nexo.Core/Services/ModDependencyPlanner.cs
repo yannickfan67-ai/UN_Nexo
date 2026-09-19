@@ -33,24 +33,17 @@ public sealed class ModDependencyPlanner
         var selected = new Dictionary<string, ModDependencyPlanEntry>(StringComparer.Ordinal);
         var ordered = new List<ModDependencyPlanEntry>();
         var optional = new List<ModProviderDependency>();
-        var incompatibleEdges = new List<(string Source, ModProviderDependency Dependency)>();
+        var incompatibleEdges = new List<ModProviderIncompatibility>();
 
         await VisitAsync(rootProject, rootVersion, isRoot: true);
 
         foreach (var edge in incompatibleEdges)
         {
-            var conflict = edge.Dependency.ProjectId is { } projectId
-                ? selected.ContainsKey(projectId)
-                : edge.Dependency.VersionId is { } versionId
-                  && selected.Values.Any(item =>
-                      string.Equals(
-                          item.Version.VersionId,
-                          versionId,
-                          StringComparison.Ordinal));
-            if (conflict)
+            if (selected.Values.Any(item =>
+                    MatchesIncompatibility(edge.Dependency, item.Version)))
             {
                 throw new InvalidDataException(
-                    $"Dependency conflict: '{edge.Source}' declares an installed-plan project/version as incompatible.");
+                    $"Dependency conflict: '{edge.SourceTitle}' ({edge.SourceProjectId}) declares another project/version selected by this install plan as incompatible.");
             }
         }
 
@@ -58,6 +51,13 @@ public sealed class ModDependencyPlanner
             ordered,
             optional
                 .GroupBy(item => (item.ProjectId, item.VersionId, item.Type))
+                .Select(group => group.First())
+                .ToArray(),
+            incompatibleEdges
+                .GroupBy(item => (
+                    item.SourceProjectId,
+                    item.Dependency.ProjectId,
+                    item.Dependency.VersionId))
                 .Select(group => group.First())
                 .ToArray());
 
@@ -158,7 +158,10 @@ public sealed class ModDependencyPlanner
                             optional.Add(dependency);
                             break;
                         case ModProviderDependencyType.Incompatible:
-                            incompatibleEdges.Add((project.ProjectId, dependency));
+                            incompatibleEdges.Add(new ModProviderIncompatibility(
+                                project.ProjectId,
+                                project.Title,
+                                dependency));
                             break;
                         case ModProviderDependencyType.Embedded:
                             break;
@@ -177,6 +180,26 @@ public sealed class ModDependencyPlanner
                 visiting.Remove(project.ProjectId);
             }
         }
+    }
+
+    private static bool MatchesIncompatibility(
+        ModProviderDependency dependency,
+        ModProviderVersion version)
+    {
+        var projectMatches = dependency.ProjectId is null
+            || string.Equals(
+                dependency.ProjectId,
+                version.ProjectId,
+                StringComparison.Ordinal);
+        var versionMatches = dependency.VersionId is null
+            || string.Equals(
+                dependency.VersionId,
+                version.VersionId,
+                StringComparison.Ordinal);
+        return projectMatches
+               && versionMatches
+               && (dependency.ProjectId is not null
+                   || dependency.VersionId is not null);
     }
 
     private static string RequireValue(string value, string parameterName)

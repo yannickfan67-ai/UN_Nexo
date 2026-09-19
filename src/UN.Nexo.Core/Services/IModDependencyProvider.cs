@@ -18,5 +18,6 @@ public interface IModDependencyProvider : IModProvider
     Task<ModProviderStagedInstall> StageAsync(
         ModProviderProject project,
         ModProviderVersion version,
+        string stagingDirectory,
         CancellationToken cancellationToken = default);
 }
