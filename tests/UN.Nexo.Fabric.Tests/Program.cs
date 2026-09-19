@@ -29,6 +29,7 @@ try
     await UN.Nexo.Fabric.Tests.FabricMetaSizeRegression.RunAsync();
     await RunFabricPrepareValidationRegressionAsync();
     await UN.Nexo.Fabric.Tests.QuiltLoaderRegression.RunAsync();
+    await UN.Nexo.Fabric.Tests.ForgeLoaderRegression.RunAsync();
     await UN.Nexo.Fabric.Tests.FabricLibraryIntegrityRegression.RunAsync();
     RunMavenPathRegression();
     Console.WriteLine("Fabric regression checks passed.");
