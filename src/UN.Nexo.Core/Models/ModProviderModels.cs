@@ -11,6 +11,10 @@ public sealed record ModProviderProject(
     long Downloads,
     string ProjectUrl);
 
+public sealed record ModProviderRecommendation(
+    ModProviderProject Project,
+    string Signal);
+
 public sealed record ModProviderFile(
     string FileName,
     string DownloadUrl,
