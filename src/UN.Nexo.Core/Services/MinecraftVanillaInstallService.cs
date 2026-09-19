@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
@@ -308,21 +309,14 @@ public sealed class MinecraftVanillaInstallService
 
         foreach (var library in libraries.EnumerateArray())
         {
-            if (!ShouldUseLibrary(library) || !library.TryGetProperty("downloads", out var downloads))
+            if (!MinecraftRules.Allows(library)
+                || !library.TryGetProperty("downloads", out var downloads))
                 continue;
 
             if (downloads.TryGetProperty("artifact", out var artifact))
                 AddDownloadJob(jobs, artifact, librariesRoot, null, []);
 
-            if (!library.TryGetProperty("natives", out var natives))
-                continue;
-
-            var osKey = GetMinecraftOsKey();
-            if (!natives.TryGetProperty(osKey, out var classifierElement))
-                continue;
-
-            var classifier = (classifierElement.GetString() ?? string.Empty)
-                .Replace("${arch}", Environment.Is64BitOperatingSystem ? "64" : "32", StringComparison.Ordinal);
+            var classifier = MinecraftRules.NativeClassifier(library);
             if (string.IsNullOrWhiteSpace(classifier)
                 || !downloads.TryGetProperty("classifiers", out var classifiers)
                 || !classifiers.TryGetProperty(classifier, out var nativeArtifact))
@@ -368,60 +362,6 @@ public sealed class MinecraftVanillaInstallService
             relativePath,
             "library artifact path");
         jobs.Add(new DownloadJob(url, localPath, sha1, extractTo, excludes));
-    }
-
-    private static bool ShouldUseLibrary(JsonElement library)
-    {
-        if (!library.TryGetProperty("rules", out var rules))
-            return true;
-
-        var allowed = false;
-        foreach (var rule in rules.EnumerateArray())
-        {
-            if (!RuleMatchesCurrentMachine(rule))
-                continue;
-
-            var action = rule.TryGetProperty("action", out var actionElement)
-                ? actionElement.GetString()
-                : "disallow";
-            allowed = string.Equals(action, "allow", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return allowed;
-    }
-
-    private static bool RuleMatchesCurrentMachine(JsonElement rule)
-    {
-        if (rule.TryGetProperty("features", out _))
-            return false;
-
-        if (!rule.TryGetProperty("os", out var os))
-            return true;
-
-        if (os.TryGetProperty("name", out var nameElement))
-        {
-            var required = nameElement.GetString();
-            if (!string.Equals(required, GetMinecraftOsKey(), StringComparison.OrdinalIgnoreCase))
-                return false;
-        }
-
-        if (os.TryGetProperty("arch", out var archElement))
-        {
-            var requiredArch = archElement.GetString();
-            var currentArch = Environment.Is64BitOperatingSystem ? "x86_64" : "x86";
-            if (!string.Equals(requiredArch, currentArch, StringComparison.OrdinalIgnoreCase)
-                && !(requiredArch == "x86" && !Environment.Is64BitOperatingSystem))
-                return false;
-        }
-
-        return true;
-    }
-
-    private static string GetMinecraftOsKey()
-    {
-        if (OperatingSystem.IsWindows()) return "windows";
-        if (OperatingSystem.IsMacOS()) return "osx";
-        return "linux";
     }
 
     internal static void ExtractNativeArchive(
