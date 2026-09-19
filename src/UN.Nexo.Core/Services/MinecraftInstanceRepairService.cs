@@ -16,6 +16,7 @@ public sealed class MinecraftInstanceRepairService
     private readonly MinecraftRuntimeInspector _runtimeInspector;
     private readonly JavaRuntimeProvisionService _runtimeProvisioner;
     private readonly FabricInstallService? _fabricInstaller;
+    private readonly InstanceOperationCoordinator _instanceOperations;
 
     public MinecraftInstanceRepairService(
         NexoPathService paths,
@@ -33,6 +34,8 @@ public sealed class MinecraftInstanceRepairService
         _runtimeInspector = runtimeInspector;
         _runtimeProvisioner = runtimeProvisioner;
         _fabricInstaller = fabricInstaller;
+        _instanceOperations =
+            new InstanceOperationCoordinator(paths);
     }
 
     public async Task<InstanceHealthReport> CheckAsync(
@@ -171,6 +174,13 @@ public sealed class MinecraftInstanceRepairService
         IProgress<string>? statusProgress = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(instance);
+        using var operation =
+            await _instanceOperations.AcquireAsync(
+                instance.Id,
+                "repair instance",
+                cancellationToken);
+
         statusProgress?.Report("Finding Minecraft metadata…");
         var catalog = await _manifest.GetCatalogAsync(cancellationToken);
 
