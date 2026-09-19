@@ -442,6 +442,11 @@ public sealed class InstanceModService
         if (!File.Exists(currentPath))
             throw new FileNotFoundException("The selected mod no longer exists.", currentPath);
 
+        VerifyPhysicalDirectory(modsDirectory);
+        EnsurePhysicalRegularFile(
+            currentPath,
+            "The selected mod is no longer a physical managed file.");
+
         var currentlyEnabled = fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase);
         if (currentlyEnabled == enabled)
             return CreateModel(currentPath);
@@ -450,10 +455,15 @@ public sealed class InstanceModService
             ? fileName[..^DisabledSuffix.Length]
             : fileName + DisabledSuffix;
         var targetPath = ResolveManagedPath(modsDirectory, targetFileName, true);
-        if (File.Exists(targetPath))
-            throw new IOException($"Cannot change mod state because '{targetFileName}' already exists.");
+        EnsureMutationTargetAbsent(targetPath, targetFileName);
 
+        // Revalidate at the mutation boundary so a managed JAR replaced after
+        // selection cannot be renamed into the enabled/disabled namespace.
         VerifyPhysicalDirectory(modsDirectory);
+        EnsurePhysicalRegularFile(
+            currentPath,
+            "The selected mod changed before its state could be updated.");
+        EnsureMutationTargetAbsent(targetPath, targetFileName);
         File.Move(currentPath, targetPath);
         return CreateModel(targetPath);
     }
@@ -483,6 +493,17 @@ public sealed class InstanceModService
             throw new FileNotFoundException("The selected mod no longer exists.", path);
 
         VerifyPhysicalDirectory(modsDirectory);
+        EnsurePhysicalRegularFile(
+            path,
+            "The selected mod is no longer a physical managed file.");
+
+        // Revalidate immediately before deletion. The instance lease prevents
+        // launcher operations from racing this mutation; this check also rejects
+        // an out-of-band replacement with a symlink/reparse entry.
+        VerifyPhysicalDirectory(modsDirectory);
+        EnsurePhysicalRegularFile(
+            path,
+            "The selected mod changed before it could be removed.");
         File.Delete(path);
     }
 
@@ -711,6 +732,31 @@ public sealed class InstanceModService
             || (attributes & FileAttributes.ReparsePoint) != 0)
         {
             throw new InvalidDataException(message);
+        }
+    }
+
+    private static void EnsureMutationTargetAbsent(
+        string path,
+        string fileName)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.Directory) != 0
+                || (attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidDataException(
+                    $"Cannot change mod state because '{fileName}' is not a physical managed file.");
+            }
+
+            throw new IOException(
+                $"Cannot change mod state because '{fileName}' already exists.");
+        }
+        catch (FileNotFoundException)
+        {
+        }
+        catch (DirectoryNotFoundException)
+        {
         }
     }
 
