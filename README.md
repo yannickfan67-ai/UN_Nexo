@@ -6,7 +6,7 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.7.9-dev
+## Current milestone — v0.8.0-dev
 
 The current development line includes:
 
@@ -20,6 +20,8 @@ The current development line includes:
 - Terminal launch results remain visible after the session ends instead of being immediately replaced by a generic Ready message
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
+- First-class Fabric, Quilt, Forge and NeoForge instance preparation/launch with automatic pre-launch preparation and inherited Java/profile handling
+- Quilt, Forge and NeoForge managers support compatible loader discovery plus create, prepare and repair flows using their official metadata/distribution paths
 - One-click instance integrity checking and repair for install state, metadata, client JAR, libraries, asset index/objects, extracted natives, required Java and Linux runtime dependencies
 - Repair verifies Mojang SHA-1 metadata, rejects unsafe metadata paths/hashes, keeps verified files and reacquires only missing or corrupt Vanilla components
 - Repair preserves worlds, mods, resource packs, screenshots and ordinary configuration; legacy virtual assets and pre-1.6 resources are rebuilt after object repair
@@ -44,6 +46,8 @@ The current development line includes:
 - Safe process launching through `ProcessStartInfo.ArgumentList`, including paths containing spaces
 - Per-launch stdout/stderr logs, exit-code reporting and Stop game support
 - Quick access to selected-instance game and launcher-log folders
+- Provider-neutral mod browser for Modrinth and CurseForge, with compatible recommendations, dependency planning and atomic multi-mod publication
+- Installed-mod matching/update checks preserve disabled state and coordinate with the same per-instance operation lease
 - Server Hub with persistent favorites and validated host/port/IPv6 addresses
 - Version-aware direct multiplayer launching: Quick Play when advertised by modern metadata, legacy server/port arguments for older versions
 - Linux DEB/RPM and Windows self-contained EXE prerelease packages
@@ -161,10 +165,9 @@ When a custom API base is configured, Nexo does **not** send `x-api-key` to that
 - Live Microsoft/Minecraft sign-in still depends on Minecraft Services authorizing the registered UN_Nexo Client ID and completing real-account acceptance testing
 - Runtime overrides are global; per-instance memory/JVM overrides are not implemented yet
 - Friend-to-friend room-code/P2P networking is not included yet
-- Fabric preparation/repair is included; Forge and NeoForge installers are not included yet
+- Fabric, Quilt, Forge and NeoForge preparation/launch are included; deeper integrity diagnostics remain strongest for Vanilla/Fabric while the other loader managers can re-run their verified preparation/repair path
 - HTTP Range resume for partially downloaded files is not implemented yet
 - Mod management supports local JARs plus Modrinth and CurseForge mods; resource-pack/shader management is not included yet
-- Repair supports Vanilla and Fabric; other loader-specific repair is not implemented yet
 - Linux CI uses Ubuntu/Xvfb; Linux Mint/Cinnamon still needs real-device acceptance testing
 
 ## Next milestones
@@ -173,8 +176,8 @@ When a custom API base is configured, Nexo does **not** send `x-api-key` to that
 2. Complete live Minecraft Services authorization/acceptance for the UN_Nexo Client ID and real-account acceptance testing
 3. Add per-instance runtime overrides and richer managed-Java controls
 4. Add instance rename/delete and richer backup/restore management
-5. Add NeoForge and Forge support after the current Fabric path
-6. Extend provider browsing to resource packs/shaders and compatible-mod recommendations
+5. Expand loader-specific integrity diagnostics beyond the current verified manager re-preparation/repair flows
+6. Extend provider browsing to resource packs/shaders and richer recommendation controls
 7. Add Terracotta/EasyTier/Scaffolding-compatible friend room networking after protocol/license review
 8. Add app/package icons, signing and updater
 
