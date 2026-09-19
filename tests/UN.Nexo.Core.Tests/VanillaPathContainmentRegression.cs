@@ -257,13 +257,32 @@ internal static class VanillaPathContainmentRegression
                 MetadataRequests++;
                 var json = mode == PathFixtureMode.EmptyVersion
                     ? "{\"id\":\"1.21.4\",\"libraries\":[]}"
-                    : "{\"id\":\"1.21.4\",\"libraries\":[{\"name\":\"com.example:lib:1.0\","
+                    : "{\"id\":\"1.21.4\","
+                      + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                      + "\"assetIndex\":{\"id\":\"path-assets\",\"url\":\"https://launchermeta.mojang.com/path-assets.json\"},"
+                      + "\"libraries\":[{\"name\":\"com.example:lib:1.0\","
                       + "\"downloads\":{\"artifact\":{\"path\":"
                       + System.Text.Json.JsonSerializer.Serialize(artifactPath)
                       + ",\"url\":\"https://libraries.minecraft.net/path-test.jar\"}}}]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(json, Encoding.UTF8, "application/json")
+                });
+            }
+
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("client"))
+                });
+            }
+
+            if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"objects\":{}}", Encoding.UTF8, "application/json")
                 });
             }
 

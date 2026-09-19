@@ -272,12 +272,43 @@ internal static class FabricLibraryIntegrityRegression
             var uri = request.RequestUri
                 ?? throw new InvalidOperationException("Missing request URI.");
 
-            if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
+            if (uri.AbsolutePath.EndsWith(
+                    "/version.json",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                const string metadata =
+                    "{\"id\":\"1.21.4\",\"libraries\":[],"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                    + "\"assetIndex\":{\"id\":\"fabric-library-assets\","
+                    + "\"url\":\"https://launchermeta.mojang.com/fabric-library-assets.json\"}}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        metadata,
+                        Encoding.UTF8,
+                        "application/json")
+                });
+            }
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/client.jar",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(
+                        Encoding.UTF8.GetBytes("client"))
+                });
+            }
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/fabric-library-assets.json",
+                    StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
-                        "{\"id\":\"1.21.4\",\"libraries\":[]}",
+                        "{\"objects\":{}}",
                         Encoding.UTF8,
                         "application/json")
                 });

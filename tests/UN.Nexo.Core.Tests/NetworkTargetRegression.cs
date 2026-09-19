@@ -246,17 +246,40 @@ internal static class NetworkTargetRegression
             if (scenario == TargetScenario.TrustedRedirect
                 && uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
-                TrustedRedirectRequests++;
-                return Task.FromResult(Json(
-                    "{\"id\":\"trusted-redirect\",\"libraries\":[]}"));
+                if (uri.AbsolutePath.Equals(
+                        "/trusted-redirect.json",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    TrustedRedirectRequests++;
+                    return Task.FromResult(Json(
+                        "{\"id\":\"trusted-redirect\","
+                        + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                        + "\"assetIndex\":{\"id\":\"trusted-assets\",\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
+                        + "\"libraries\":[]}"));
+                }
+
+                if (uri.AbsolutePath.Equals(
+                        "/assets.json",
+                        StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(Json("{\"objects\":{}}"));
+            }
+
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("client"))
+                });
             }
 
             if (scenario == TargetScenario.PrivateArtifact
                 && uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 const string metadata =
-                    "{\"id\":\"artifact-test\",\"libraries\":[{" +
-                    "\"name\":\"example:private:1.0\",\"downloads\":{\"artifact\":{" +
+                    "{\"id\":\"artifact-test\","
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                    + "\"assetIndex\":{\"id\":\"artifact-assets\",\"url\":\"https://launchermeta.mojang.com/artifact-assets.json\"},"
+                    + "\"libraries\":[{\"name\":\"example:private:1.0\",\"downloads\":{\"artifact\":{" +
                     "\"path\":\"example/private/1.0/private-1.0.jar\"," +
                     "\"url\":\"https://127.0.0.1/private.jar\"}}}]}";
                 return Task.FromResult(Json(metadata));

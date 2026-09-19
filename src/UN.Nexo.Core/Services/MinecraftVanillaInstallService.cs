@@ -147,20 +147,53 @@ public sealed class MinecraftVanillaInstallService
             cancellationToken);
         var root = versionDocument.RootElement;
 
-        if (root.TryGetProperty("downloads", out var downloads)
-            && downloads.TryGetProperty("client", out var client))
+        JsonElement client;
+        JsonElement assetIndex;
+        string assetId;
+        try
         {
-            Report(progress, new InstallProgress("Minecraft client", 0, 1, versionId));
-            var clientUrl = client.GetProperty("url").GetString() ?? throw new InvalidDataException("Client URL missing.");
-            var clientSha1 = client.TryGetProperty("sha1", out var clientSha) ? clientSha.GetString() : null;
-            var clientPath = MetadataPath.ResolveSingleComponent(
-                versionRoot,
+            ValidatePreparationMetadata(
+                root,
                 versionId,
-                ".jar",
-                "version.id");
-            await DownloadFileAsync(clientUrl, clientPath, clientSha1, "Minecraft client", 0, 1, progress, cancellationToken);
-            Report(progress, new InstallProgress("Minecraft client", 1, 1, versionId, Detail: "Client JAR ready"));
+                out client,
+                out assetIndex,
+                out assetId);
         }
+        catch (InvalidDataException)
+        {
+            TryDeleteFile(versionJsonPath);
+            throw;
+        }
+
+        Report(progress, new InstallProgress("Minecraft client", 0, 1, versionId));
+        var clientUrl = RequireString(
+            client,
+            "url",
+            "downloads.client.url");
+        var clientSha1 = OptionalString(
+            client,
+            "sha1",
+            "downloads.client.sha1");
+        var clientPath = MetadataPath.ResolveSingleComponent(
+            versionRoot,
+            versionId,
+            ".jar",
+            "version.id");
+        await DownloadFileAsync(
+            clientUrl,
+            clientPath,
+            clientSha1,
+            "Minecraft client",
+            0,
+            1,
+            progress,
+            cancellationToken);
+        Report(progress, new InstallProgress(
+            "Minecraft client",
+            1,
+            1,
+            versionId,
+            Detail: "Client JAR ready"));
 
         var libraryJobs = CollectLibraryDownloads(root, librariesRoot, nativesRoot);
         var libraryCompleted = 0;
@@ -176,34 +209,43 @@ public sealed class MinecraftVanillaInstallService
             Report(progress, new InstallProgress("Libraries", libraryCompleted, libraryJobs.Count, Path.GetFileName(job.Path)));
         }
 
-        if (root.TryGetProperty("assetIndex", out var assetIndex))
-        {
-            var assetId = MetadataPath.RequireSingleComponent(
-                assetIndex.GetProperty("id").GetString(),
-                "assetIndex.id");
-            var assetUrl = assetIndex.GetProperty("url").GetString() ?? throw new InvalidDataException("Asset index URL missing.");
-            var assetSha1 = assetIndex.TryGetProperty("sha1", out var indexSha) ? indexSha.GetString() : null;
-            var indexPath = MetadataPath.ResolveSingleComponent(
-                Path.Combine(assetsRoot, "indexes"),
-                assetId,
-                ".json",
-                "assetIndex.id");
+        var assetUrl = RequireString(
+            assetIndex,
+            "url",
+            "assetIndex.url");
+        var assetSha1 = OptionalString(
+            assetIndex,
+            "sha1",
+            "assetIndex.sha1");
+        var indexPath = MetadataPath.ResolveSingleComponent(
+            Path.Combine(assetsRoot, "indexes"),
+            assetId,
+            ".json",
+            "assetIndex.id");
 
-            Report(progress, new InstallProgress("Asset index", 0, 1, assetId));
-            await DownloadFileAsync(
-                assetUrl,
-                indexPath,
-                assetSha1,
-                "Asset index",
-                0,
-                1,
-                progress,
-                cancellationToken,
-                MaxAssetIndexBytes);
-            Report(progress, new InstallProgress("Asset index", 1, 1, assetId, Detail: "Asset index ready"));
+        Report(progress, new InstallProgress("Asset index", 0, 1, assetId));
+        await DownloadFileAsync(
+            assetUrl,
+            indexPath,
+            assetSha1,
+            "Asset index",
+            0,
+            1,
+            progress,
+            cancellationToken,
+            MaxAssetIndexBytes);
+        Report(progress, new InstallProgress(
+            "Asset index",
+            1,
+            1,
+            assetId,
+            Detail: "Asset index ready"));
 
-            await DownloadAssetsAsync(indexPath, assetsRoot, progress, cancellationToken);
-        }
+        await DownloadAssetsAsync(
+            indexPath,
+            assetsRoot,
+            progress,
+            cancellationToken);
 
         var state = new
         {
@@ -224,6 +266,105 @@ public sealed class MinecraftVanillaInstallService
 
         Report(progress, new InstallProgress("Ready", 1, 1, versionId, Detail: "All required Vanilla files are ready"));
     }
+
+    private static void ValidatePreparationMetadata(
+        JsonElement root,
+        string expectedVersionId,
+        out JsonElement client,
+        out JsonElement assetIndex,
+        out string assetId)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("root", "an object");
+
+        var declaredId = RequireString(root, "id", "id");
+        if (!string.Equals(
+                declaredId,
+                expectedVersionId,
+                StringComparison.Ordinal))
+            throw new InvalidDataException(
+                $"Version metadata id '{declaredId}' does not match selected version '{expectedVersionId}'.");
+
+        var downloads = RequireObject(
+            root,
+            "downloads",
+            "downloads");
+        client = RequireObject(
+            downloads,
+            "client",
+            "downloads.client");
+        _ = RequireString(
+            client,
+            "url",
+            "downloads.client.url");
+        _ = OptionalString(
+            client,
+            "sha1",
+            "downloads.client.sha1");
+
+        assetIndex = RequireObject(
+            root,
+            "assetIndex",
+            "assetIndex");
+        assetId = MetadataPath.RequireSingleComponent(
+            RequireString(
+                assetIndex,
+                "id",
+                "assetIndex.id"),
+            "assetIndex.id");
+        _ = RequireString(
+            assetIndex,
+            "url",
+            "assetIndex.url");
+        _ = OptionalString(
+            assetIndex,
+            "sha1",
+            "assetIndex.sha1");
+    }
+
+    private static JsonElement RequireObject(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value)
+            || value.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata(displayName, "an object");
+
+        return value;
+    }
+
+    private static string RequireString(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value)
+            || value.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(value.GetString()))
+            throw InvalidMetadata(displayName, "a non-empty string");
+
+        return value.GetString()!;
+    }
+
+    private static string? OptionalString(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+            return null;
+        if (value.ValueKind != JsonValueKind.String)
+            throw InvalidMetadata(displayName, "a string");
+
+        return value.GetString();
+    }
+
+    private static InvalidDataException InvalidMetadata(
+        string propertyName,
+        string expected)
+        => new(
+            $"Vanilla version metadata property '{propertyName}' must be {expected}.");
 
     private async Task DownloadAssetsAsync(
         string indexPath,
@@ -595,6 +736,19 @@ public sealed class MinecraftVanillaInstallService
         }
         catch
         {
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+            // Best-effort quarantine cleanup only.
         }
     }
 
