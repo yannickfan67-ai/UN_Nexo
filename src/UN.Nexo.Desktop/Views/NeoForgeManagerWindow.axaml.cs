@@ -6,30 +6,30 @@ using UN.Nexo.Desktop.ViewModels;
 
 namespace UN.Nexo.Desktop.Views;
 
-public sealed partial class NeoNeoForgeManagerWindow : Window
+public sealed partial class NeoForgeManagerWindow : Window
 {
     private readonly MainWindowViewModel? _viewModel;
     private readonly MinecraftVersionManifestService? _manifest;
     private readonly InstanceStoreService? _instances;
-    private readonly NeoNeoForgeMetaService? _neoNeoForgeMeta;
-    private readonly NeoNeoForgeInstallService? _neoNeoForgeInstaller;
+    private readonly NeoForgeMetaService? _neoNeoForgeMeta;
+    private readonly NeoForgeInstallService? _neoNeoForgeInstaller;
     private readonly MinecraftVanillaInstallService? _vanillaInstaller;
     private IReadOnlyList<MinecraftVersionInfo> _catalogVersions = [];
     private CancellationTokenSource? _operationCancellation;
     private CancellationTokenSource? _loaderQueryCancellation;
     private bool _busy;
 
-    public NeoNeoForgeManagerWindow()
+    public NeoForgeManagerWindow()
     {
         InitializeComponent();
     }
 
-    public NeoNeoForgeManagerWindow(
+    public NeoForgeManagerWindow(
         MainWindowViewModel viewModel,
         MinecraftVersionManifestService manifest,
         InstanceStoreService instances,
-        NeoNeoForgeMetaService forgeMeta,
-        NeoNeoForgeInstallService forgeInstaller,
+        NeoForgeMetaService forgeMeta,
+        NeoForgeInstallService forgeInstaller,
         MinecraftVanillaInstallService vanillaInstaller) : this()
     {
         _viewModel = viewModel;
@@ -212,7 +212,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
             || MinecraftVersionBox.SelectedItem
                 is not MinecraftVersionInfo minecraft
             || LoaderVersionBox.SelectedItem
-                is not NeoNeoForgeLoaderVersion loader)
+                is not NeoForgeLoaderVersion loader)
         {
             return;
         }
@@ -247,7 +247,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
         try
         {
             var launchId =
-                NeoNeoForgeMetaService.GetLaunchVersionId(
+                NeoForgeMetaService.GetLaunchVersionId(
                     minecraft.Id,
                     loader.Version);
             OperationStatus.Text =
@@ -263,7 +263,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
                     _operationCancellation!.Token);
             AddOrSelectInMain(instance);
 
-            await PrepareNeoNeoForgeAsync(
+            await PrepareNeoForgeAsync(
                 instance,
                 minecraft);
 
@@ -296,7 +296,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
     {
         if (_busy
             || _neoNeoForgeInstaller is null
-            || ExistingNeoNeoForgeList.SelectedItem
+            || ExistingNeoForgeList.SelectedItem
                 is not GameInstance instance)
         {
             return;
@@ -343,7 +343,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
 
             OperationStatus.Text =
                 $"Preparing '{instance.Name}' · NeoForge over Minecraft {baseId}…";
-            await PrepareNeoNeoForgeAsync(
+            await PrepareNeoForgeAsync(
                 instance,
                 baseVersion);
             AddOrSelectInMain(instance);
@@ -368,7 +368,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
         }
     }
 
-    private async Task PrepareNeoNeoForgeAsync(
+    private async Task PrepareNeoForgeAsync(
         GameInstance instance,
         MinecraftVersionInfo baseVersion)
     {
@@ -430,7 +430,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
         object? sender,
         SelectionChangedEventArgs e)
     {
-        if (ExistingNeoNeoForgeList.SelectedItem
+        if (ExistingNeoForgeList.SelectedItem
             is not GameInstance instance)
         {
             ExistingDetail.Text =
@@ -467,13 +467,13 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
                     StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-        ExistingNeoNeoForgeList.ItemsSource =
+        ExistingNeoForgeList.ItemsSource =
             forge;
         var wanted =
             selectId
-            ?? (ExistingNeoNeoForgeList.SelectedItem
+            ?? (ExistingNeoForgeList.SelectedItem
                 as GameInstance)?.Id;
-        ExistingNeoNeoForgeList.SelectedItem =
+        ExistingNeoForgeList.SelectedItem =
             forge.FirstOrDefault(item =>
                 item.Id == wanted)
             ?? forge.FirstOrDefault();
@@ -525,7 +525,7 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
         CancelButton.IsEnabled = false;
         RefreshCreateAvailability();
         PrepareExistingButton.IsEnabled =
-            ExistingNeoNeoForgeList.SelectedItem
+            ExistingNeoForgeList.SelectedItem
                 is GameInstance selected
             && !string.IsNullOrWhiteSpace(
                 selected.LoaderVersion);
@@ -538,6 +538,6 @@ public sealed partial class NeoNeoForgeManagerWindow : Window
             && MinecraftVersionBox.SelectedItem
                 is MinecraftVersionInfo
             && LoaderVersionBox.SelectedItem
-                is NeoNeoForgeLoaderVersion;
+                is NeoForgeLoaderVersion;
     }
 }
