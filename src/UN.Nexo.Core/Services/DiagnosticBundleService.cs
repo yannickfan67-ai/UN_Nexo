@@ -29,11 +29,13 @@ public sealed class DiagnosticBundleService
         CrashDiagnosis diagnosis,
         int? exitCode,
         IEnumerable<string?> sourceLogPaths,
+        IEnumerable<string?> allowedLogRoots,
         IEnumerable<string?>? secrets = null,
         CancellationToken cancellationToken = default)
     {
         var secretValues = NormalizeSecrets(secrets);
-        var logs = NormalizeSourceLogs(sourceLogPaths);
+        var allowedRoots = NormalizeAllowedRoots(allowedLogRoots);
+        var logs = NormalizeSourceLogs(sourceLogPaths, allowedRoots);
         var preview = new StringBuilder();
 
         foreach (var path in logs)
@@ -44,6 +46,7 @@ public sealed class DiagnosticBundleService
 
             try
             {
+                EnsureAuthorizedSourceLog(path, allowedRoots);
                 var tail = await _diagnosis.ReadLogTailAsync(path, PreviewTailBytes, cancellationToken);
                 var sanitized = _diagnosis.Sanitize(tail, secretValues);
                 preview.AppendLine($"--- {Path.GetFileName(path)} ---");
@@ -78,13 +81,15 @@ public sealed class DiagnosticBundleService
         CrashDiagnosis diagnosis,
         int? exitCode,
         IEnumerable<string?> sourceLogPaths,
+        IEnumerable<string?> allowedLogRoots,
         string archivePath,
         IEnumerable<string?>? secrets = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
         var secretValues = NormalizeSecrets(secrets);
-        var logs = NormalizeSourceLogs(sourceLogPaths);
+        var allowedRoots = NormalizeAllowedRoots(allowedLogRoots);
+        var logs = NormalizeSourceLogs(sourceLogPaths, allowedRoots);
         var sanitizedDiagnosis = SanitizeDiagnosis(diagnosis, secretValues);
         var createdAt = DateTimeOffset.Now;
 
@@ -149,6 +154,7 @@ public sealed class DiagnosticBundleService
                         string text;
                         try
                         {
+                            EnsureAuthorizedSourceLog(path, allowedRoots);
                             text = await _diagnosis.ReadLogTailAsync(
                                 path,
                                 ExportTailBytes,
@@ -207,12 +213,12 @@ public sealed class DiagnosticBundleService
             SuggestedAction = _diagnosis.Sanitize(diagnosis.SuggestedAction, secrets)
         };
 
-    private static List<string> NormalizeSourceLogs(IEnumerable<string?> sourceLogPaths)
+    private static List<string> NormalizeSourceLogs(
+        IEnumerable<string?> sourceLogPaths,
+        IReadOnlyList<string> allowedRoots)
     {
         var result = new List<string>();
-        var seen = new HashSet<string>(OperatingSystem.IsWindows()
-            ? StringComparer.OrdinalIgnoreCase
-            : StringComparer.Ordinal);
+        var seen = new HashSet<string>(PathComparer());
 
         foreach (var candidate in sourceLogPaths)
         {
@@ -222,18 +228,110 @@ public sealed class DiagnosticBundleService
             try
             {
                 var full = Path.GetFullPath(candidate);
-                if (!File.Exists(full) || !seen.Add(full))
-                    continue;
-                result.Add(full);
+                EnsureAuthorizedSourceLog(full, allowedRoots);
+                if (seen.Add(full))
+                    result.Add(full);
             }
-            catch
+            catch (Exception ex) when (
+                ex is ArgumentException
+                or IOException
+                or UnauthorizedAccessException
+                or NotSupportedException)
             {
-                // Ignore invalid or inaccessible path syntax; callers still get a useful package.
+                // Ignore invalid, linked, outside-root or inaccessible candidates.
+                // Callers still get a useful bounded diagnostic package from healthy logs.
             }
         }
 
         return result;
     }
+
+    private static IReadOnlyList<string> NormalizeAllowedRoots(
+        IEnumerable<string?> allowedLogRoots)
+    {
+        ArgumentNullException.ThrowIfNull(allowedLogRoots);
+
+        var roots = new List<string>();
+        var seen = new HashSet<string>(PathComparer());
+        foreach (var candidate in allowedLogRoots)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+                continue;
+
+            var full = Path.GetFullPath(candidate);
+            if (seen.Add(full))
+                roots.Add(full);
+        }
+
+        if (roots.Count == 0)
+            throw new ArgumentException(
+                "At least one diagnostic log root is required.",
+                nameof(allowedLogRoots));
+
+        return roots;
+    }
+
+    private static void EnsureAuthorizedSourceLog(
+        string sourcePath,
+        IReadOnlyList<string> allowedRoots)
+    {
+        var full = Path.GetFullPath(sourcePath);
+        if (!File.Exists(full))
+            throw new IOException("Diagnostic source log no longer exists.");
+
+        var root = allowedRoots
+            .Where(candidate => IsContainedByRoot(full, candidate))
+            .OrderByDescending(candidate => candidate.Length)
+            .FirstOrDefault();
+        if (root is null)
+            throw new UnauthorizedAccessException(
+                "Diagnostic source log is outside the allowed log roots.");
+
+        RejectLinkedPathComponents(full);
+    }
+
+    private static bool IsContainedByRoot(string path, string root)
+    {
+        var fullRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullPath = Path.GetFullPath(path);
+        if (fullRoot.Length == 0)
+            return false;
+
+        var prefix = fullRoot + Path.DirectorySeparatorChar;
+        return fullPath.StartsWith(prefix, PathComparison());
+    }
+
+    private static void RejectLinkedPathComponents(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if (File.Exists(current) || Directory.Exists(current))
+            {
+                var attributes = File.GetAttributes(current);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new UnauthorizedAccessException(
+                        "Linked or reparse-point paths cannot be used as diagnostic log sources.");
+            }
+
+            var parent = Path.GetDirectoryName(current);
+            if (string.IsNullOrEmpty(parent)
+                || string.Equals(parent, current, PathComparison()))
+                break;
+            current = parent;
+        }
+    }
+
+    private static StringComparer PathComparer()
+        => OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private static StringComparison PathComparison()
+        => OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
     private static string?[] NormalizeSecrets(IEnumerable<string?>? secrets)
         => secrets?
