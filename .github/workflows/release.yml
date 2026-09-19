@@ -217,7 +217,7 @@ jobs:
           - Real Linux Mint/Cinnamon behavior remains an on-device acceptance check.
 
           This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
-          EOFF
+          EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "UN_Nexo $TAG" --notes-file RELEASE_NOTES.md --prerelease
