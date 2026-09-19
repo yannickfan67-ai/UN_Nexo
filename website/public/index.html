@@ -44,32 +44,71 @@
         </div>
       </div>
 
-      <div class="launcher-card" aria-label="Illustration of the UN_Nexo launcher">
+      <div class="launcher-card" aria-label="Preview matching the current UN_Nexo desktop interface">
         <div class="window-top">
           <div class="window-dots"><b></b><b></b><b></b></div>
           <span>UN_Nexo</span>
-          <em>PRE-RELEASE</em>
         </div>
         <div class="window-body">
-          <aside class="mini-nav">
-            <span class="mini-logo">N</span>
-            <i class="active"></i><i></i><i></i><i></i><i></i>
-          </aside>
-          <div class="mock-main">
-            <div class="mock-kicker">SELECTED INSTANCE</div>
-            <div class="mock-title">Minecraft 1.21.4</div>
-            <div class="mock-meta"><span>Vanilla</span><span>Java 21</span><span>Ready</span></div>
-            <div class="play-row">
-              <button type="button" tabindex="-1">PLAY</button>
-              <div class="health">
-                <small>INSTANCE HEALTH</small>
-                <strong>All files verified</strong>
-              </div>
+          <aside class="real-sidebar">
+            <div class="real-product">
+              <strong>UN_Nexo</strong>
+              <span>Minecraft Launcher</span>
             </div>
-            <div class="mock-grid">
-              <div><small>MEMORY</small><strong>Auto</strong><span>Recommended</span></div>
-              <div><small>RUNTIME</small><strong>Temurin</strong><span>Managed Java</span></div>
-              <div><small>REPAIR</small><strong>Verified</strong><span>SHA-1 checked</span></div>
+            <nav class="real-nav" aria-hidden="true">
+              <span class="active">Home</span>
+              <span>Instances</span>
+              <span>Accounts</span>
+              <span class="disabled">Downloads</span>
+              <span>Settings</span>
+            </nav>
+            <div class="real-version">
+              <strong>v0.7.9-dev</strong>
+              <span>Ready.</span>
+            </div>
+          </aside>
+
+          <div class="real-main">
+            <div class="real-heading">
+              <div>
+                <strong>Ready when you are.</strong>
+                <span>Pick an instance and account, then let Nexo handle the environment.</span>
+              </div>
+              <button type="button" tabindex="-1">Refresh</button>
+            </div>
+
+            <section class="real-card real-current">
+              <div>
+                <small>CURRENT INSTANCE</small>
+                <strong>Survival</strong>
+                <span>1.21.4</span>
+                <span>Offline profile · Player</span>
+              </div>
+              <button type="button" tabindex="-1">Play offline</button>
+            </section>
+
+            <section class="real-card real-log">
+              <strong>Ready to launch Minecraft 1.21.4.</strong>
+              <span>Offline profiles support local worlds and offline-mode servers. Java is selected automatically for the instance version.</span>
+              <div class="real-logbox">Launcher log output appears here…</div>
+            </section>
+
+            <div class="real-grid">
+              <section class="real-card real-catalog">
+                <div>
+                  <strong>Minecraft catalog</strong>
+                  <span>Version metadata and downloads</span>
+                </div>
+                <div class="real-release">
+                  <small>Latest release</small>
+                  <strong>1.21.4</strong>
+                </div>
+              </section>
+              <section class="real-card">
+                <strong>Environment</strong>
+                <span>Java 21 · x64</span>
+                <small>Runtime selected automatically</small>
+              </section>
             </div>
           </div>
         </div>
