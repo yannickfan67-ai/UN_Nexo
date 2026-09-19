@@ -36,6 +36,7 @@ internal static class Program
 
             await TestCloneWithoutWorldsAsync(lifecycle, paths, source);
             await TestCloneWithWorldsAsync(lifecycle, paths, source);
+            await TestInvalidInstallStateCloneAsync(lifecycle, paths);
             await TestFabricCloneMetadataAsync(lifecycle, paths);
             var backup = await TestBackupAsync(lifecycle, source);
             await BackupIntegrityRegression.RunAsync(lifecycle, paths, source, backup);
@@ -75,9 +76,15 @@ internal static class Program
         var metadata = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(cloneRoot, "instance.json")));
         Require(metadata.RootElement.GetProperty("id").GetString() == clone.Id, "instance.json should contain clone id.");
 
-        var installStateText = await File.ReadAllTextAsync(Path.Combine(cloneRoot, "install-state.json"));
+        var installStatePath = Path.Combine(cloneRoot, "install-state.json");
+        var installStateText = await File.ReadAllTextAsync(installStatePath);
         Require(installStateText.Contains(clone.Id, StringComparison.Ordinal), "install-state should reference the clone id.");
+        Require(installStateText.Contains(clone.Name, StringComparison.Ordinal), "install-state should reference the clone name.");
         Require(!installStateText.Contains(source.Id, StringComparison.Ordinal), "install-state must not retain the source id.");
+        Require(!installStateText.Contains(source.Name, StringComparison.Ordinal), "install-state must not retain the source name.");
+        Require(
+            !Directory.EnumerateFiles(cloneRoot, "install-state.json.*.tmp", SearchOption.TopDirectoryOnly).Any(),
+            "Clone install-state atomic rewrite should not leave temp files.");
     }
 
     private static async Task TestCloneWithWorldsAsync(
@@ -91,6 +98,62 @@ internal static class Program
         await File.WriteAllTextAsync(clonedLevel, "clone-only-change");
         var sourceLevel = Path.Combine(paths.GetInstanceGameDirectory(source.Id), "saves", "World A", "level.dat");
         Require(await File.ReadAllTextAsync(sourceLevel) == "original-A", "Clone must be independent from source files.");
+    }
+
+    private static async Task TestInvalidInstallStateCloneAsync(
+        InstanceLifecycleService lifecycle,
+        NexoPathService paths)
+    {
+        var fixtures = new[]
+        {
+            ("malformed", "{not-json"),
+            ("scalar", "\"source-bound-state\"")
+        };
+
+        foreach (var fixture in fixtures)
+        {
+            var source = new GameInstance(
+                Guid.NewGuid().ToString("N"),
+                "Invalid state source " + fixture.Item1,
+                "1.21.4",
+                "vanilla",
+                DateTimeOffset.UtcNow.AddMinutes(-1));
+            var sourceRoot = paths.GetInstanceDirectory(source.Id);
+            var gameRoot = paths.GetInstanceGameDirectory(source.Id);
+            Directory.CreateDirectory(gameRoot);
+            await File.WriteAllTextAsync(
+                Path.Combine(sourceRoot, "instance.json"),
+                JsonSerializer.Serialize(
+                    source,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                    {
+                        WriteIndented = true
+                    }));
+            await File.WriteAllTextAsync(
+                Path.Combine(sourceRoot, "install-state.json"),
+                fixture.Item2);
+            await File.WriteAllTextAsync(
+                Path.Combine(gameRoot, "marker.txt"),
+                fixture.Item1);
+
+            var clone = await lifecycle.CloneAsync(
+                source,
+                "Invalid state clone " + fixture.Item1,
+                includeWorlds: false);
+            var cloneRoot = paths.GetInstanceDirectory(clone.Id);
+
+            Require(
+                !File.Exists(Path.Combine(cloneRoot, "install-state.json")),
+                $"Clone with {fixture.Item1} install state must publish as unprepared.");
+            Require(
+                await File.ReadAllTextAsync(Path.Combine(cloneRoot, "game", "marker.txt"))
+                    == fixture.Item1,
+                $"Clone with {fixture.Item1} state should still copy ordinary instance files.");
+            Require(
+                await File.ReadAllTextAsync(Path.Combine(sourceRoot, "install-state.json"))
+                    == fixture.Item2,
+                $"Clone must not alter the source {fixture.Item1} install state.");
+        }
     }
 
     private static async Task TestFabricCloneMetadataAsync(
