@@ -20,45 +20,173 @@ public sealed class InstanceModService
     public IReadOnlyList<InstalledMod> List(string instanceId)
     {
         var modsDirectory = VerifyModsDirectory(instanceId, create: false);
-        if (modsDirectory is null) return [];
-        return Directory.EnumerateFiles(modsDirectory, "*", SearchOption.TopDirectoryOnly).Where(path => IsManagedModFileName(Path.GetFileName(path))).Select(CreateModel).OrderBy(mod => mod.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (modsDirectory is null)
+            return [];
+
+        return Directory
+            .EnumerateFiles(modsDirectory, "*", SearchOption.TopDirectoryOnly)
+            .Where(path =>
+                IsManagedModFileName(Path.GetFileName(path))
+                && IsPhysicalManagedModPath(path))
+            .Select(CreateModel)
+            .OrderBy(mod => mod.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
-    public async Task<InstalledMod> InstallAsync(string instanceId, string sourcePath, bool replaceExisting = true, CancellationToken cancellationToken = default)
+    public async Task<InstalledMod> InstallAsync(
+        string instanceId,
+        string sourcePath,
+        bool replaceExisting = true,
+        CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(sourcePath)) throw new ArgumentException("A local mod JAR path is required.", nameof(sourcePath));
-        var fullSourcePath = Path.GetFullPath(sourcePath);
-        if (!File.Exists(fullSourcePath)) throw new FileNotFoundException("The selected mod JAR does not exist.", fullSourcePath);
-        var fileName = Path.GetFileName(fullSourcePath);
-        if (!fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Only .jar files can be installed as mods.");
-        ValidateManagedFileName(fileName, false);
+        var (fullSourcePath, fileName) = ValidateInstallSource(sourcePath);
 
         await using var operationLease = await _operations.AcquireAsync(
             instanceId,
             "mod install",
             cancellationToken);
-        using var lease = await PathKeyedLock.AcquireAsync(
-            GetMutationKey(instanceId, fileName),
+        return await InstallCoreAsync(
+            instanceId,
+            fullSourcePath,
+            fileName,
+            replaceExisting,
             cancellationToken);
+    }
+
+    internal async Task<InstalledMod> InstallProviderUpdateAsync(
+        string instanceId,
+        string sourcePath,
+        string? existingFileName,
+        bool existingIsEnabled,
+        CancellationToken cancellationToken = default)
+    {
+        var (fullSourcePath, fileName) = ValidateInstallSource(sourcePath);
+        EnsurePhysicalRegularFile(
+            fullSourcePath,
+            "The staged provider mod must be a physical regular file.");
+
+        await using var operationLease = await _operations.AcquireAsync(
+            instanceId,
+            existingFileName is null ? "Modrinth install" : "Modrinth update",
+            cancellationToken);
+
+        if (existingFileName is null)
+        {
+            return await InstallCoreAsync(
+                instanceId,
+                fullSourcePath,
+                fileName,
+                replaceExisting: true,
+                cancellationToken);
+        }
+
+        ValidateManagedFileName(existingFileName, true);
         var modsDirectory = VerifyModsDirectory(instanceId, create: true)!;
-        var destinationPath = ResolveManagedPath(modsDirectory, fileName, false);
-        var disabledPath = ResolveManagedPath(modsDirectory, fileName + DisabledSuffix, true);
-        var temporaryPath = destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
-        if (!replaceExisting && (File.Exists(destinationPath) || File.Exists(disabledPath))) throw new IOException($"A mod named '{fileName}' is already installed in this instance.");
+        if (!TryResolvePhysicalManagedModPath(
+                modsDirectory,
+                existingFileName,
+                out var existingPath))
+        {
+            throw new FileNotFoundException(
+                "The previously matched mod no longer exists as a physical managed file.",
+                ResolveManagedPath(modsDirectory, existingFileName, true));
+        }
+
+        var finalFileName = existingIsEnabled
+            ? fileName
+            : fileName + DisabledSuffix;
+        var finalPath = ResolveManagedPath(
+            modsDirectory,
+            finalFileName,
+            allowDisabled: true);
+
+        if (FileNameEquals(existingFileName, finalFileName))
+        {
+            using var sameFileLease = await PathKeyedLock.AcquireAsync(
+                GetMutationKey(instanceId, finalFileName),
+                cancellationToken);
+            if (!TryResolvePhysicalManagedModPath(
+                    modsDirectory,
+                    existingFileName,
+                    out existingPath))
+            {
+                throw new FileNotFoundException(
+                    "The previously matched mod changed before the update could be published.",
+                    existingPath);
+            }
+
+            return await ReplaceExactManagedFileAsync(
+                modsDirectory,
+                fullSourcePath,
+                finalPath,
+                cancellationToken);
+        }
+
+        if (File.Exists(finalPath))
+        {
+            throw new IOException(
+                $"Cannot update this Modrinth project because '{finalFileName}' already exists.");
+        }
+
+        using (var newFileLease = await PathKeyedLock.AcquireAsync(
+                   GetMutationKey(instanceId, finalFileName),
+                   cancellationToken))
+        {
+            if (File.Exists(finalPath))
+            {
+                throw new IOException(
+                    $"Cannot update this Modrinth project because '{finalFileName}' already exists.");
+            }
+
+            await PublishNewManagedFileAsync(
+                modsDirectory,
+                fullSourcePath,
+                finalPath,
+                cancellationToken);
+        }
+
         try
         {
-            await using (var source = new FileStream(fullSourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
-            await using (var destination = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            using var oldFileLease = await PathKeyedLock.AcquireAsync(
+                GetMutationKey(instanceId, existingFileName),
+                cancellationToken);
+            if (!TryResolvePhysicalManagedModPath(
+                    modsDirectory,
+                    existingFileName,
+                    out existingPath))
             {
-                await source.CopyToAsync(destination, cancellationToken);
-                await destination.FlushAsync(cancellationToken);
+                throw new IOException(
+                    "The previous Modrinth file changed while the update was in progress.");
             }
+
             VerifyPhysicalDirectory(modsDirectory);
-            File.Move(temporaryPath, destinationPath, replaceExisting);
-            if (File.Exists(disabledPath)) File.Delete(disabledPath);
-            return CreateModel(destinationPath);
+            File.Delete(existingPath);
         }
-        finally { try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); } catch { } }
+        catch
+        {
+            // The instance operation lease is still held here, so Play/backup/repair
+            // cannot observe the transitional two-file state. Best-effort rollback
+            // removes the newly published file and leaves the old file recoverable.
+            using var rollbackLease = PathKeyedLock.Acquire(
+                GetMutationKey(instanceId, finalFileName));
+            if (TryResolvePhysicalManagedModPath(
+                    modsDirectory,
+                    finalFileName,
+                    out var rollbackPath))
+            {
+                try
+                {
+                    File.Delete(rollbackPath);
+                }
+                catch
+                {
+                }
+            }
+
+            throw;
+        }
+
+        return CreateModel(finalPath);
     }
 
     public InstalledMod SetEnabled(string instanceId, string fileName, bool enabled)
@@ -129,6 +257,256 @@ public sealed class InstanceModService
 
         VerifyPhysicalDirectory(modsDirectory);
         File.Delete(path);
+    }
+
+    internal static bool TryResolvePhysicalManagedModPath(
+        string modsDirectory,
+        string fileName,
+        out string path)
+    {
+        path = string.Empty;
+        try
+        {
+            if (!Directory.Exists(modsDirectory))
+                return false;
+
+            VerifyPhysicalDirectory(modsDirectory);
+            var candidate = ResolveManagedPath(
+                modsDirectory,
+                fileName,
+                allowDisabled: true);
+            if (!File.Exists(candidate) || !IsPhysicalManagedModPath(candidate))
+                return false;
+
+            path = candidate;
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException
+            or IOException
+            or UnauthorizedAccessException
+            or InvalidDataException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<InstalledMod> InstallCoreAsync(
+        string instanceId,
+        string fullSourcePath,
+        string fileName,
+        bool replaceExisting,
+        CancellationToken cancellationToken)
+    {
+        using var lease = await PathKeyedLock.AcquireAsync(
+            GetMutationKey(instanceId, fileName),
+            cancellationToken);
+        var modsDirectory = VerifyModsDirectory(instanceId, create: true)!;
+        var destinationPath = ResolveManagedPath(
+            modsDirectory,
+            fileName,
+            allowDisabled: false);
+        var disabledPath = ResolveManagedPath(
+            modsDirectory,
+            fileName + DisabledSuffix,
+            allowDisabled: true);
+        var temporaryPath =
+            destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
+
+        if (!replaceExisting
+            && (File.Exists(destinationPath) || File.Exists(disabledPath)))
+        {
+            throw new IOException(
+                $"A mod named '{fileName}' is already installed in this instance.");
+        }
+
+        try
+        {
+            await CopyPhysicalFileAsync(
+                fullSourcePath,
+                temporaryPath,
+                requirePhysicalSource: false,
+                cancellationToken);
+            VerifyPhysicalDirectory(modsDirectory);
+            File.Move(temporaryPath, destinationPath, replaceExisting);
+            if (File.Exists(disabledPath))
+                File.Delete(disabledPath);
+            return CreateModel(destinationPath);
+        }
+        finally
+        {
+            TryDelete(temporaryPath);
+        }
+    }
+
+    private static async Task<InstalledMod> ReplaceExactManagedFileAsync(
+        string modsDirectory,
+        string sourcePath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        var temporaryPath =
+            destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await CopyPhysicalFileAsync(
+                sourcePath,
+                temporaryPath,
+                requirePhysicalSource: true,
+                cancellationToken);
+            VerifyPhysicalDirectory(modsDirectory);
+            EnsurePhysicalRegularFile(
+                sourcePath,
+                "The staged provider mod changed before publication.");
+            File.Move(temporaryPath, destinationPath, overwrite: true);
+            return CreateModel(destinationPath);
+        }
+        finally
+        {
+            TryDelete(temporaryPath);
+        }
+    }
+
+    private static async Task PublishNewManagedFileAsync(
+        string modsDirectory,
+        string sourcePath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        var temporaryPath =
+            destinationPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await CopyPhysicalFileAsync(
+                sourcePath,
+                temporaryPath,
+                requirePhysicalSource: true,
+                cancellationToken);
+            VerifyPhysicalDirectory(modsDirectory);
+            EnsurePhysicalRegularFile(
+                sourcePath,
+                "The staged provider mod changed before publication.");
+            File.Move(temporaryPath, destinationPath, overwrite: false);
+        }
+        finally
+        {
+            TryDelete(temporaryPath);
+        }
+    }
+
+    private static async Task CopyPhysicalFileAsync(
+        string sourcePath,
+        string destinationPath,
+        bool requirePhysicalSource,
+        CancellationToken cancellationToken)
+    {
+        if (requirePhysicalSource)
+        {
+            EnsurePhysicalRegularFile(
+                sourcePath,
+                "The staged provider mod must be a physical regular file.");
+        }
+
+        await using var source = new FileStream(
+            sourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            81920,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+        if (requirePhysicalSource)
+        {
+            EnsurePhysicalRegularFile(
+                sourcePath,
+                "The staged provider mod changed before it could be read.");
+        }
+
+        await using var destination = new FileStream(
+            destinationPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            81920,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await source.CopyToAsync(destination, cancellationToken);
+        await destination.FlushAsync(cancellationToken);
+    }
+
+    private static (string FullSourcePath, string FileName) ValidateInstallSource(
+        string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            throw new ArgumentException(
+                "A local mod JAR path is required.",
+                nameof(sourcePath));
+        }
+
+        var fullSourcePath = Path.GetFullPath(sourcePath);
+        if (!File.Exists(fullSourcePath))
+        {
+            throw new FileNotFoundException(
+                "The selected mod JAR does not exist.",
+                fullSourcePath);
+        }
+
+        var fileName = Path.GetFileName(fullSourcePath);
+        if (!fileName.EndsWith(".jar", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Only .jar files can be installed as mods.");
+
+        ValidateManagedFileName(fileName, allowDisabled: false);
+        return (fullSourcePath, fileName);
+    }
+
+    private static bool IsPhysicalManagedModPath(string path)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return (attributes & FileAttributes.Directory) == 0
+                   && (attributes & FileAttributes.ReparsePoint) == 0;
+        }
+        catch (Exception ex) when (
+            ex is IOException
+            or UnauthorizedAccessException
+            or FileNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    private static void EnsurePhysicalRegularFile(
+        string path,
+        string message)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.Directory) != 0
+            || (attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidDataException(message);
+        }
+    }
+
+    private static bool FileNameEquals(string left, string right)
+        => string.Equals(
+            left,
+            right,
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+        }
     }
 
     private string GetMutationKey(string instanceId, string fileName)
