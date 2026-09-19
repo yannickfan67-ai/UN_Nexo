@@ -193,6 +193,14 @@ internal static class QuiltLoaderRegression
             Assert(
                 requiredJava == 21,
                 "Runtime inspector must inherit Java 21 for the Quilt instance.");
+
+            await TestLinkedLibraryParentRejectedAsync(
+                paths,
+                service,
+                baseVersion,
+                profileId,
+                minecraftVersion,
+                loaderVersion);
         }
         finally
         {
@@ -203,6 +211,124 @@ internal static class QuiltLoaderRegression
             catch
             {
             }
+        }
+    }
+
+    private static async Task TestLinkedLibraryParentRejectedAsync(
+        NexoPathService paths,
+        QuiltInstallService service,
+        MinecraftVersionInfo baseVersion,
+        string profileId,
+        string minecraftVersion,
+        string loaderVersion)
+    {
+        var instance = new GameInstance(
+            Guid.NewGuid().ToString("N"),
+            "Quilt linked-library regression",
+            profileId,
+            "quilt",
+            DateTimeOffset.UtcNow,
+            minecraftVersion,
+            loaderVersion);
+        var instanceRoot = paths.GetInstanceDirectory(instance.Id);
+        Directory.CreateDirectory(instanceRoot);
+
+        var librariesRoot = Path.Combine(
+            paths.GetInstanceGameDirectory(instance.Id),
+            "libraries");
+        Directory.CreateDirectory(librariesRoot);
+
+        var externalRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-quilt-linked-library-"
+            + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel = Path.Combine(externalRoot, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+
+        var linkedOrg = Path.Combine(librariesRoot, "org");
+        var linked = false;
+        try
+        {
+            linked = TryCreateDirectoryLink(linkedOrg, externalRoot);
+            if (!linked)
+                return;
+
+            try
+            {
+                await service.PrepareAsync(instance, baseVersion);
+                throw new InvalidOperationException(
+                    "Linked Quilt Maven parent unexpectedly accepted a library download.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                File.Exists(sentinel),
+                "Rejecting a linked Quilt Maven parent must not modify its external target.");
+            Assert(
+                !Directory.EnumerateFiles(
+                    externalRoot,
+                    "*",
+                    SearchOption.AllDirectories)
+                    .Any(path => !Path.GetFullPath(path)
+                        .Equals(
+                            Path.GetFullPath(sentinel),
+                            OperatingSystem.IsWindows()
+                                ? StringComparison.OrdinalIgnoreCase
+                                : StringComparison.Ordinal)),
+                "Quilt library preparation must not write through a linked Maven parent.");
+        }
+        finally
+        {
+            if (linked)
+                TryDeleteDirectoryLink(linkedOrg);
+            TryDeleteTree(instanceRoot);
+            TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static bool TryCreateDirectoryLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectoryLink(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteTree(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
         }
     }
 
