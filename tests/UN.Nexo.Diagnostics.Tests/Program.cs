@@ -147,6 +147,69 @@ internal static class Program
                 Contains(packageText, "<REDACTED>", "archive token redaction marker");
                 if (!string.IsNullOrWhiteSpace(home))
                     Contains(packageText, "<HOME>", "archive home marker");
+
+                var previousArchive = await File.ReadAllBytesAsync(archivePath);
+                using (var cancelled = new CancellationTokenSource())
+                {
+                    cancelled.Cancel();
+                    try
+                    {
+                        _ = await bundles.ExportAsync(
+                            diagnosis,
+                            1,
+                            [minecraftLog],
+                            archivePath,
+                            [token],
+                            cancelled.Token);
+                        throw new InvalidOperationException(
+                            "Cancelled replacement export unexpectedly succeeded.");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                }
+
+                EqualBytes(
+                    previousArchive,
+                    await File.ReadAllBytesAsync(archivePath),
+                    "cancelled replacement must preserve the existing diagnostic ZIP");
+
+                var overlapLog = Path.Combine(tempDirectory, "overlap.log");
+                await File.WriteAllTextAsync(
+                    overlapLog,
+                    new string('x', 480 * 1024) + "\nAuthorization: Bearer overlap-secret-token\n");
+                var firstExport = bundles.ExportAsync(
+                    diagnosis,
+                    1,
+                    [overlapLog],
+                    archivePath);
+                var secondExport = bundles.ExportAsync(
+                    diagnosis,
+                    2,
+                    [overlapLog],
+                    archivePath);
+                var overlapping = await Task.WhenAll(firstExport, secondExport);
+                Equal(archivePath, overlapping[0].ArchivePath,
+                    "first overlapping export destination");
+                Equal(archivePath, overlapping[1].ArchivePath,
+                    "second overlapping export destination");
+
+                using (var finalArchive = ZipFile.OpenRead(archivePath))
+                {
+                    Equal(true, finalArchive.GetEntry("manifest.txt") is not null,
+                        "overlapping replacement must leave a readable final ZIP");
+                    Equal(true, finalArchive.Entries.Any(entry =>
+                            entry.FullName.StartsWith("logs/", StringComparison.Ordinal)),
+                        "overlapping replacement must retain log entries");
+                }
+
+                Equal(false,
+                    Directory.EnumerateFiles(
+                            tempDirectory,
+                            Path.GetFileName(archivePath) + ".*.partial",
+                            SearchOption.TopDirectoryOnly)
+                        .Any(),
+                    "overlapping exports must clean operation-specific partial files");
             }
             finally
             {
@@ -179,6 +242,15 @@ internal static class Program
     {
         if (value.Contains(forbidden, StringComparison.Ordinal))
             throw new InvalidOperationException($"{message}: forbidden text remained in output.");
+    }
+
+    private static void EqualBytes(
+        byte[] expected,
+        byte[] actual,
+        string message)
+    {
+        if (!expected.AsSpan().SequenceEqual(actual))
+            throw new InvalidOperationException(message);
     }
 
     private static void DoesNotContainInsensitive(string value, string forbidden, string message)
