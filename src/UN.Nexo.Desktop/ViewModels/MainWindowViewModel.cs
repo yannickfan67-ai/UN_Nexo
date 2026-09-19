@@ -13,6 +13,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly NexoPathService _paths;
     private readonly MinecraftVersionManifestService _manifest;
     private readonly InstanceStoreService _instances;
+    private readonly InstanceLifecycleService _instanceLifecycle;
     private readonly MinecraftVanillaInstallService _installer;
     private readonly FabricInstallService _fabricInstaller;
     private readonly QuiltInstallService _quiltInstaller;
@@ -53,6 +54,10 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string instanceSummary = "0 instances";
     [ObservableProperty] private string catalogStatus = "Loading version catalog…";
     [ObservableProperty] private string newInstanceName = "New Minecraft";
+    [ObservableProperty] private string instanceRenameName = string.Empty;
+    [ObservableProperty] private bool deleteInstanceBackups;
+    [ObservableProperty] private bool isDeleteConfirmationPending;
+    [ObservableProperty] private string deleteInstanceButtonText = "Delete instance";
     [ObservableProperty] private MinecraftVersionInfo? selectedVersion;
     [ObservableProperty] private GameInstance? selectedInstance;
     [ObservableProperty] private LauncherAccount? selectedAccount;
@@ -76,9 +81,17 @@ public partial class MainWindowViewModel : ObservableObject
         && SelectedAccount is not null
         && (SelectedAccount.IsMicrosoft || (_testOfflineMode && SelectedAccount.IsOffline));
 
+    public bool CanManageSelectedInstance
+        => SelectedInstance is not null
+           && !IsBusy
+           && !IsInstallBusy
+           && !IsAccountAuthBusy
+           && !IsGameRunning;
+
     private void UpdatePlayAvailability()
     {
         OnPropertyChanged(nameof(CanPlay));
+        OnPropertyChanged(nameof(CanManageSelectedInstance));
         PlayCommand.NotifyCanExecuteChanged();
         StopGameCommand.NotifyCanExecuteChanged();
         if (IsGameRunning)
@@ -108,10 +121,33 @@ public partial class MainWindowViewModel : ObservableObject
             GameStatus = "Offline profiles cannot launch directly · use a verified Microsoft profile.";
     }
 
-    partial void OnIsBusyChanged(bool value) => UpdatePlayAvailability();
-    partial void OnIsInstallBusyChanged(bool value) => UpdatePlayAvailability();
-    partial void OnIsAccountAuthBusyChanged(bool value) => UpdatePlayAvailability();
-    partial void OnIsGameRunningChanged(bool value) => UpdatePlayAvailability();
+    partial void OnIsBusyChanged(bool value)
+    {
+        if (value)
+            ResetDeleteConfirmation();
+        UpdatePlayAvailability();
+    }
+
+    partial void OnIsInstallBusyChanged(bool value)
+    {
+        if (value)
+            ResetDeleteConfirmation();
+        UpdatePlayAvailability();
+    }
+
+    partial void OnIsAccountAuthBusyChanged(bool value)
+    {
+        if (value)
+            ResetDeleteConfirmation();
+        UpdatePlayAvailability();
+    }
+
+    partial void OnIsGameRunningChanged(bool value)
+    {
+        if (value)
+            ResetDeleteConfirmation();
+        UpdatePlayAvailability();
+    }
 
 
     public ObservableCollection<JavaInstallation> JavaInstallations { get; } = [];
@@ -125,6 +161,7 @@ public partial class MainWindowViewModel : ObservableObject
         NexoPathService paths,
         MinecraftVersionManifestService manifest,
         InstanceStoreService instances,
+        InstanceLifecycleService instanceLifecycle,
         MinecraftVanillaInstallService installer,
         FabricInstallService fabricInstaller,
         QuiltInstallService quiltInstaller,
@@ -145,6 +182,7 @@ public partial class MainWindowViewModel : ObservableObject
         _paths = paths;
         _manifest = manifest;
         _instances = instances;
+        _instanceLifecycle = instanceLifecycle;
         _installer = installer;
         _fabricInstaller = fabricInstaller;
         _quiltInstaller = quiltInstaller;
@@ -196,6 +234,11 @@ public partial class MainWindowViewModel : ObservableObject
     partial void OnSelectedInstanceChanged(GameInstance? value)
     {
         HasSelectedInstance = value is not null;
+        InstanceRenameName =
+            value?.Name
+            ?? string.Empty;
+        DeleteInstanceBackups = false;
+        ResetDeleteConfirmation();
         UpdatePlayAvailability();
         if (value is null)
         {
@@ -358,6 +401,169 @@ public partial class MainWindowViewModel : ObservableObject
         {
             IsBusy = false;
         }
+    }
+
+    [RelayCommand]
+    private async Task RenameSelectedInstanceAsync()
+    {
+        if (!CanManageSelectedInstance
+            || SelectedInstance is null)
+        {
+            return;
+        }
+
+        var target =
+            SelectedInstance;
+        IsBusy = true;
+        LauncherStatus =
+            $"Renaming {target.Name}…";
+
+        try
+        {
+            var renamed =
+                await _instanceLifecycle.RenameAsync(
+                    target,
+                    InstanceRenameName);
+
+            var index =
+                Instances
+                    .Select((item, itemIndex) =>
+                        (item, itemIndex))
+                    .FirstOrDefault(pair =>
+                        pair.item.Id.Equals(
+                            target.Id,
+                            StringComparison.Ordinal))
+                    .itemIndex;
+
+            if (index >= 0
+                && index < Instances.Count
+                && Instances[index].Id.Equals(
+                    target.Id,
+                    StringComparison.Ordinal))
+            {
+                Instances[index] =
+                    renamed;
+            }
+            else
+            {
+                await ReloadInstancesAsync(
+                    renamed.Id);
+            }
+
+            SelectedInstance =
+                Instances.FirstOrDefault(item =>
+                    item.Id.Equals(
+                        renamed.Id,
+                        StringComparison.Ordinal))
+                ?? renamed;
+            InstanceRenameName =
+                renamed.Name;
+            LauncherStatus =
+                $"Renamed instance to {renamed.Name}";
+        }
+        catch (Exception ex)
+        {
+            LauncherStatus =
+                $"Rename failed: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task DeleteSelectedInstanceAsync()
+    {
+        if (!CanManageSelectedInstance
+            || SelectedInstance is null)
+        {
+            return;
+        }
+
+        if (!IsDeleteConfirmationPending)
+        {
+            IsDeleteConfirmationPending =
+                true;
+            DeleteInstanceButtonText =
+                "Confirm delete";
+            LauncherStatus =
+                DeleteInstanceBackups
+                    ? $"Press Confirm delete to remove {SelectedInstance.Name} and its backups."
+                    : $"Press Confirm delete to remove {SelectedInstance.Name}. Backups will be preserved.";
+            return;
+        }
+
+        var target =
+            SelectedInstance;
+        IsBusy = true;
+        LauncherStatus =
+            $"Deleting {target.Name}…";
+
+        try
+        {
+            await _instanceLifecycle.DeleteAsync(
+                target,
+                DeleteInstanceBackups);
+
+            var existing =
+                Instances.FirstOrDefault(item =>
+                    item.Id.Equals(
+                        target.Id,
+                        StringComparison.Ordinal));
+            if (existing is not null)
+                Instances.Remove(existing);
+
+            SelectedInstance =
+                Instances.FirstOrDefault();
+            InstanceSummary =
+                $"{Instances.Count} instance{(Instances.Count == 1 ? string.Empty : "s")}";
+            LauncherStatus =
+                DeleteInstanceBackups
+                    ? $"Deleted {target.Name} and its backups"
+                    : $"Deleted {target.Name} · backups preserved";
+        }
+        catch (Exception ex)
+        {
+            LauncherStatus =
+                $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            ResetDeleteConfirmation();
+            IsBusy = false;
+        }
+    }
+
+    private async Task ReloadInstancesAsync(
+        string? preferredInstanceId = null)
+    {
+        var loaded =
+            await _instances.GetAllAsync();
+
+        Instances.Clear();
+        foreach (var item in loaded)
+            Instances.Add(item);
+
+        SelectedInstance =
+            preferredInstanceId is null
+                ? Instances.FirstOrDefault()
+                : Instances.FirstOrDefault(item =>
+                    item.Id.Equals(
+                        preferredInstanceId,
+                        StringComparison.Ordinal))
+                  ?? Instances.FirstOrDefault();
+
+        InstanceSummary =
+            $"{Instances.Count} instance{(Instances.Count == 1 ? string.Empty : "s")}";
+    }
+
+    private void ResetDeleteConfirmation()
+    {
+        IsDeleteConfirmationPending =
+            false;
+        DeleteInstanceButtonText =
+            "Delete instance";
     }
 
     [RelayCommand]

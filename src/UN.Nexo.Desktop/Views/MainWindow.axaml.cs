@@ -91,6 +91,7 @@ public sealed partial class MainWindow : Window
         _installer = new MinecraftVanillaInstallService(downloadHttpClient, _paths, downloadSources);
         _manifest = new MinecraftVersionManifestService(manifestHttpClient, downloadSources);
         _instances = new InstanceStoreService(_paths);
+        var instanceLifecycle = new InstanceLifecycleService(_paths);
         _fabricMeta = new FabricMetaService(manifestHttpClient);
         _fabricInstaller = new FabricInstallService(
             downloadHttpClient,
@@ -123,6 +124,7 @@ public sealed partial class MainWindow : Window
             _paths,
             _manifest,
             _instances,
+            instanceLifecycle,
             _installer,
             _fabricInstaller,
             _quiltInstaller,

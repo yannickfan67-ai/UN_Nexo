@@ -38,6 +38,13 @@ internal static class Program
             await TestCloneWithWorldsAsync(lifecycle, paths, source);
             await TestInvalidInstallStateCloneAsync(lifecycle, paths);
             await TestFabricCloneMetadataAsync(lifecycle, paths);
+            source = await TestRenameAsync(lifecycle, store, paths, source);
+            await TestDuplicateRenameRejectedAsync(lifecycle, store, source);
+            await TestDeletePreservesBackupsAsync(lifecycle, store, paths);
+            await TestDeleteRemovesBackupsAsync(lifecycle, store, paths);
+            await TestDeleteDoesNotFollowNestedLinkAsync(lifecycle, store, paths);
+            await TestDeleteRejectsLinkedBackupRootAsync(lifecycle, store, paths);
+            await TestCancelledDeletePreservesInstanceAsync(lifecycle, store, paths);
             var backup = await TestBackupAsync(lifecycle, source);
             await BackupIntegrityRegression.RunAsync(lifecycle, paths, source, backup);
             await TestRestoreSafetyAsync(lifecycle, paths, source, backup);
@@ -197,6 +204,476 @@ internal static class Program
             "Reloaded Fabric clone should retain BaseVersionId.");
         Require(reloaded.LoaderVersion == "0.16.9",
             "Reloaded Fabric clone should retain LoaderVersion.");
+    }
+
+    private static async Task<GameInstance> TestRenameAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths,
+        GameInstance source)
+    {
+        var renamed =
+            await lifecycle.RenameAsync(
+                source,
+                "Renamed Source");
+
+        Require(
+            renamed.Id == source.Id,
+            "Rename must preserve the instance id.");
+        Require(
+            renamed.Name == "Renamed Source",
+            "Rename did not apply the requested name.");
+        Require(
+            renamed.VersionId == source.VersionId
+            && renamed.Loader == source.Loader,
+            "Rename must preserve version and loader metadata.");
+
+        var reloaded =
+            (await store.GetAllAsync())
+                .Single(item =>
+                    item.Id == source.Id);
+        Require(
+            reloaded.Name == "Renamed Source",
+            "Renamed instance did not persist through the store.");
+
+        var statePath =
+            Path.Combine(
+                paths.GetInstanceDirectory(source.Id),
+                "install-state.json");
+        using var state =
+            JsonDocument.Parse(
+                await File.ReadAllTextAsync(
+                    statePath));
+        var stateRoot =
+            state.RootElement;
+        var stateName =
+            stateRoot.TryGetProperty("Name", out var upper)
+                ? upper.GetString()
+                : stateRoot.TryGetProperty("name", out var lower)
+                    ? lower.GetString()
+                    : null;
+        Require(
+            stateName == "Renamed Source",
+            "Rename must synchronize install-state name metadata.");
+
+        return renamed;
+    }
+
+    private static async Task TestDuplicateRenameRejectedAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        GameInstance source)
+    {
+        var duplicate =
+            await store.CreateAsync(
+                "Duplicate Target",
+                "1.21.4");
+
+        try
+        {
+            await lifecycle.RenameAsync(
+                source,
+                "duplicate target");
+            throw new Exception(
+                "Case-insensitive duplicate rename unexpectedly succeeded.");
+        }
+        catch (InvalidOperationException)
+        {
+        }
+
+        var reloaded =
+            (await store.GetAllAsync())
+                .Single(item =>
+                    item.Id == source.Id);
+        Require(
+            reloaded.Name == source.Name,
+            "Rejected duplicate rename must preserve the original name.");
+
+        await lifecycle.DeleteAsync(
+            duplicate);
+    }
+
+    private static async Task TestDeletePreservesBackupsAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths)
+    {
+        var instance =
+            await CreateDeleteFixtureAsync(
+                store,
+                paths,
+                "Delete preserve backups");
+        var backup =
+            await lifecycle.CreateWorldBackupAsync(
+                instance,
+                "manual");
+
+        await lifecycle.DeleteAsync(
+            instance);
+
+        Require(
+            !Directory.Exists(
+                paths.GetInstanceDirectory(
+                    instance.Id)),
+            "Delete should remove the canonical instance directory.");
+        Require(
+            File.Exists(backup.FilePath),
+            "Delete should preserve backups by default.");
+        Require(
+            !(await store.GetAllAsync())
+                .Any(item =>
+                    item.Id == instance.Id),
+            "Deleted instance must disappear from the instance store.");
+        Require(
+            !Directory.EnumerateDirectories(
+                    paths.GetInstancesRoot(),
+                    $".{instance.Id}.deleting-*",
+                    SearchOption.TopDirectoryOnly)
+                .Any(),
+            "Successful delete should not leave an instance tombstone.");
+
+        try
+        {
+            Directory.Delete(
+                Path.GetDirectoryName(backup.FilePath)!,
+                recursive: true);
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task TestDeleteRemovesBackupsAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths)
+    {
+        var instance =
+            await CreateDeleteFixtureAsync(
+                store,
+                paths,
+                "Delete backups");
+        var backup =
+            await lifecycle.CreateWorldBackupAsync(
+                instance,
+                "manual");
+        var backupRoot =
+            Path.GetDirectoryName(
+                backup.FilePath)!;
+
+        await lifecycle.DeleteAsync(
+            instance,
+            deleteBackups: true);
+
+        Require(
+            !Directory.Exists(
+                paths.GetInstanceDirectory(
+                    instance.Id)),
+            "Delete with backups should remove the canonical instance.");
+        Require(
+            !Directory.Exists(backupRoot),
+            "Delete with backups should remove the physical instance backup root.");
+    }
+
+    private static async Task TestDeleteDoesNotFollowNestedLinkAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths)
+    {
+        var instance =
+            await store.CreateAsync(
+                "Delete linked tree",
+                "1.21.4");
+        var gameRoot =
+            paths.GetInstanceGameDirectory(
+                instance.Id);
+        Directory.CreateDirectory(gameRoot);
+
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-delete-external-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel =
+            Path.Combine(
+                externalRoot,
+                "keep.txt");
+        await File.WriteAllTextAsync(
+            sentinel,
+            "keep");
+
+        var link =
+            Path.Combine(
+                gameRoot,
+                "external-link");
+        var linked = false;
+        try
+        {
+            linked =
+                TryCreateDirectoryLink(
+                    link,
+                    externalRoot);
+            if (!linked)
+            {
+                await lifecycle.DeleteAsync(
+                    instance);
+                Console.WriteLine(
+                    "SKIP instance delete nested-link regression: platform denied symlink creation");
+                return;
+            }
+
+            await lifecycle.DeleteAsync(
+                instance);
+
+            Require(
+                File.Exists(sentinel),
+                "Instance delete must not follow a nested directory link.");
+            Require(
+                await File.ReadAllTextAsync(sentinel)
+                == "keep",
+                "Instance delete changed data behind a nested directory link.");
+        }
+        finally
+        {
+            if (linked)
+            {
+                TryDeleteDirectoryLink(
+                    link);
+            }
+            try
+            {
+                if (Directory.Exists(
+                        paths.GetInstanceDirectory(
+                            instance.Id)))
+                {
+                    Directory.Delete(
+                        paths.GetInstanceDirectory(
+                            instance.Id),
+                        recursive: true);
+                }
+            }
+            catch
+            {
+            }
+            try
+            {
+                Directory.Delete(
+                    externalRoot,
+                    recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static async Task TestDeleteRejectsLinkedBackupRootAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths)
+    {
+        var instance =
+            await store.CreateAsync(
+                "Delete linked backup root",
+                "1.21.4");
+        var backupsRoot =
+            Path.Combine(
+                paths.GetDataRoot(),
+                "backups");
+        Directory.CreateDirectory(backupsRoot);
+
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-delete-backup-external-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel =
+            Path.Combine(
+                externalRoot,
+                "keep.txt");
+        await File.WriteAllTextAsync(
+            sentinel,
+            "keep");
+
+        var linkedBackupRoot =
+            Path.Combine(
+                backupsRoot,
+                instance.Id);
+        var linked = false;
+        try
+        {
+            linked =
+                TryCreateDirectoryLink(
+                    linkedBackupRoot,
+                    externalRoot);
+            if (!linked)
+            {
+                await lifecycle.DeleteAsync(
+                    instance);
+                Console.WriteLine(
+                    "SKIP linked backup-root delete regression: platform denied symlink creation");
+                return;
+            }
+
+            try
+            {
+                await lifecycle.DeleteAsync(
+                    instance,
+                    deleteBackups: true);
+                throw new Exception(
+                    "Deleting through a linked instance backup root should fail closed.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Require(
+                Directory.Exists(
+                    paths.GetInstanceDirectory(
+                        instance.Id)),
+                "Rejecting a linked backup root must leave the canonical instance intact.");
+            Require(
+                File.Exists(sentinel)
+                && await File.ReadAllTextAsync(sentinel)
+                    == "keep",
+                "Rejecting a linked backup root must not modify its external target.");
+        }
+        finally
+        {
+            if (linked
+                && Directory.Exists(linkedBackupRoot))
+            {
+                try
+                {
+                    Directory.Delete(linkedBackupRoot);
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                if (Directory.Exists(
+                        paths.GetInstanceDirectory(
+                            instance.Id)))
+                {
+                    await lifecycle.DeleteAsync(
+                        instance);
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                Directory.Delete(
+                    externalRoot,
+                    recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static async Task TestCancelledDeletePreservesInstanceAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths)
+    {
+        var instance =
+            await store.CreateAsync(
+                "Cancelled delete",
+                "1.21.4");
+        var root =
+            paths.GetInstanceDirectory(
+                instance.Id);
+
+        using var cancellation =
+            new CancellationTokenSource();
+        cancellation.Cancel();
+
+        try
+        {
+            await lifecycle.DeleteAsync(
+                instance,
+                cancellationToken:
+                    cancellation.Token);
+            throw new Exception(
+                "Pre-cancelled instance delete unexpectedly succeeded.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        Require(
+            Directory.Exists(root),
+            "Pre-cancelled delete must leave the canonical instance intact.");
+
+        await lifecycle.DeleteAsync(
+            instance);
+    }
+
+    private static async Task<GameInstance> CreateDeleteFixtureAsync(
+        InstanceStoreService store,
+        NexoPathService paths,
+        string name)
+    {
+        var instance =
+            await store.CreateAsync(
+                name,
+                "1.21.4");
+        var world =
+            Path.Combine(
+                paths.GetInstanceGameDirectory(
+                    instance.Id),
+                "saves",
+                "World");
+        Directory.CreateDirectory(world);
+        await File.WriteAllTextAsync(
+            Path.Combine(
+                world,
+                "level.dat"),
+            name);
+        return instance;
+    }
+
+    private static bool TryCreateDirectoryLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(
+                linkPath,
+                targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectoryLink(
+        string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path);
+        }
+        catch
+        {
+        }
     }
 
     private static async Task<WorldBackupInfo> TestBackupAsync(

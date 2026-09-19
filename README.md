@@ -20,6 +20,7 @@ The current development line includes:
 - Terminal launch results remain visible after the session ends instead of being immediately replaced by a generic Ready message
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
+- Safe instance rename and two-step deletion, with backups preserved by default and optional explicit backup removal
 - First-class Fabric, Quilt, Forge and NeoForge instance preparation/launch with automatic pre-launch preparation and inherited Java/profile handling
 - Quilt, Forge and NeoForge managers support compatible loader discovery plus create, prepare and repair flows using their official metadata/distribution paths
 - One-click instance integrity checking and repair for install state, metadata, client JAR, libraries, asset index/objects, extracted natives, required Java and Linux runtime dependencies
@@ -176,7 +177,7 @@ When a custom API base is configured, Nexo does **not** send `x-api-key` to that
 1. Add resumable downloads, retries/backoff and stronger cancel/retry UX
 2. Complete live Minecraft Services authorization/acceptance for the UN_Nexo Client ID and real-account acceptance testing
 3. Add per-instance runtime overrides and richer managed-Java controls
-4. Add instance rename/delete and richer backup/restore management
+4. Expand backup/restore management beyond the current safe world backup and restore flows
 5. Expand loader-specific integrity diagnostics beyond the current verified manager re-preparation/repair flows
 6. Extend provider browsing to resource packs/shaders and richer recommendation controls
 7. Add Terracotta/EasyTier/Scaffolding-compatible friend room networking after protocol/license review
