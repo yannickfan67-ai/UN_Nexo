@@ -19,20 +19,20 @@ internal static class VanillaMetadataContractRegression
         var fixtures = new (string Label, string Json)[]
         {
             ("mismatched id", ValidMetadata("1.20.1")),
-            ("missing id", """{"downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
-            ("numeric id", """{"id":123,"downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
+            ("missing id", """{"downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
+            ("numeric id", """{"id":123,"downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
             ("missing downloads", """{"id":"1.21.4","assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
             ("array downloads", """{"id":"1.21.4","downloads":[],"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
             ("missing client", """{"id":"1.21.4","downloads":{},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
             ("string client", """{"id":"1.21.4","downloads":{"client":"bad"},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
             ("missing client url", """{"id":"1.21.4","downloads":{"client":{}},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
             ("numeric client url", """{"id":"1.21.4","downloads":{"client":{"url":123}},"assetIndex":{"id":"assets","url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
-            ("missing asset index", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"libraries":[]}"""),
-            ("array asset index", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":[],"libraries":[]}"""),
-            ("missing asset id", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":{"url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
-            ("numeric asset id", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":{"id":42,"url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
-            ("missing asset url", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":{"id":"assets"},"libraries":[]}"""),
-            ("numeric asset url", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar"}},"assetIndex":{"id":"assets","url":42},"libraries":[]}""")
+            ("missing asset index", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"libraries":[]}"""),
+            ("array asset index", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":[],"libraries":[]}"""),
+            ("missing asset id", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":{"url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
+            ("numeric asset id", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":{"id":42,"url":"https://launchermeta.mojang.com/assets.json"},"libraries":[]}"""),
+            ("missing asset url", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":{"id":"assets"},"libraries":[]}"""),
+            ("numeric asset url", """{"id":"1.21.4","downloads":{"client":{"url":"https://piston-data.mojang.com/client.jar","size":6}},"assetIndex":{"id":"assets","url":42},"libraries":[]}""")
         };
 
         foreach (var fixture in fixtures)
@@ -173,7 +173,7 @@ internal static class VanillaMetadataContractRegression
     private static string ValidMetadata(string id)
         => "{\"id\":"
            + System.Text.Json.JsonSerializer.Serialize(id)
-           + ",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+           + ",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
            + "\"assetIndex\":{\"id\":\"assets\",\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
            + "\"libraries\":[]}";
 

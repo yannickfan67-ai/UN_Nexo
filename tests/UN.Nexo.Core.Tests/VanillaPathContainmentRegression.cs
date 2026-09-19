@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
@@ -258,7 +259,7 @@ internal static class VanillaPathContainmentRegression
                 var json = mode == PathFixtureMode.EmptyVersion
                     ? "{\"id\":\"1.21.4\",\"libraries\":[]}"
                     : "{\"id\":\"1.21.4\","
-                      + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                      + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                       + "\"assetIndex\":{\"id\":\"path-assets\",\"url\":\"https://launchermeta.mojang.com/path-assets.json\"},"
                       + "\"libraries\":[{\"name\":\"com.example:lib:1.0\","
                       + "\"downloads\":{\"artifact\":{\"path\":"
@@ -288,10 +289,25 @@ internal static class VanillaPathContainmentRegression
 
             if (uri.Host.Equals("libraries.minecraft.net", StringComparison.OrdinalIgnoreCase))
             {
+                var libraryBytes = Encoding.UTF8.GetBytes("library");
+                if (uri.AbsolutePath.EndsWith(".sha1", StringComparison.Ordinal))
+                {
+                    var sha1 = Convert.ToHexString(
+                            SHA1.HashData(libraryBytes))
+                        .ToLowerInvariant();
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            sha1,
+                            Encoding.ASCII,
+                            "text/plain")
+                    });
+                }
+
                 ArtifactRequests++;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("library"))
+                    Content = new ByteArrayContent(libraryBytes)
                 });
             }
 

@@ -253,7 +253,7 @@ internal static class NetworkTargetRegression
                     TrustedRedirectRequests++;
                     return Task.FromResult(Json(
                         "{\"id\":\"trusted-redirect\","
-                        + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                        + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                         + "\"assetIndex\":{\"id\":\"trusted-assets\",\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
                         + "\"libraries\":[]}"));
                 }
@@ -277,7 +277,7 @@ internal static class NetworkTargetRegression
             {
                 const string metadata =
                     "{\"id\":\"artifact-test\","
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                     + "\"assetIndex\":{\"id\":\"artifact-assets\",\"url\":\"https://launchermeta.mojang.com/artifact-assets.json\"},"
                     + "\"libraries\":[{\"name\":\"example:private:1.0\",\"downloads\":{\"artifact\":{" +
                     "\"path\":\"example/private/1.0/private-1.0.jar\"," +

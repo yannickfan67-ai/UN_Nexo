@@ -324,15 +324,34 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
         if (root.TryGetProperty("logging", out var logging)
             && logging.TryGetProperty("client", out var clientLogging)
-            && clientLogging.TryGetProperty("argument", out var logArgument)
             && clientLogging.TryGetProperty("file", out var logFile))
         {
-            var configuredPath = Within(
+            var logId = MetadataPath.RequireSingleComponent(
+                logFile.GetProperty("id").GetString(),
+                "logging.client.file.id");
+            var configuredPath = MetadataPath.ResolveSingleComponent(
                 Path.Combine(assetsRoot, "log_configs"),
-                logFile.GetProperty("id").GetString()!);
-            if (File.Exists(configuredPath))
-                arguments.Add(logArgument.GetString()!.Replace(
-                    "${path}", configuredPath, StringComparison.Ordinal));
+                logId,
+                string.Empty,
+                "logging.client.file.id");
+            await RequireFileAsync(
+                configuredPath,
+                logFile,
+                cancellationToken);
+
+            if (clientLogging.TryGetProperty(
+                    "argument",
+                    out var logArgument))
+            {
+                var argument = logArgument.GetString()
+                    ?? throw InvalidMetadata(
+                        "logging.client.argument",
+                        "a string");
+                arguments.Add(argument.Replace(
+                    "${path}",
+                    configuredPath,
+                    StringComparison.Ordinal));
+            }
         }
 
         arguments.Add(root.GetProperty("mainClass").GetString()
@@ -462,7 +481,35 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                 if (clientLogging.TryGetProperty("file", out var file))
                 {
                     RequireObject(file, "logging.client.file");
-                    RequireString(file, "id", required: true);
+                    var id = RequireString(
+                        file,
+                        "id",
+                        required: true);
+                    _ = MetadataPath.RequireSingleComponent(
+                        id,
+                        "logging.client.file.id");
+                    RequireString(
+                        file,
+                        "url",
+                        required: false);
+                    if (file.TryGetProperty("sha1", out var sha1))
+                    {
+                        if (sha1.ValueKind != JsonValueKind.String
+                            || string.IsNullOrWhiteSpace(sha1.GetString())
+                            || !Regex.IsMatch(
+                                sha1.GetString()!,
+                                "^[a-fA-F0-9]{40}$"))
+                            throw InvalidMetadata(
+                                "logging.client.file.sha1",
+                                "a 40-character hexadecimal SHA-1");
+                    }
+                    if (file.TryGetProperty("size", out var size)
+                        && (size.ValueKind != JsonValueKind.Number
+                            || !size.TryGetInt64(out var parsedSize)
+                            || parsedSize <= 0))
+                        throw InvalidMetadata(
+                            "logging.client.file.size",
+                            "a positive integer");
                 }
             }
         }

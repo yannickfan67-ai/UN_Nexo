@@ -392,7 +392,7 @@ sealed class FabricPrepareHandler(byte[] artifactBytes) : HttpMessageHandler
         {
             const string json =
                 "{\"id\":\"1.21.4\",\"libraries\":[],"
-                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                 + "\"assetIndex\":{\"id\":\"fabric-base-assets\","
                 + "\"url\":\"https://launchermeta.mojang.com/fabric-base-assets.json\"}}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
