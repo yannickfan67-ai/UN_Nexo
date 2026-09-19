@@ -285,7 +285,6 @@ public sealed class InstanceModService
             ex is ArgumentException
             or IOException
             or UnauthorizedAccessException
-            or InvalidDataException
             or NotSupportedException)
         {
             return false;
@@ -470,8 +469,7 @@ public sealed class InstanceModService
         }
         catch (Exception ex) when (
             ex is IOException
-            or UnauthorizedAccessException
-            or FileNotFoundException)
+            or UnauthorizedAccessException)
         {
             return false;
         }
