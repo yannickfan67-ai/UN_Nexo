@@ -12,7 +12,8 @@ public sealed class QuiltInstallService(
     NexoPathService paths,
     MinecraftVanillaInstallService vanillaInstaller,
     QuiltMetaService quiltMeta,
-    TimeSpan? transferIdleTimeout = null)
+    TimeSpan? transferIdleTimeout = null,
+    long maxLibraryBytes = LoaderLibraryDownloadPolicy.DefaultMaxArtifactBytes)
 {
     private const int MaxChecksumBytes = 1024;
     private readonly InstanceOperationCoordinator _operations = new(paths);
@@ -23,6 +24,10 @@ public sealed class QuiltInstallService(
             : throw new ArgumentOutOfRangeException(
                 nameof(transferIdleTimeout),
                 "Quilt transfer idle timeout must be positive.");
+    private readonly long _maxLibraryBytes =
+        LoaderLibraryDownloadPolicy.RequirePositiveLimit(
+            maxLibraryBytes,
+            nameof(maxLibraryBytes));
     public Task PrepareAsync(
         GameInstance instance,
         MinecraftVersionInfo baseVersion,
@@ -424,6 +429,11 @@ public sealed class QuiltInstallService(
                 "Quilt library",
                 cancellationToken);
             response.EnsureSuccessStatusCode();
+            LoaderLibraryDownloadPolicy.ValidateDeclaredLength(
+                response.Content.Headers.ContentLength,
+                _maxLibraryBytes,
+                "Quilt library",
+                library.Url);
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
 
             // The directory may have been replaced while the request was in flight.
@@ -450,7 +460,8 @@ public sealed class QuiltInstallService(
                     input,
                     output,
                     new Uri(library.Url).Host,
-                    cancellationToken);
+                    cancellationToken,
+                    _maxLibraryBytes);
                 await output.FlushAsync(cancellationToken);
             }
 

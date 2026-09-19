@@ -12,7 +12,8 @@ public sealed class FabricInstallService(
     NexoPathService paths,
     MinecraftVanillaInstallService vanillaInstaller,
     FabricMetaService fabricMeta,
-    TimeSpan? transferIdleTimeout = null)
+    TimeSpan? transferIdleTimeout = null,
+    long maxLibraryBytes = LoaderLibraryDownloadPolicy.DefaultMaxArtifactBytes)
 {
     private const int MaxChecksumBytes = 1024;
     private readonly InstanceOperationCoordinator _operations = new(paths);
@@ -23,6 +24,10 @@ public sealed class FabricInstallService(
             : throw new ArgumentOutOfRangeException(
                 nameof(transferIdleTimeout),
                 "Fabric transfer idle timeout must be positive.");
+    private readonly long _maxLibraryBytes =
+        LoaderLibraryDownloadPolicy.RequirePositiveLimit(
+            maxLibraryBytes,
+            nameof(maxLibraryBytes));
     public Task PrepareAsync(
         GameInstance instance,
         MinecraftVersionInfo baseVersion,
@@ -424,6 +429,11 @@ public sealed class FabricInstallService(
                 "Fabric library",
                 cancellationToken);
             response.EnsureSuccessStatusCode();
+            LoaderLibraryDownloadPolicy.ValidateDeclaredLength(
+                response.Content.Headers.ContentLength,
+                _maxLibraryBytes,
+                "Fabric library",
+                library.Url);
             await using var input =
                 await response.Content.ReadAsStreamAsync(
                     cancellationToken);
@@ -451,7 +461,8 @@ public sealed class FabricInstallService(
                     input,
                     output,
                     new Uri(library.Url).Host,
-                    cancellationToken);
+                    cancellationToken,
+                    _maxLibraryBytes);
                 await output.FlushAsync(cancellationToken);
             }
 

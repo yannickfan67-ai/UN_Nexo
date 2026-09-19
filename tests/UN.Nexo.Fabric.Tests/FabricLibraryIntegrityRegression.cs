@@ -22,6 +22,8 @@ internal static class FabricLibraryIntegrityRegression
         await TestLinkedInstallStateRejectedAsync();
         await TestLinkedVersionsDirectoryRejectedAsync();
         await TestLinkedMavenParentRejectedAsync();
+        await TestDeclaredOversizeRejectedAsync();
+        await TestChunkedOversizeRejectedAsync();
     }
 
     private static async Task TestCorruptCachedMavenJarIsReplacedAsync()
@@ -439,10 +441,93 @@ internal static class FabricLibraryIntegrityRegression
         }
     }
 
+    private static async Task TestDeclaredOversizeRejectedAsync()
+    {
+        await TestOversizeRejectedAsync(
+            LibraryMode.DeclaredOversize,
+            "declared oversized");
+    }
+
+    private static async Task TestChunkedOversizeRejectedAsync()
+    {
+        await TestOversizeRejectedAsync(
+            LibraryMode.ChunkedOversize,
+            "chunked oversized");
+    }
+
+    private static async Task TestOversizeRejectedAsync(
+        LibraryMode mode,
+        string label)
+    {
+        const long maxBytes = 4096;
+        var root = NewRoot();
+        try
+        {
+            var jar = CreateJarBytes("expected-library");
+            var handler =
+                new FabricLibraryHandler(
+                    jar,
+                    mode);
+            using var fixture =
+                await CreateFixtureAsync(
+                    root,
+                    handler,
+                    TimeSpan.FromSeconds(1),
+                    maxBytes);
+
+            try
+            {
+                await fixture.Service.PrepareAsync(
+                    fixture.Instance,
+                    fixture.BaseVersion);
+                throw new Exception(
+                    $"{label} Fabric library unexpectedly prepared.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            var target =
+                Path.Combine(
+                    fixture.Paths.GetInstanceGameDirectory(
+                        fixture.Instance.Id),
+                    "libraries",
+                    TestLibraryRelative.Replace(
+                        '/',
+                        Path.DirectorySeparatorChar));
+
+            Equal(
+                false,
+                File.Exists(target),
+                $"{label} Fabric library must not publish the final artifact");
+            Equal(
+                false,
+                File.Exists(target + ".part"),
+                $"{label} Fabric library must clean its trusted .part file");
+            Equal(
+                false,
+                File.Exists(
+                    Path.Combine(
+                        fixture.Paths.GetInstanceDirectory(
+                            fixture.Instance.Id),
+                        "install-state.json")),
+                $"{label} Fabric library must not publish prepared state");
+            Equal(
+                1,
+                handler.TestLibraryJarRequests,
+                $"{label} Fabric regression should reach the target library request");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
     private static async Task<Fixture> CreateFixtureAsync(
         string root,
         FabricLibraryHandler handler,
-        TimeSpan idleTimeout)
+        TimeSpan idleTimeout,
+        long maxLibraryBytes = 512L * 1024L * 1024L)
     {
         var paths = new NexoPathService(root);
         paths.EnsureDirectories();
@@ -491,7 +576,8 @@ internal static class FabricLibraryIntegrityRegression
             paths,
             vanilla,
             new FabricMetaService(client),
-            idleTimeout);
+            idleTimeout,
+            maxLibraryBytes);
         var version = new MinecraftVersionInfo(
             BaseVersionId,
             "release",
@@ -606,7 +692,9 @@ internal static class FabricLibraryIntegrityRegression
     {
         Valid,
         Truncated,
-        Stall
+        Stall,
+        DeclaredOversize,
+        ChunkedOversize
     }
 
     private sealed class FabricLibraryHandler(
@@ -685,13 +773,9 @@ internal static class FabricLibraryIntegrityRegression
                 TestLibraryJarRequests++;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = mode switch
-                    {
-                        LibraryMode.Valid => new ByteArrayContent(expectedJar),
-                        LibraryMode.Truncated => new ByteArrayContent([1]),
-                        LibraryMode.Stall => new StreamContent(new BlockingStream()),
-                        _ => throw new ArgumentOutOfRangeException()
-                    }
+                    Content = CreateLibraryContent(
+                        expectedJar,
+                        mode)
                 });
             }
 
@@ -700,6 +784,90 @@ internal static class FabricLibraryIntegrityRegression
                 Content = new ByteArrayContent(expectedJar)
             });
         }
+
+        private static HttpContent CreateLibraryContent(
+            byte[] expectedJar,
+            LibraryMode mode)
+        {
+            switch (mode)
+            {
+                case LibraryMode.Valid:
+                    return new ByteArrayContent(expectedJar);
+                case LibraryMode.Truncated:
+                    return new ByteArrayContent([1]);
+                case LibraryMode.Stall:
+                    return new StreamContent(
+                        new BlockingStream());
+                case LibraryMode.DeclaredOversize:
+                {
+                    var content =
+                        new ByteArrayContent(expectedJar);
+                    content.Headers.ContentLength =
+                        8192;
+                    return content;
+                }
+                case LibraryMode.ChunkedOversize:
+                    return new StreamContent(
+                        new FiniteUnseekableStream(
+                            8192));
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(mode));
+            }
+        }
+    }
+
+    private sealed class FiniteUnseekableStream(
+        long length) : Stream
+    {
+        private long _remaining = length;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length
+            => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(
+            byte[] buffer,
+            int offset,
+            int count)
+            => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_remaining <= 0)
+                return ValueTask.FromResult(0);
+
+            var count =
+                (int)Math.Min(
+                    _remaining,
+                    buffer.Length);
+            buffer.Span[..count].Fill(0x5A);
+            _remaining -= count;
+            return ValueTask.FromResult(count);
+        }
+
+        public override void Flush() { }
+        public override long Seek(
+            long offset,
+            SeekOrigin origin)
+            => throw new NotSupportedException();
+        public override void SetLength(long value)
+            => throw new NotSupportedException();
+        public override void Write(
+            byte[] buffer,
+            int offset,
+            int count)
+            => throw new NotSupportedException();
     }
 
     private sealed class BlockingStream : Stream
