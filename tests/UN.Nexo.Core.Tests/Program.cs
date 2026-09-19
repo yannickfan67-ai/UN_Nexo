@@ -54,6 +54,7 @@ internal static class Program
             ("Vanilla required metadata contract", VanillaMetadataContractRegression.RunAsync),
             ("Vanilla required artifact preparation", VanillaRequiredArtifactRegression.RunAsync),
             ("Atomic install-state publication", InstallStateAtomicRegression.RunAsync),
+            ("Loader install-state snapshot hardening", InstallStateSnapshotRegression.RunAsync),
             ("Native extraction containment", NativeExtractionRegression.RunAsync),
             ("Extracted native launch integrity", NativeLaunchIntegrityRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),

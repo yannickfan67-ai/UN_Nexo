@@ -154,8 +154,8 @@ public sealed class NeoForgeInstallService
             Path.Combine(instanceRoot, "install-state.json");
 
         var previousState =
-            await ReadExistingRegularFileAsync(
-                statePath,
+            await InstallStateSnapshot.ReadAsync(
+                instanceRoot,
                 cancellationToken);
 
         try
@@ -181,7 +181,8 @@ public sealed class NeoForgeInstallService
                 progress,
                 cancellationToken);
 
-            TryDeleteRegularFile(statePath);
+            InstallStateSnapshot.Delete(
+                instanceRoot);
             Report(
                 progress,
                 new InstallProgress(
@@ -374,11 +375,12 @@ public sealed class NeoForgeInstallService
         }
         catch
         {
-            TryDeleteRegularFile(statePath);
+            InstallStateSnapshot.Delete(
+                instanceRoot);
             if (previousState is not null)
             {
-                await RestoreBytesAtomicAsync(
-                    statePath,
+                await InstallStateSnapshot.RestoreAsync(
+                    instanceRoot,
                     previousState);
             }
             throw;
@@ -903,55 +905,6 @@ public sealed class NeoForgeInstallService
         {
             throw new InvalidDataException(
                 $"{label} must not be a symbolic link or reparse point.");
-        }
-    }
-
-    private static async Task<byte[]?> ReadExistingRegularFileAsync(
-        string path,
-        CancellationToken cancellationToken)
-    {
-        if (!File.Exists(path))
-            return null;
-
-        RejectExistingReparseFile(
-            path,
-            "install state");
-        return await File.ReadAllBytesAsync(
-            path,
-            cancellationToken);
-    }
-
-    private static async Task RestoreBytesAtomicAsync(
-        string path,
-        byte[] bytes)
-    {
-        var directory =
-            Path.GetDirectoryName(path)
-            ?? throw new InvalidOperationException(
-                "State path has no parent directory.");
-        EnsurePhysicalDirectory(
-            directory,
-            "managed instance directory");
-
-        var temp =
-            path + "." + Guid.NewGuid().ToString("N") + ".restore";
-        try
-        {
-            await File.WriteAllBytesAsync(
-                temp,
-                bytes,
-                CancellationToken.None);
-            EnsurePhysicalDirectory(
-                directory,
-                "managed instance directory");
-            File.Move(
-                temp,
-                path,
-                overwrite: true);
-        }
-        finally
-        {
-            TryDeleteRegularFile(temp);
         }
     }
 

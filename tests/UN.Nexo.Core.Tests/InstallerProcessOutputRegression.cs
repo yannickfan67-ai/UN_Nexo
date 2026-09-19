@@ -165,19 +165,9 @@ internal static class InstallerProcessOutputRegression
                     RetainedCharacters,
                     cancellation.Token);
 
-            for (var attempt = 0;
-                 attempt < 100 && !File.Exists(pidPath);
-                 attempt++)
-            {
-                await Task.Delay(20);
-            }
-
-            Assert(
-                File.Exists(pidPath),
-                "Installer cancellation helper did not publish its PID.");
-            pid = int.Parse(
-                await File.ReadAllTextAsync(pidPath),
-                CultureInfo.InvariantCulture);
+            pid = await ReadPidWithRetryAsync(
+                pidPath,
+                TimeSpan.FromSeconds(1));
 
             cancellation.Cancel();
 
@@ -222,6 +212,51 @@ internal static class InstallerProcessOutputRegression
             {
             }
         }
+    }
+
+    private static async Task<int> ReadPidWithRetryAsync(
+        string path,
+        TimeSpan timeout)
+    {
+        var deadline =
+            DateTime.UtcNow + timeout;
+        Exception? lastError = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!File.Exists(path))
+            {
+                await Task.Delay(20);
+                continue;
+            }
+
+            try
+            {
+                var text =
+                    await File.ReadAllTextAsync(path);
+                if (int.TryParse(
+                        text.Trim(),
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var pid)
+                    && pid > 0)
+                {
+                    return pid;
+                }
+            }
+            catch (Exception ex) when (
+                ex is IOException
+                or UnauthorizedAccessException)
+            {
+                lastError = ex;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new InvalidOperationException(
+            "Installer cancellation helper did not publish a readable PID.",
+            lastError);
     }
 
     private static ProcessStartInfo BuildHelperStartInfo(
