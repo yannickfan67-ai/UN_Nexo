@@ -22,6 +22,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly MinecraftLaunchPlanBuilder _launchBuilder;
     private readonly MinecraftRuntimeInspector _runtimeInspector;
     private readonly JavaRuntimeProvisionService _runtimeProvisioner;
+    private readonly InstanceOperationCoordinator _instanceOperations;
     private readonly MinecraftProcessService _gameProcess = new();
     private CancellationTokenSource? _gameCancellation;
     private readonly Queue<string> _gameLogLines = new();
@@ -122,6 +123,8 @@ public partial class MainWindowViewModel : ObservableObject
         _launchBuilder = new MinecraftLaunchPlanBuilder(paths);
         _runtimeInspector = new MinecraftRuntimeInspector(paths);
         _runtimeProvisioner = new JavaRuntimeProvisionService(paths);
+        _instanceOperations =
+            new InstanceOperationCoordinator(paths);
         _javaDiscovery = javaDiscovery;
         _paths = paths;
         _manifest = manifest;
@@ -562,6 +565,11 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
+            using var operation =
+                await _instanceOperations.AcquireAsync(
+                    instance.Id,
+                    "launch Minecraft",
+                    cancellation.Token);
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
 
             if (account.IsMicrosoft)
