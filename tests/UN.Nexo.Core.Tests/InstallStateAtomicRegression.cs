@@ -68,9 +68,20 @@ internal static class InstallStateAtomicRegression
                 {
                     while (!readerStop.IsCancellationRequested)
                     {
-                        var json = await File.ReadAllTextAsync(path);
-                        using var parsed = JsonDocument.Parse(json);
-                        _ = parsed.RootElement.GetProperty("generation").GetInt32();
+                        try
+                        {
+                            var json = await File.ReadAllTextAsync(path);
+                            using var parsed = JsonDocument.Parse(json);
+                            _ = parsed.RootElement.GetProperty("generation").GetInt32();
+                        }
+                        catch (Exception ex) when (
+                            ex is IOException or UnauthorizedAccessException)
+                        {
+                            // Windows can briefly deny opening/replacing the path while a
+                            // completed file is being atomically published. Retry that access
+                            // race; malformed JSON is deliberately not tolerated here.
+                        }
+
                         await Task.Yield();
                     }
                 }
