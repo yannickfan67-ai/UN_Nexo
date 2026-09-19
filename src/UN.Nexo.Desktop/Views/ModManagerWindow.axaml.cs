@@ -309,7 +309,7 @@ public sealed partial class ModManagerWindow : Window
         if (!ActiveProviderConfigured)
         {
             OperationStatus.Text =
-                $"CurseForge is not configured. Set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} before starting Nexo; the key is read from the process environment and is never stored by Nexo.";
+                $"CurseForge is not configured. Set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} for direct API access, or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} for a server-side proxy; Nexo never embeds the CurseForge key."
             UpdateModrinthAvailability();
             return;
         }
@@ -595,7 +595,7 @@ public sealed partial class ModManagerWindow : Window
         SelectedModrinthDetail.Text = SelectedInstance is null
             ? $"Choose an instance before searching {provider.DisplayName}."
             : !ActiveProviderConfigured
-                ? $"CurseForge needs {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} in the launcher process environment. Nexo does not embed or persist the key."
+                ? $"CurseForge needs {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} for direct API access, or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} for a server-side proxy. Nexo does not embed or persist the key."
                 : $"Search {provider.DisplayName} to find mods compatible with this instance.";
 
         OpenProjectButton.IsEnabled = false;
@@ -616,12 +616,12 @@ public sealed partial class ModManagerWindow : Window
         ModrinthSearchButton.IsEnabled =
             !_busy && supported && configured;
 
-        ProviderPolicyLabel.Text = provider.ProviderId.Equals(
-            "curseforge",
-            StringComparison.OrdinalIgnoreCase)
-            ? configured
-                ? $"CurseForge API · key from {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} · not persisted"
-                : $"CurseForge disabled · set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName}"
+        ProviderPolicyLabel.Text = provider is CurseForgeModProvider curseForge
+            ? curseForge.UsesServerSideCredentialProxy
+                ? $"CurseForge proxy · {CurseForgeModProvider.ApiBaseEnvironmentVariableName} · API key stays server-side"
+                : configured
+                    ? $"CurseForge API · key from {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} · not persisted"
+                    : $"CurseForge disabled · set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} or {CurseForgeModProvider.ApiBaseEnvironmentVariableName}"
             : "Public Modrinth API · no private API key";
 
         if (instance is not null && !supported && !_busy)
@@ -632,7 +632,7 @@ public sealed partial class ModManagerWindow : Window
         else if (!configured && !_busy)
         {
             SelectedModrinthDetail.Text =
-                $"CurseForge is disabled until {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} is set before launch.";
+                $"CurseForge is disabled until {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} is set before launch.";
         }
 
         UpdateModrinthSelectionButtons();
