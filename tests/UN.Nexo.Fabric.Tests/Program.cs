@@ -5,6 +5,19 @@ using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
 
+if (args.Length == 5 && args[0] == "--hold-instance-lease")
+{
+    var helperPaths = new NexoPathService(args[1]);
+    var helperCoordinator = new InstanceOperationCoordinator(helperPaths);
+    await using var helperLease = await helperCoordinator.AcquireAsync(
+        args[2],
+        "fabric-test-helper");
+    await File.WriteAllTextAsync(args[3], "ready");
+    while (!File.Exists(args[4]))
+        await Task.Delay(25);
+    return;
+}
+
 var root = Path.Combine(Path.GetTempPath(), "un-nexo-fabric-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
 try
