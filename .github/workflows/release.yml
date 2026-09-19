@@ -180,6 +180,11 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
+          ### Lock-sidecar integrity
+          - Cross-process lock ownership is now represented only by the exclusive OS file handle; lock sidecars are contentless and are no longer truncated or rewritten with metadata.
+          - Persisted-store and per-instance coordination share one lock implementation and reject symlink/reparse-point sidecars before and immediately after open.
+          - Real symlink regressions on Windows/Linux verify a linked lock cannot modify its target while existing contention, cancellation and crash-release behavior remains intact.
+
           ### Cross-process instance and store safety
           - Mod install, enable/disable and removal now participate in the shared instance operation coordinator, so another Nexo process cannot rewrite an instance while it is being played, repaired, backed up or otherwise mutated.
           - Mod-manager toggle/remove actions await the coordinated async mutation path instead of blocking the desktop UI.
