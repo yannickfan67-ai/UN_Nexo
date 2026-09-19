@@ -20,7 +20,11 @@ public sealed class ForgeInstallService
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
     private readonly MinecraftVanillaInstallService _vanillaInstaller;
-    private readonly JavaRuntimeProvisionService _runtimeProvisioner;
+    private readonly Func<
+        int,
+        IProgress<string>?,
+        CancellationToken,
+        Task<JavaInstallation>> _ensureJava;
     private readonly InstanceOperationCoordinator _operations;
     private readonly TimeSpan _transferIdleTimeout;
     private readonly Func<
@@ -37,7 +41,12 @@ public sealed class ForgeInstallService
             ProcessStartInfo,
             CancellationToken,
             Task<ForgeInstallerProcessResult>>? processRunner = null,
-        TimeSpan? transferIdleTimeout = null)
+        TimeSpan? transferIdleTimeout = null,
+        Func<
+            int,
+            IProgress<string>?,
+            CancellationToken,
+            Task<JavaInstallation>>? javaProvisioner = null)
     {
         _httpClient = httpClient
             ?? throw new ArgumentNullException(nameof(httpClient));
@@ -45,8 +54,14 @@ public sealed class ForgeInstallService
             ?? throw new ArgumentNullException(nameof(paths));
         _vanillaInstaller = vanillaInstaller
             ?? throw new ArgumentNullException(nameof(vanillaInstaller));
-        _runtimeProvisioner =
+        var provisioner =
             runtimeProvisioner ?? new JavaRuntimeProvisionService(paths);
+        _ensureJava = javaProvisioner
+            ?? ((major, progress, cancellation) =>
+                provisioner.EnsureJavaAsync(
+                    major,
+                    progress,
+                    cancellation));
         _processRunner =
             processRunner ?? RunProcessAsync;
         _operations = new InstanceOperationCoordinator(paths);
@@ -184,16 +199,19 @@ public sealed class ForgeInstallService
                     1,
                     $"Java {javaMajor}"));
 
-            var java =
-                await _runtimeProvisioner.EnsureJavaAsync(
-                    javaMajor,
-                    message => Report(
+            var javaProgress =
+                new Progress<string>(message =>
+                    Report(
                         progress,
                         new InstallProgress(
                             "Forge Java",
                             0,
                             1,
-                            Detail: message)),
+                            Detail: message)));
+            var java =
+                await _ensureJava(
+                    javaMajor,
+                    javaProgress,
                     cancellationToken);
 
             Report(
@@ -328,7 +346,6 @@ public sealed class ForgeInstallService
             if (previousState is not null)
             {
                 await RestoreBytesAtomicAsync(
-                    instance.Id,
                     statePath,
                     previousState);
             }
@@ -812,7 +829,6 @@ public sealed class ForgeInstallService
     }
 
     private static async Task RestoreBytesAtomicAsync(
-        string instanceId,
         string path,
         byte[] bytes)
     {
