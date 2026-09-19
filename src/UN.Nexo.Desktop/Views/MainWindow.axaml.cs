@@ -34,11 +34,17 @@ public sealed partial class MainWindow : Window
 
         _paths = new NexoPathService();
         var downloadSources = new DownloadSourceService();
-        var downloadHttpClient = new HttpClient
+        var downloadHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
-        var manifestHttpClient = new HttpClient
+        var manifestHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
         {
             Timeout = TimeSpan.FromSeconds(12)
         };

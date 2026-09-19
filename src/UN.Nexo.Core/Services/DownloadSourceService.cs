@@ -23,14 +23,21 @@ public sealed class DownloadSourceService
 
     public IReadOnlyList<string> GetCandidates(string originalUrl)
     {
+        var trustedOriginal = TrustedDownloadPolicy
+            .RequireTrustedUri(originalUrl, "Minecraft download URL")
+            .AbsoluteUri;
+
         if (SourceId != "bmclapi")
-            return [originalUrl];
+            return [trustedOriginal];
 
-        var mirror = RewriteToBmcl(originalUrl);
-        if (string.Equals(mirror, originalUrl, StringComparison.OrdinalIgnoreCase))
-            return [originalUrl];
+        var mirror = RewriteToBmcl(trustedOriginal);
+        if (string.Equals(mirror, trustedOriginal, StringComparison.OrdinalIgnoreCase))
+            return [trustedOriginal];
 
-        return [mirror, originalUrl];
+        var trustedMirror = TrustedDownloadPolicy
+            .RequireTrustedUri(mirror, "BMCLAPI mirror URL")
+            .AbsoluteUri;
+        return [trustedMirror, trustedOriginal];
     }
 
     private static string RewriteToBmcl(string url)

@@ -16,9 +16,10 @@ public sealed class FabricMetaService(HttpClient httpClient)
             throw new ArgumentException("Minecraft version is required.", nameof(minecraftVersion));
 
         var url = $"{BaseUrl}/v2/versions/loader/{Uri.EscapeDataString(minecraftVersion.Trim())}";
-        using var response = await httpClient.GetAsync(
+        using var response = await TrustedHttpDownload.SendGetAsync(
+            httpClient,
             url,
-            HttpCompletionOption.ResponseHeadersRead,
+            "Fabric Meta loader list",
             cancellationToken);
         response.EnsureSuccessStatusCode();
         using var document = await BoundedJsonResponse.ReadAsync(
@@ -66,9 +67,10 @@ public sealed class FabricMetaService(HttpClient httpClient)
         var url = $"{BaseUrl}/v2/versions/loader/" +
                   $"{Uri.EscapeDataString(minecraftVersion.Trim())}/" +
                   $"{Uri.EscapeDataString(loaderVersion.Trim())}/profile/json";
-        using var response = await httpClient.GetAsync(
+        using var response = await TrustedHttpDownload.SendGetAsync(
+            httpClient,
             url,
-            HttpCompletionOption.ResponseHeadersRead,
+            "Fabric Meta profile",
             cancellationToken);
         response.EnsureSuccessStatusCode();
         return await BoundedJsonResponse.ReadAsync(

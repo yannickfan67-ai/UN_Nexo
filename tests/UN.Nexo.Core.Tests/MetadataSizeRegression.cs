@@ -211,7 +211,7 @@ internal static class MetadataSizeRegression
         => new(
             id,
             "release",
-            "https://metadata.example.test/version.json",
+            "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
             string.Empty,
@@ -302,17 +302,17 @@ internal static class MetadataSizeRegression
             CancellationToken cancellationToken)
         {
             var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
-            if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 const string metadata =
                     "{\"id\":\"asset-index-limit\",\"libraries\":[],"
                     + "\"assetIndex\":{\"id\":\"limit-assets\","
-                    + "\"url\":\"https://assets.example.test/index.json\"}}";
+                    + "\"url\":\"https://launchermeta.mojang.com/index.json\"}}";
                 return Task.FromResult(Response(
                     new StringContent(metadata, Encoding.UTF8, "application/json")));
             }
 
-            if (uri.Host.Equals("assets.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult(Response(oversized));
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
