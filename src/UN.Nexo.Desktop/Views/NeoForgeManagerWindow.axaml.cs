@@ -11,8 +11,8 @@ public sealed partial class NeoForgeManagerWindow : Window
     private readonly MainWindowViewModel? _viewModel;
     private readonly MinecraftVersionManifestService? _manifest;
     private readonly InstanceStoreService? _instances;
-    private readonly NeoForgeMetaService? _neoNeoForgeMeta;
-    private readonly NeoForgeInstallService? _neoNeoForgeInstaller;
+    private readonly NeoForgeMetaService? _neoForgeMeta;
+    private readonly NeoForgeInstallService? _neoForgeInstaller;
     private readonly MinecraftVanillaInstallService? _vanillaInstaller;
     private IReadOnlyList<MinecraftVersionInfo> _catalogVersions = [];
     private CancellationTokenSource? _operationCancellation;
@@ -35,8 +35,8 @@ public sealed partial class NeoForgeManagerWindow : Window
         _viewModel = viewModel;
         _manifest = manifest;
         _instances = instances;
-        _neoNeoForgeMeta = forgeMeta;
-        _neoNeoForgeInstaller = forgeInstaller;
+        _neoForgeMeta = forgeMeta;
+        _neoForgeInstaller = forgeInstaller;
         _vanillaInstaller = vanillaInstaller;
         Opened += OnOpened;
         Closed += (_, _) =>
@@ -122,7 +122,7 @@ public sealed partial class NeoForgeManagerWindow : Window
         LoaderVersionBox.ItemsSource = null;
         LoaderVersionBox.SelectedItem = null;
 
-        if (_neoNeoForgeMeta is null
+        if (_neoForgeMeta is null
             || MinecraftVersionBox.SelectedItem
                 is not MinecraftVersionInfo version)
         {
@@ -141,9 +141,9 @@ public sealed partial class NeoForgeManagerWindow : Window
         try
         {
             var loaders =
-                await _neoNeoForgeMeta.GetVersionsAsync(
+                await _neoForgeMeta.GetVersionsAsync(
                     requestedVersion,
-                    _loaderQueryCancellation.Token);
+                    cancellationToken: _loaderQueryCancellation.Token);
 
             if (MinecraftVersionBox.SelectedItem
                     is not MinecraftVersionInfo current
@@ -208,7 +208,7 @@ public sealed partial class NeoForgeManagerWindow : Window
         if (_busy
             || _viewModel is null
             || _instances is null
-            || _neoNeoForgeInstaller is null
+            || _neoForgeInstaller is null
             || MinecraftVersionBox.SelectedItem
                 is not MinecraftVersionInfo minecraft
             || LoaderVersionBox.SelectedItem
@@ -295,7 +295,7 @@ public sealed partial class NeoForgeManagerWindow : Window
         Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_busy
-            || _neoNeoForgeInstaller is null
+            || _neoForgeInstaller is null
             || ExistingNeoForgeList.SelectedItem
                 is not GameInstance instance)
         {
@@ -313,7 +313,7 @@ public sealed partial class NeoForgeManagerWindow : Window
             if (string.IsNullOrWhiteSpace(baseId))
             {
                 baseId =
-                    await _neoNeoForgeInstaller.GetBaseVersionIdAsync(
+                    await _neoForgeInstaller.GetBaseVersionIdAsync(
                         instance,
                         _operationCancellation!.Token);
             }
@@ -372,7 +372,7 @@ public sealed partial class NeoForgeManagerWindow : Window
         GameInstance instance,
         MinecraftVersionInfo baseVersion)
     {
-        if (_neoNeoForgeInstaller is null)
+        if (_neoForgeInstaller is null)
         {
             throw new InvalidOperationException(
                 "NeoForge installer is unavailable.");
@@ -396,7 +396,7 @@ public sealed partial class NeoForgeManagerWindow : Window
         ProgressBar.Value = 0;
         ProgressText.Text =
             "Starting NeoForge preparation…";
-        await _neoNeoForgeInstaller.PrepareAsync(
+        await _neoForgeInstaller.PrepareAsync(
             instance,
             baseVersion,
             progress,
