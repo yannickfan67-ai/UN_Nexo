@@ -26,6 +26,7 @@ internal static class Program
             ("Persisted account and server store validation", PersistedStoreRegression.RunAsync),
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
             ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
+            ("Native extraction containment", NativeExtractionRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Launch metadata shape validation", LaunchMetadataRegression.RunAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
