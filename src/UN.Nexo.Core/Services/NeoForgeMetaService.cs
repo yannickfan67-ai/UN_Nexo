@@ -245,9 +245,9 @@ public sealed class NeoForgeMetaService(HttpClient httpClient)
         string right)
     {
         var leftStable =
-            !left.Contains('-', StringComparison.Ordinal);
+            !left.Contains('-');
         var rightStable =
-            !right.Contains('-', StringComparison.Ordinal);
+            !right.Contains('-');
 
         var leftNumbers = LeadingNumbers(left);
         var rightNumbers = LeadingNumbers(right);
