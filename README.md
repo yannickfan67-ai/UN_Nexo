@@ -51,6 +51,7 @@ The current development line includes:
 - Server Hub with persistent favorites and validated host/port/IPv6 addresses
 - Version-aware direct multiplayer launching: Quick Play when advertised by modern metadata, legacy server/port arguments for older versions
 - Linux DEB/RPM and Windows self-contained EXE prerelease packages
+- Branded Nexo application/package icons for Windows executables and Linux desktop menus
 - Debian/Mint packages include the `libXtst` runtime needed by Java 8/LWJGL 2; CI checks `libXtst.so.6`, CJK fallback and the final packaged UI
 - Build CI cancels superseded runs and has bounded job timeouts so a hung regression cannot occupy runners indefinitely
 
@@ -179,6 +180,6 @@ When a custom API base is configured, Nexo does **not** send `x-api-key` to that
 5. Expand loader-specific integrity diagnostics beyond the current verified manager re-preparation/repair flows
 6. Extend provider browsing to resource packs/shaders and richer recommendation controls
 7. Add Terracotta/EasyTier/Scaffolding-compatible friend room networking after protocol/license review
-8. Add app/package icons, signing and updater
+8. Add package signing and updater
 
 UN_Nexo is under active development and its releases are currently marked as prereleases.

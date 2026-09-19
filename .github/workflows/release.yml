@@ -96,8 +96,9 @@ jobs:
           BASE_VERSION="${VERSION%%-*}"
           ITERATION="${VERSION#*-}"
           if [ "$ITERATION" = "$VERSION" ]; then ITERATION="1"; fi
-          mkdir -p package-root/usr/lib/un-nexo package-root/usr/bin package-root/usr/share/applications release
+          mkdir -p package-root/usr/lib/un-nexo package-root/usr/bin package-root/usr/share/applications package-root/usr/share/icons/hicolor/scalable/apps release
           cp -a publish/linux-x64/. package-root/usr/lib/un-nexo/
+          cp website/public/logo-icon.svg package-root/usr/share/icons/hicolor/scalable/apps/un-nexo.svg
           find package-root/usr/lib/un-nexo -name '*.pdb' -delete
           chmod 0755 package-root/usr/lib/un-nexo/UN_Nexo
           cat > package-root/usr/bin/un-nexo <<'EOF'
@@ -111,6 +112,7 @@ jobs:
           Name=UN_Nexo
           Comment=Modern Minecraft launcher
           Exec=un-nexo
+          Icon=un-nexo
           Terminal=false
           Categories=Game;Utility;
           StartupNotify=true
@@ -147,6 +149,8 @@ jobs:
           rm -rf smoke-root smoke-data
           mkdir -p smoke-root smoke-data
           dpkg-deb -x "release/UN_Nexo-${VERSION}-linux-x64.deb" smoke-root
+          test -s smoke-root/usr/share/icons/hicolor/scalable/apps/un-nexo.svg
+          grep -Fxq 'Icon=un-nexo' smoke-root/usr/share/applications/un-nexo.desktop
           set +e
           timeout 8s xvfb-run -a env XDG_DATA_HOME="$PWD/smoke-data" "$PWD/smoke-root/usr/lib/un-nexo/UN_Nexo" >package-smoke.log 2>&1
           code=$?
