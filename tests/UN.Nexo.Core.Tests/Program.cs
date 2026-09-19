@@ -36,6 +36,7 @@ internal static class Program
             ("Native extraction containment", NativeExtractionRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Launch metadata shape validation", LaunchMetadataRegression.RunAsync),
+            ("Launch artifact and derived asset integrity", LaunchIntegrityRegression.RunAsync),
             ("Version metadata resolver typing", VersionMetadataResolverRegression.RunAsync),
             ("Rule features and ARM64 compatibility", RuleArchitectureRegression.RunAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
