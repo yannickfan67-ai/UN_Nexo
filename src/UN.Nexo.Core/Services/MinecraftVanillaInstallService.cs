@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
@@ -11,6 +12,7 @@ public sealed class MinecraftVanillaInstallService
 {
     private const long MaxVersionMetadataBytes = 8L * 1024 * 1024;
     private const long MaxAssetIndexBytes = 64L * 1024 * 1024;
+    private const long MaxChecksumBytes = 1024;
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
     private readonly DownloadSourceService _downloadSources;
@@ -120,6 +122,7 @@ public sealed class MinecraftVanillaInstallService
         Directory.CreateDirectory(librariesRoot);
         Directory.CreateDirectory(Path.Combine(assetsRoot, "indexes"));
         Directory.CreateDirectory(Path.Combine(assetsRoot, "objects"));
+        Directory.CreateDirectory(Path.Combine(assetsRoot, "log_configs"));
         Directory.CreateDirectory(nativesRoot);
 
         Report(progress, new InstallProgress("Version metadata", 0, 1, versionId));
@@ -131,7 +134,11 @@ public sealed class MinecraftVanillaInstallService
         await DownloadFileAsync(
             version.Url,
             versionJsonPath,
-            version.Sha1,
+            NormalizeSha1(
+                version.Sha1,
+                "version manifest sha1"),
+            expectedSize: null,
+            requireIntegrity: false,
             "Version metadata",
             0,
             1,
@@ -170,10 +177,18 @@ public sealed class MinecraftVanillaInstallService
             client,
             "url",
             "downloads.client.url");
-        var clientSha1 = OptionalString(
+        var clientSha1 = OptionalSha1(
             client,
             "sha1",
             "downloads.client.sha1");
+        var clientSize = OptionalSize(
+            client,
+            "size",
+            "downloads.client.size");
+        RequireBinaryIntegrity(
+            clientSha1,
+            clientSize,
+            "downloads.client");
         var clientPath = MetadataPath.ResolveSingleComponent(
             versionRoot,
             versionId,
@@ -183,6 +198,8 @@ public sealed class MinecraftVanillaInstallService
             clientUrl,
             clientPath,
             clientSha1,
+            clientSize,
+            requireIntegrity: true,
             "Minecraft client",
             0,
             1,
@@ -201,22 +218,56 @@ public sealed class MinecraftVanillaInstallService
         foreach (var job in libraryJobs)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await DownloadFileAsync(job.Url, job.Path, job.Sha1, "Libraries", libraryCompleted, libraryJobs.Count, progress, cancellationToken);
+            var sha1 = job.Sha1;
+            if (sha1 is null && job.ChecksumUrl is not null)
+                sha1 = await ResolveSha1SidecarAsync(
+                    job.ChecksumUrl,
+                    cancellationToken);
+
+            RequireBinaryIntegrity(
+                sha1,
+                job.Size,
+                $"library '{Path.GetFileName(job.Path)}'");
+            await DownloadFileAsync(
+                job.Url,
+                job.Path,
+                sha1,
+                job.Size,
+                requireIntegrity: true,
+                "Libraries",
+                libraryCompleted,
+                libraryJobs.Count,
+                progress,
+                cancellationToken);
             if (job.ExtractTo is not null)
                 ExtractNativeArchive(job.Path, job.ExtractTo, job.Excludes);
 
             libraryCompleted++;
-            Report(progress, new InstallProgress("Libraries", libraryCompleted, libraryJobs.Count, Path.GetFileName(job.Path)));
+            Report(progress, new InstallProgress(
+                "Libraries",
+                libraryCompleted,
+                libraryJobs.Count,
+                Path.GetFileName(job.Path)));
         }
+
+        await DownloadLoggingConfigurationAsync(
+            root,
+            assetsRoot,
+            progress,
+            cancellationToken);
 
         var assetUrl = RequireString(
             assetIndex,
             "url",
             "assetIndex.url");
-        var assetSha1 = OptionalString(
+        var assetSha1 = OptionalSha1(
             assetIndex,
             "sha1",
             "assetIndex.sha1");
+        var assetSize = OptionalSize(
+            assetIndex,
+            "size",
+            "assetIndex.size");
         var indexPath = MetadataPath.ResolveSingleComponent(
             Path.Combine(assetsRoot, "indexes"),
             assetId,
@@ -228,6 +279,8 @@ public sealed class MinecraftVanillaInstallService
             assetUrl,
             indexPath,
             assetSha1,
+            assetSize,
+            requireIntegrity: false,
             "Asset index",
             0,
             1,
@@ -297,10 +350,14 @@ public sealed class MinecraftVanillaInstallService
             client,
             "url",
             "downloads.client.url");
-        _ = OptionalString(
+        _ = OptionalSha1(
             client,
             "sha1",
             "downloads.client.sha1");
+        _ = OptionalSize(
+            client,
+            "size",
+            "downloads.client.size");
 
         assetIndex = RequireObject(
             root,
@@ -316,10 +373,14 @@ public sealed class MinecraftVanillaInstallService
             assetIndex,
             "url",
             "assetIndex.url");
-        _ = OptionalString(
+        _ = OptionalSha1(
             assetIndex,
             "sha1",
             "assetIndex.sha1");
+        _ = OptionalSize(
+            assetIndex,
+            "size",
+            "assetIndex.size");
     }
 
     private static JsonElement RequireObject(
