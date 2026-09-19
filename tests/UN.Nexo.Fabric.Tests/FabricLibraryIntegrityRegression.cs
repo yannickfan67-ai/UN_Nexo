@@ -21,6 +21,7 @@ internal static class FabricLibraryIntegrityRegression
         await TestStalledMavenJarTimesOutAsync();
         await TestLinkedInstallStateRejectedAsync();
         await TestLinkedVersionsDirectoryRejectedAsync();
+        await TestLinkedMavenParentRejectedAsync();
     }
 
     private static async Task TestCorruptCachedMavenJarIsReplacedAsync()
@@ -330,6 +331,109 @@ internal static class FabricLibraryIntegrityRegression
         finally
         {
             TryDeleteDirectoryLink(linkedVersions);
+            TryDelete(root);
+            TryDelete(externalRoot);
+        }
+    }
+
+    private static async Task TestLinkedMavenParentRejectedAsync()
+    {
+        var root = NewRoot();
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-fabric-linked-maven-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+
+        var linkedParent = string.Empty;
+        try
+        {
+            var jar =
+                CreateJarBytes(
+                    "valid-library");
+            var handler =
+                new FabricLibraryHandler(
+                    jar,
+                    LibraryMode.Valid);
+            using var fixture =
+                await CreateFixtureAsync(
+                    root,
+                    handler,
+                    TimeSpan.FromSeconds(1));
+
+            var sentinel =
+                Path.Combine(
+                    externalRoot,
+                    "keep.txt");
+            var sentinelBytes =
+                Encoding.UTF8.GetBytes(
+                    "keep");
+            await File.WriteAllBytesAsync(
+                sentinel,
+                sentinelBytes);
+
+            var librariesRoot =
+                Path.Combine(
+                    fixture.Paths.GetInstanceGameDirectory(
+                        fixture.Instance.Id),
+                    "libraries");
+            Directory.CreateDirectory(
+                librariesRoot);
+
+            linkedParent =
+                Path.Combine(
+                    librariesRoot,
+                    "com");
+
+            if (!TryCreateDirectoryLink(
+                    linkedParent,
+                    externalRoot))
+            {
+                Console.WriteLine(
+                    "SKIP Fabric linked Maven parent regression: platform denied symlink creation");
+                return;
+            }
+
+            try
+            {
+                await fixture.Service.PrepareAsync(
+                    fixture.Instance,
+                    fixture.BaseVersion);
+                throw new Exception(
+                    "Fabric unexpectedly accepted a linked Maven parent.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Equal(
+                Convert.ToHexString(sentinelBytes),
+                Convert.ToHexString(
+                    await File.ReadAllBytesAsync(
+                        sentinel)),
+                "Rejecting a linked Fabric Maven parent must preserve the external sentinel.");
+
+            Equal(
+                1,
+                Directory.EnumerateFileSystemEntries(
+                    externalRoot)
+                    .Count(),
+                "Fabric library preparation must not write through a linked Maven parent.");
+
+            Equal(
+                false,
+                File.Exists(
+                    Path.Combine(
+                        fixture.Paths.GetInstanceDirectory(
+                            fixture.Instance.Id),
+                        "install-state.json")),
+                "Fabric must not publish prepared state after rejecting a linked Maven parent.");
+        }
+        finally
+        {
+            TryDeleteDirectoryLink(
+                linkedParent);
             TryDelete(root);
             TryDelete(externalRoot);
         }

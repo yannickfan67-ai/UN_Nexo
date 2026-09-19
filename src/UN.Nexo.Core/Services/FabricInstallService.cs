@@ -397,13 +397,25 @@ public sealed class FabricInstallService(
                 cancellationToken);
         }
 
+        LoaderLibraryPublicationGuard.EnsureDestinationParentPhysical(
+            paths,
+            instanceId,
+            library.Path,
+            create: true,
+            "Fabric library");
+        LoaderLibraryPublicationGuard.RejectReparsePointIfPresent(
+            library.Path,
+            "Fabric library destination");
+
         if (await IsValidAsync(library.Path, expectedSha1, cancellationToken))
             return;
 
-        paths.EnsureInstanceDirectoryPhysical(instanceId);
-        Directory.CreateDirectory(Path.GetDirectoryName(library.Path)!);
         var temp = library.Path + ".part";
-        TryDeleteFile(temp);
+        LoaderLibraryPublicationGuard.TryDeleteTempFile(
+            paths,
+            instanceId,
+            temp,
+            "Fabric library");
         try
         {
             using var response = await TrustedHttpDownload.SendGetAsync(
@@ -412,14 +424,28 @@ public sealed class FabricInstallService(
                 "Fabric library",
                 cancellationToken);
             response.EnsureSuccessStatusCode();
-            await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var input =
+                await response.Content.ReadAsStreamAsync(
+                    cancellationToken);
+
+            LoaderLibraryPublicationGuard.EnsureDestinationParentPhysical(
+                paths,
+                instanceId,
+                library.Path,
+                create: true,
+                "Fabric library");
+            LoaderLibraryPublicationGuard.RejectReparsePointIfPresent(
+                temp,
+                "Fabric library temporary file");
+
             await using (var output = new FileStream(
                 temp,
                 FileMode.CreateNew,
                 FileAccess.Write,
                 FileShare.None,
                 128 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan))
+                FileOptions.Asynchronous
+                | FileOptions.SequentialScan))
             {
                 await CopyWithIdleTimeoutAsync(
                     input,
@@ -429,16 +455,37 @@ public sealed class FabricInstallService(
                 await output.FlushAsync(cancellationToken);
             }
 
-            if (!await IsValidAsync(temp, expectedSha1, cancellationToken))
+            if (!await IsValidAsync(
+                    temp,
+                    expectedSha1,
+                    cancellationToken))
+            {
                 throw new InvalidDataException(
                     $"Downloaded Fabric library failed verification: {library.Url}");
+            }
 
-            paths.EnsureInstanceDirectoryPhysical(instanceId);
-            File.Move(temp, library.Path, overwrite: true);
+            LoaderLibraryPublicationGuard.EnsureDestinationParentPhysical(
+                paths,
+                instanceId,
+                library.Path,
+                create: false,
+                "Fabric library");
+            LoaderLibraryPublicationGuard.RejectReparsePointIfPresent(
+                library.Path,
+                "Fabric library destination");
+
+            File.Move(
+                temp,
+                library.Path,
+                overwrite: true);
         }
         catch
         {
-            TryDeleteFile(temp);
+            LoaderLibraryPublicationGuard.TryDeleteTempFile(
+                paths,
+                instanceId,
+                temp,
+                "Fabric library");
             throw;
         }
     }

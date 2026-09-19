@@ -397,14 +397,13 @@ public sealed class QuiltInstallService(
                 cancellationToken);
         }
 
-        var destinationParent = Path.GetDirectoryName(library.Path)
-            ?? throw new InvalidDataException(
-                "Quilt library destination has no parent directory.");
-        EnsureLibraryDestinationParentPhysical(
+        LoaderLibraryPublicationGuard.EnsureDestinationParentPhysical(
+            paths,
             instanceId,
-            destinationParent,
-            create: true);
-        RejectReparsePointIfPresent(
+            library.Path,
+            create: true,
+            "Quilt library");
+        LoaderLibraryPublicationGuard.RejectReparsePointIfPresent(
             library.Path,
             "Quilt library destination");
 
@@ -412,7 +411,11 @@ public sealed class QuiltInstallService(
             return;
 
         var temp = library.Path + ".part";
-        TryDeleteLibraryTempFile(instanceId, temp);
+        LoaderLibraryPublicationGuard.TryDeleteTempFile(
+            paths,
+            instanceId,
+            temp,
+            "Quilt library");
         try
         {
             using var response = await TrustedHttpDownload.SendGetAsync(
@@ -425,11 +428,13 @@ public sealed class QuiltInstallService(
 
             // The directory may have been replaced while the request was in flight.
             // Revalidate immediately before opening the temporary output file.
-            EnsureLibraryDestinationParentPhysical(
+            LoaderLibraryPublicationGuard.EnsureDestinationParentPhysical(
+                paths,
                 instanceId,
-                destinationParent,
-                create: true);
-            RejectReparsePointIfPresent(
+                library.Path,
+                create: true,
+                "Quilt library");
+            LoaderLibraryPublicationGuard.RejectReparsePointIfPresent(
                 temp,
                 "Quilt library temporary file");
 
@@ -455,18 +460,24 @@ public sealed class QuiltInstallService(
 
             // Publication is another trust boundary. A Maven parent replaced with
             // a symlink/junction after verification must fail closed.
-            EnsureLibraryDestinationParentPhysical(
+            LoaderLibraryPublicationGuard.EnsureDestinationParentPhysical(
+                paths,
                 instanceId,
-                destinationParent,
-                create: false);
-            RejectReparsePointIfPresent(
+                library.Path,
+                create: false,
+                "Quilt library");
+            LoaderLibraryPublicationGuard.RejectReparsePointIfPresent(
                 library.Path,
                 "Quilt library destination");
             File.Move(temp, library.Path, overwrite: true);
         }
         catch
         {
-            TryDeleteLibraryTempFile(instanceId, temp);
+            LoaderLibraryPublicationGuard.TryDeleteTempFile(
+                paths,
+                instanceId,
+                temp,
+                "Quilt library");
             throw;
         }
     }
@@ -580,139 +591,6 @@ public sealed class QuiltInstallService(
         catch (Exception ex) when (ex is InvalidDataException or IOException)
         {
             return false;
-        }
-    }
-
-    private void EnsureLibraryDestinationParentPhysical(
-        string instanceId,
-        string destinationParent,
-        bool create)
-    {
-        var instanceRoot = paths.EnsureInstanceDirectoryPhysical(instanceId);
-        EnsurePhysicalDirectoryChain(
-            instanceRoot,
-            destinationParent,
-            create,
-            "Quilt library directory");
-        paths.EnsureInstanceDirectoryPhysical(instanceId);
-    }
-
-    private static void EnsurePhysicalDirectoryChain(
-        string root,
-        string target,
-        bool create,
-        string label)
-    {
-        var rootFull = Path.GetFullPath(root)
-            .TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
-        var targetFull = Path.GetFullPath(target)
-            .TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
-        var comparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-        var rootWithSeparator = rootFull + Path.DirectorySeparatorChar;
-
-        if (!string.Equals(rootFull, targetFull, comparison)
-            && !targetFull.StartsWith(rootWithSeparator, comparison))
-        {
-            throw new InvalidDataException(
-                $"{label} escaped the managed instance directory.");
-        }
-
-        RejectDirectoryReparsePoint(rootFull, label);
-        if (string.Equals(rootFull, targetFull, comparison))
-            return;
-
-        var relative = Path.GetRelativePath(rootFull, targetFull);
-        var current = rootFull;
-        foreach (var component in relative.Split(
-                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-                     StringSplitOptions.RemoveEmptyEntries))
-        {
-            current = Path.Combine(current, component);
-            if (Directory.Exists(current))
-            {
-                RejectDirectoryReparsePoint(current, label);
-                continue;
-            }
-
-            if (File.Exists(current))
-                throw new InvalidDataException(
-                    $"{label} is occupied by a file: {current}");
-            if (!create)
-                throw new DirectoryNotFoundException(
-                    $"{label} disappeared before publication: {current}");
-
-            var parent = Path.GetDirectoryName(current)
-                ?? throw new InvalidDataException(
-                    $"{label} has no parent directory.");
-            RejectDirectoryReparsePoint(parent, label);
-            Directory.CreateDirectory(current);
-            RejectDirectoryReparsePoint(current, label);
-            RejectDirectoryReparsePoint(parent, label);
-        }
-    }
-
-    private static void RejectDirectoryReparsePoint(
-        string path,
-        string label)
-    {
-        if (!Directory.Exists(path))
-            throw new DirectoryNotFoundException(
-                $"{label} is missing: {path}");
-
-        var attributes = File.GetAttributes(path);
-        if ((attributes & FileAttributes.Directory) == 0)
-            throw new InvalidDataException(
-                $"{label} must be a directory: {path}");
-        if ((attributes & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidDataException(
-                $"{label} must not contain symbolic links, junctions or other reparse points: {path}");
-    }
-
-    private static void RejectReparsePointIfPresent(
-        string path,
-        string label)
-    {
-        if (!Directory.Exists(path) && !File.Exists(path))
-            return;
-
-        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-            throw new InvalidDataException(
-                $"{label} must not be a symbolic link, junction or other reparse point.");
-    }
-
-    private void TryDeleteLibraryTempFile(
-        string instanceId,
-        string tempPath)
-    {
-        try
-        {
-            var parent = Path.GetDirectoryName(tempPath);
-            if (parent is null)
-                return;
-
-            EnsureLibraryDestinationParentPhysical(
-                instanceId,
-                parent,
-                create: false);
-            if (!File.Exists(tempPath))
-                return;
-
-            var attributes = File.GetAttributes(tempPath);
-            if ((attributes & FileAttributes.Directory) != 0)
-                return;
-
-            File.Delete(tempPath);
-        }
-        catch
-        {
-            // If the parent chain changed, preserve the temp path rather than
-            // following an untrusted replacement during cleanup.
         }
     }
 
