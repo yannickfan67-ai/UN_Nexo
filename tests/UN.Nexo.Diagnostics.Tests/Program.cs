@@ -134,14 +134,25 @@ internal static class Program
                     DiagnosticBundleService.PreviewScopeNotice,
                     "re-reads",
                     "preview scope should warn that export re-reads logs");
-                var preview = await bundles.BuildPreviewAsync(diagnosis, 1, [minecraftLog], [token]);
+                var preview = await bundles.BuildPreviewAsync(
+                    diagnosis,
+                    1,
+                    [minecraftLog],
+                    [tempDirectory],
+                    [token]);
                 DoesNotContain(preview.Summary, token, "preview summary explicit secret");
                 DoesNotContain(preview.LogExcerpt, token, "preview log explicit secret");
                 if (!string.IsNullOrWhiteSpace(home))
                     DoesNotContainInsensitive(preview.LogExcerpt, home, "preview log home path");
 
                 var archivePath = Path.Combine(tempDirectory, "diagnostic.zip");
-                var result = await bundles.ExportAsync(diagnosis, 1, [minecraftLog], archivePath, [token]);
+                var result = await bundles.ExportAsync(
+                    diagnosis,
+                    1,
+                    [minecraftLog],
+                    [tempDirectory],
+                    archivePath,
+                    [token]);
                 Equal(1, result.IncludedLogs, "included log count");
                 Equal(true, File.Exists(result.ArchivePath), "archive exists");
 
@@ -190,6 +201,7 @@ internal static class Program
                             diagnosis,
                             1,
                             [minecraftLog],
+                            [tempDirectory],
                             archivePath,
                             [token],
                             cancelled.Token);
@@ -214,11 +226,13 @@ internal static class Program
                     diagnosis,
                     1,
                     [overlapLog],
+                    [tempDirectory],
                     archivePath);
                 var secondExport = bundles.ExportAsync(
                     diagnosis,
                     2,
                     [overlapLog],
+                    [tempDirectory],
                     archivePath);
                 var overlapping = await Task.WhenAll(firstExport, secondExport);
                 Equal(archivePath, overlapping[0].ArchivePath,
@@ -242,6 +256,101 @@ internal static class Program
                             SearchOption.TopDirectoryOnly)
                         .Any(),
                     "overlapping exports must clean operation-specific partial files");
+
+
+                Console.WriteLine("[diagnostics] source containment checks");
+                var allowedRoot = Path.Combine(tempDirectory, "allowed-logs");
+                var outsideRoot = Path.Combine(tempDirectory, "outside-logs");
+                Directory.CreateDirectory(allowedRoot);
+                Directory.CreateDirectory(outsideRoot);
+
+                var regularLog = Path.Combine(allowedRoot, "regular.log");
+                await File.WriteAllTextAsync(regularLog, "regular-safe-marker");
+                var regularPreview = await bundles.BuildPreviewAsync(
+                    diagnosis,
+                    1,
+                    [regularLog],
+                    [allowedRoot]);
+                Equal(1, regularPreview.SourceLogs.Count,
+                    "regular authorized log should remain eligible");
+                Contains(regularPreview.LogExcerpt, "regular-safe-marker",
+                    "regular authorized log should be readable");
+
+                var outsideSecret = Path.Combine(outsideRoot, "outside-secret.txt");
+                const string outsideMarker = "outside-secret-marker-should-never-export";
+                await File.WriteAllTextAsync(outsideSecret, outsideMarker);
+                var linkedLog = Path.Combine(allowedRoot, "latest.log");
+
+                var symlinkSupported = true;
+                try
+                {
+                    File.CreateSymbolicLink(linkedLog, outsideSecret);
+                }
+                catch (Exception ex) when (
+                    ex is UnauthorizedAccessException
+                    or PlatformNotSupportedException
+                    or IOException)
+                {
+                    symlinkSupported = false;
+                    Console.WriteLine(
+                        "[diagnostics] SKIP symlink source fixture: " + ex.GetType().Name);
+                }
+
+                if (symlinkSupported)
+                {
+                    var linkedPreview = await bundles.BuildPreviewAsync(
+                        diagnosis,
+                        1,
+                        [linkedLog],
+                        [allowedRoot]);
+                    Equal(0, linkedPreview.SourceLogs.Count,
+                        "linked source log should be excluded from preview");
+                    DoesNotContain(
+                        linkedPreview.LogExcerpt,
+                        outsideMarker,
+                        "linked outside file must not appear in preview");
+
+                    File.Delete(linkedLog);
+                    await File.WriteAllTextAsync(linkedLog, "initial-regular-content");
+                    var beforeSwap = await bundles.BuildPreviewAsync(
+                        diagnosis,
+                        1,
+                        [linkedLog],
+                        [allowedRoot]);
+                    Equal(1, beforeSwap.SourceLogs.Count,
+                        "regular file should preview before TOCTOU replacement");
+
+                    File.Delete(linkedLog);
+                    File.CreateSymbolicLink(linkedLog, outsideSecret);
+                    var containmentArchive = Path.Combine(
+                        tempDirectory,
+                        "diagnostic-containment.zip");
+                    var swappedExport = await bundles.ExportAsync(
+                        diagnosis,
+                        1,
+                        [linkedLog],
+                        [allowedRoot],
+                        containmentArchive);
+                    Equal(0, swappedExport.IncludedLogs,
+                        "preview-to-export symlink replacement should be excluded");
+
+                    string containmentPackage;
+                    using (var containmentZip = ZipFile.OpenRead(containmentArchive))
+                    {
+                        var combined = new System.Text.StringBuilder();
+                        foreach (var entry in containmentZip.Entries)
+                        {
+                            using var reader = new StreamReader(entry.Open());
+                            combined.Append(await reader.ReadToEndAsync());
+                        }
+                        containmentPackage = combined.ToString();
+                    }
+
+                    DoesNotContain(
+                        containmentPackage,
+                        outsideMarker,
+                        "preview-to-export symlink replacement must not disclose outside content");
+                }
             }
             finally
             {
