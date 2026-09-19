@@ -76,11 +76,17 @@ public sealed class MinecraftVersionMetadataResolver
             if (node is not JsonObject child)
                 throw new InvalidDataException($"Version metadata root must be an object: {versionId}");
 
-            var declaredId = child["id"]?.GetValue<string>();
+            var declaredId = RequireStringProperty(
+                child,
+                "id",
+                versionId);
             if (!string.Equals(declaredId, versionId, StringComparison.Ordinal))
                 throw new InvalidDataException($"Version metadata id '{declaredId}' does not match directory '{versionId}'.");
 
-            var inheritsFrom = child["inheritsFrom"]?.GetValue<string>();
+            var inheritsFrom = OptionalStringProperty(
+                child,
+                "inheritsFrom",
+                versionId);
             if (string.IsNullOrWhiteSpace(inheritsFrom))
             {
                 var clientVersion = HasClientDownload(child) ? versionId : versionId;
@@ -140,7 +146,9 @@ public sealed class MinecraftVersionMetadataResolver
         void Add(JsonNode? value, bool replace)
         {
             var clone = value?.DeepClone();
-            var key = clone is JsonObject obj ? obj["name"]?.GetValue<string>() : null;
+            var key = clone is JsonObject obj
+                ? OptionalStringProperty(obj, "name", "library entry")
+                : null;
             if (!string.IsNullOrWhiteSpace(key) && indexes.TryGetValue(key, out var index))
             {
                 if (replace)
@@ -188,6 +196,45 @@ public sealed class MinecraftVersionMetadataResolver
         }
         return result;
     }
+
+    private static string RequireStringProperty(
+        JsonObject metadata,
+        string propertyName,
+        string context)
+    {
+        if (!metadata.TryGetPropertyValue(propertyName, out var node)
+            || node is null)
+            throw InvalidTypedProperty(context, propertyName, "a string");
+
+        if (node is JsonValue value
+            && value.TryGetValue<string>(out var text)
+            && text is not null)
+            return text;
+
+        throw InvalidTypedProperty(context, propertyName, "a string");
+    }
+
+    private static string? OptionalStringProperty(
+        JsonObject metadata,
+        string propertyName,
+        string context)
+    {
+        if (!metadata.TryGetPropertyValue(propertyName, out var node)
+            || node is null)
+            return null;
+
+        if (node is JsonValue value
+            && value.TryGetValue<string>(out var text))
+            return text;
+
+        throw InvalidTypedProperty(context, propertyName, "a string");
+    }
+
+    private static InvalidDataException InvalidTypedProperty(
+        string context,
+        string propertyName,
+        string expected)
+        => new($"Version metadata '{context}' property '{propertyName}' must be {expected}.");
 
     private static bool HasClientDownload(JsonObject metadata)
         => metadata["downloads"] is JsonObject downloads
