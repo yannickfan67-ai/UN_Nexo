@@ -61,7 +61,7 @@
               </StackPanel>
               <StackPanel Grid.Row="1" Grid.ColumnSpan="2">
                 <TextBlock Text="Instance name" Classes="muted" FontSize="11" />
-                <TextBox x:Name="InstanceNameBox" Watermark="Fabric Minecraft" />
+                <TextBox x:Name="InstanceNameBox" PlaceholderText="Fabric Minecraft" />
               </StackPanel>
               <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
                 <Button x:Name="CreateButton" Classes="primary" Content="Create &amp; prepare" Click="OnCreateClicked" IsEnabled="False" />
