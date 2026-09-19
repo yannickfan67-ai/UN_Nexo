@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
@@ -96,11 +97,22 @@ public sealed class MinecraftVanillaInstallService
         if (string.IsNullOrWhiteSpace(version.Url))
             throw new InvalidOperationException("The selected Minecraft version has no metadata URL.");
 
+        var versionId = MetadataPath.RequireSingleComponent(
+            version.Id,
+            "version id");
         var gameRoot = _paths.GetInstanceGameDirectory(instance.Id);
-        var versionRoot = Path.Combine(gameRoot, "versions", version.Id);
+        var versionRoot = MetadataPath.ResolveSingleComponent(
+            Path.Combine(gameRoot, "versions"),
+            versionId,
+            string.Empty,
+            "version id");
         var librariesRoot = Path.Combine(gameRoot, "libraries");
         var assetsRoot = Path.Combine(gameRoot, "assets");
-        var nativesRoot = Path.Combine(gameRoot, "natives", version.Id);
+        var nativesRoot = MetadataPath.ResolveSingleComponent(
+            Path.Combine(gameRoot, "natives"),
+            versionId,
+            string.Empty,
+            "version id");
 
         Directory.CreateDirectory(versionRoot);
         Directory.CreateDirectory(librariesRoot);
@@ -109,7 +121,7 @@ public sealed class MinecraftVanillaInstallService
         Directory.CreateDirectory(nativesRoot);
 
         Report(progress, new InstallProgress("Version metadata", 0, 1, version.Id));
-        var versionJsonPath = Path.Combine(versionRoot, $"{version.Id}.json");
+        var versionJsonPath = Path.Combine(versionRoot, $"{versionId}.json");
         await DownloadFileAsync(
             version.Url,
             versionJsonPath,
@@ -135,7 +147,7 @@ public sealed class MinecraftVanillaInstallService
             Report(progress, new InstallProgress("Minecraft client", 0, 1, version.Id));
             var clientUrl = client.GetProperty("url").GetString() ?? throw new InvalidDataException("Client URL missing.");
             var clientSha1 = client.TryGetProperty("sha1", out var clientSha) ? clientSha.GetString() : null;
-            await DownloadFileAsync(clientUrl, Path.Combine(versionRoot, $"{version.Id}.jar"), clientSha1, "Minecraft client", 0, 1, progress, cancellationToken);
+            await DownloadFileAsync(clientUrl, Path.Combine(versionRoot, $"{versionId}.jar"), clientSha1, "Minecraft client", 0, 1, progress, cancellationToken);
             Report(progress, new InstallProgress("Minecraft client", 1, 1, version.Id, Detail: "Client JAR ready"));
         }
 
@@ -341,7 +353,9 @@ public sealed class MinecraftVanillaInstallService
             return;
 
         var sha1 = element.TryGetProperty("sha1", out var shaElement) ? shaElement.GetString() : null;
-        var localPath = Path.Combine(librariesRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var localPath = MinecraftLaunchPlanBuilder.Within(
+            librariesRoot,
+            relativePath);
         jobs.Add(new DownloadJob(url, localPath, sha1, extractTo, excludes));
     }
 
