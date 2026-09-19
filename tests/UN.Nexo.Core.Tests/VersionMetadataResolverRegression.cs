@@ -138,6 +138,8 @@ internal static class VersionMetadataResolverRegression
                   "downloads":{"client":{}},
                   "libraries":[
                     {"name":"com.example:shared:1.0"},
+                    {"name":"com.example:classified:1.0:natives-linux"},
+                    {"name":"com.example:extension:1.0@zip"},
                     {"name":"com.example:base-only:1.0"}
                   ],
                   "arguments":{"game":["--base"]}
@@ -150,6 +152,9 @@ internal static class VersionMetadataResolverRegression
                   "mainClass":"child.Main",
                   "libraries":[
                     {"name":"com.example:shared:2.0"},
+                    {"name":"com.example:classified:2.0:natives-linux"},
+                    {"name":"com.example:classified:2.0:natives-windows"},
+                    {"name":"com.example:extension:2.0"},
                     {"name":"com.example:child-only:1.0"}
                   ],
                   "arguments":{"game":["--child"]}
@@ -168,9 +173,34 @@ internal static class VersionMetadataResolverRegression
             Assert(
                 metadata.GetProperty("arguments").GetProperty("game").GetArrayLength() == 2,
                 "Parent and child game arguments should remain merged.");
+            var libraries = metadata.GetProperty("libraries")
+                .EnumerateArray()
+                .Select(item => item.GetProperty("name").GetString())
+                .Where(name => name is not null)
+                .Cast<string>()
+                .ToArray();
             Assert(
-                metadata.GetProperty("libraries").GetArrayLength() == 4,
-                "Normal inheritance should preserve current exact-name library merge semantics.");
+                libraries.Length == 7,
+                "Inheritance should replace same Maven identities while preserving distinct artifacts/classifiers/extensions.");
+            Assert(
+                libraries.Contains("com.example:shared:2.0", StringComparer.Ordinal)
+                && !libraries.Contains("com.example:shared:1.0", StringComparer.Ordinal),
+                "Child Maven version should replace the inherited version of the same artifact.");
+            Assert(
+                libraries.Contains("com.example:classified:2.0:natives-linux", StringComparer.Ordinal)
+                && !libraries.Contains("com.example:classified:1.0:natives-linux", StringComparer.Ordinal),
+                "Child version should replace the same classifier identity.");
+            Assert(
+                libraries.Contains("com.example:classified:2.0:natives-windows", StringComparer.Ordinal),
+                "A distinct classifier must remain a separate inherited library identity.");
+            Assert(
+                libraries.Contains("com.example:extension:1.0@zip", StringComparer.Ordinal)
+                && libraries.Contains("com.example:extension:2.0", StringComparer.Ordinal),
+                "Different Maven extensions must not collapse into one identity.");
+            Assert(
+                libraries.Contains("com.example:base-only:1.0", StringComparer.Ordinal)
+                && libraries.Contains("com.example:child-only:1.0", StringComparer.Ordinal),
+                "Unrelated parent and child artifacts should both remain present.");
         }
         finally
         {
