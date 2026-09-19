@@ -37,6 +37,11 @@ public partial class MainWindowViewModel
 
         try
         {
+            using var operation =
+                await _instanceOperations.AcquireAsync(
+                    instance.Id,
+                    "launch Minecraft server",
+                    cancellation.Token);
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
             var plan = await _launchBuilder.BuildAsync(
                 instance, account, JavaInstallations.ToArray(), cancellation.Token);
