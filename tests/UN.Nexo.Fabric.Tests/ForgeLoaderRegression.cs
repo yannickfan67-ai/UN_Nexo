@@ -294,6 +294,17 @@ internal static class ForgeLoaderRegression
             Assert(
                 processCalls == 2,
                 "Repairing Forge should still rerun the official installer processors.");
+
+            await TestLinkedInstallerTreeRejectedAsync(
+                client,
+                paths,
+                vanilla,
+                baseVersion,
+                javaPath,
+                root,
+                minecraftVersion,
+                forgeVersion,
+                launchId);
         }
         finally
         {
@@ -306,6 +317,157 @@ internal static class ForgeLoaderRegression
             catch
             {
             }
+        }
+    }
+
+    private static async Task TestLinkedInstallerTreeRejectedAsync(
+        HttpClient client,
+        NexoPathService paths,
+        MinecraftVanillaInstallService vanilla,
+        MinecraftVersionInfo baseVersion,
+        string javaPath,
+        string testRoot,
+        string minecraftVersion,
+        string forgeVersion,
+        string launchId)
+    {
+        var externalRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-forge-linked-installer-"
+            + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel = Path.Combine(externalRoot, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+
+        var probe = Path.Combine(
+            testRoot,
+            "forge-link-probe-" + Guid.NewGuid().ToString("N"));
+        if (!TryCreateDirectoryLink(probe, externalRoot))
+        {
+            TryDeleteTree(externalRoot);
+            return;
+        }
+        TryDeleteDirectoryLink(probe);
+
+        var instance = new GameInstance(
+            Guid.NewGuid().ToString("N"),
+            "Forge linked installer tree",
+            launchId,
+            "forge",
+            DateTimeOffset.UtcNow,
+            minecraftVersion,
+            forgeVersion);
+        var instanceRoot = paths.GetInstanceDirectory(instance.Id);
+        Directory.CreateDirectory(instanceRoot);
+
+        var linkedPath = Path.Combine(
+            paths.GetInstanceGameDirectory(instance.Id),
+            "libraries",
+            "net");
+        var processCalls = 0;
+
+        var service = new ForgeInstallService(
+            client,
+            paths,
+            vanilla,
+            processRunner: (startInfo, cancellationToken) =>
+            {
+                processCalls++;
+                return Task.FromResult(
+                    new ForgeInstallerProcessResult(
+                        0,
+                        "unexpected process execution",
+                        string.Empty));
+            },
+            javaProvisioner: (major, progress, cancellationToken) =>
+            {
+                var parent = Path.GetDirectoryName(linkedPath)
+                    ?? throw new InvalidOperationException(
+                        "Linked Forge regression path has no parent.");
+                Directory.CreateDirectory(parent);
+                Assert(
+                    TryCreateDirectoryLink(linkedPath, externalRoot),
+                    "Forge regression could not create the linked Maven directory after Vanilla preparation.");
+                return Task.FromResult(
+                    new JavaInstallation(
+                        javaPath,
+                        testRoot,
+                        "21.0.8",
+                        true,
+                        "test"));
+            });
+
+        try
+        {
+            try
+            {
+                await service.PrepareAsync(instance, baseVersion);
+                throw new InvalidOperationException(
+                    "Forge preparation unexpectedly accepted a linked installer-owned library directory.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                processCalls == 0,
+                "Forge installer process must not start after an installer-owned tree becomes linked.");
+            Assert(
+                File.Exists(sentinel),
+                "Rejecting the linked Forge installer tree must preserve the external sentinel.");
+            Assert(
+                Directory.EnumerateFileSystemEntries(externalRoot)
+                    .All(path => Path.GetFileName(path) == "keep.txt"),
+                "Forge preparation must not write through the linked installer-owned tree.");
+        }
+        finally
+        {
+            TryDeleteDirectoryLink(linkedPath);
+            TryDeleteTree(instanceRoot);
+            TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static bool TryCreateDirectoryLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectoryLink(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteTree(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
         }
     }
 
