@@ -190,6 +190,7 @@ public partial class MainWindowViewModel
                 _lastDiagnosis,
                 _lastDiagnosticExitCode,
                 GetDiagnosticSourceLogs(),
+                GetDiagnosticAllowedRoots(),
                 archivePath,
                 GetDiagnosticSecrets());
             LastDiagnosticArchivePath = result.ArchivePath;
@@ -271,6 +272,7 @@ public partial class MainWindowViewModel
                 diagnosis,
                 exitCode,
                 GetDiagnosticSourceLogs(),
+                GetDiagnosticAllowedRoots(),
                 GetDiagnosticSecrets());
             var sources = preview.SourceLogs.Count == 0
                 ? "No readable log file is currently available."
@@ -301,6 +303,26 @@ public partial class MainWindowViewModel
             yield return path;
         foreach (var path in NewestMatchingFiles(gameDirectory, "hs_err_pid*.log", 2))
             yield return path;
+    }
+
+    private IEnumerable<string?> GetDiagnosticAllowedRoots()
+    {
+        yield return Path.Combine(_paths.GetDataRoot(), "logs");
+
+        var startupDirectory = string.IsNullOrWhiteSpace(LauncherStartupTrace.Path)
+            ? null
+            : Path.GetDirectoryName(LauncherStartupTrace.Path);
+        if (!string.IsNullOrWhiteSpace(startupDirectory))
+            yield return startupDirectory;
+
+        if (SelectedInstance is null)
+            yield break;
+
+        var instanceDirectory = _paths.GetInstanceDirectory(SelectedInstance.Id);
+        var gameDirectory = _paths.GetInstanceGameDirectory(SelectedInstance.Id);
+        yield return Path.Combine(instanceDirectory, "launcher-logs");
+        yield return gameDirectory;
+        yield return Path.Combine(gameDirectory, "crash-reports");
     }
 
     private IEnumerable<string?> GetDiagnosticSecrets()
