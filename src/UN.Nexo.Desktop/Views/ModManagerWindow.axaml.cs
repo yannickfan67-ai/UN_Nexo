@@ -309,7 +309,7 @@ public sealed partial class ModManagerWindow : Window
         if (!ActiveProviderConfigured)
         {
             OperationStatus.Text =
-                $"CurseForge is not configured. Set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} for direct API access, or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} for a server-side proxy; Nexo never embeds the CurseForge key."
+                $"CurseForge is not configured. Set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} for direct API access, or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} for a server-side proxy; Nexo never embeds the CurseForge key.";
             UpdateModrinthAvailability();
             return;
         }
