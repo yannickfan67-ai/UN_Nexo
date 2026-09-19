@@ -45,6 +45,7 @@ internal static class InstanceModServiceRegression
             await VerifyMutationsWaitForInstanceLeaseAsync(paths, service, source);
             await VerifyCrossProcessLeaseBlocksInstallAsync(paths, service, source, root);
             await VerifyLinkedModsDirectoryIsRejectedAsync(paths, service, source, root, linkedId);
+            await VerifyLinkedManagedEntriesAreRejectedAsync(paths, service);
         }
         finally { try { Directory.Delete(root, true); } catch { } }
     }
@@ -177,6 +178,147 @@ internal static class InstanceModServiceRegression
         try { await service.InstallAsync(instanceId, source); throw new Exception("Installing through a linked mods directory should fail."); } catch (InvalidDataException) { }
         Assert(!File.Exists(Path.Combine(outside, Path.GetFileName(source))), "Linked mods install wrote outside the instance.");
         try { service.List(instanceId); throw new Exception("Listing through a linked mods directory should fail closed."); } catch (InvalidDataException) { }
+    }
+
+    private static async Task VerifyLinkedManagedEntriesAreRejectedAsync(
+        NexoPathService paths,
+        InstanceModService service)
+    {
+        var externalRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-mod-link-target-"
+            + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+
+        var sentinel = Path.Combine(externalRoot, "sentinel.jar");
+        var sentinelBytes = new byte[] { 4, 2, 4, 2 };
+        await File.WriteAllBytesAsync(sentinel, sentinelBytes);
+
+        try
+        {
+            var disableId = Guid.NewGuid().ToString("N");
+            var disableMods = Path.Combine(
+                paths.GetInstanceGameDirectory(disableId),
+                "mods");
+            Directory.CreateDirectory(disableMods);
+            var linkedEnabled = Path.Combine(disableMods, "linked.jar");
+            if (!TryCreateFileLink(linkedEnabled, sentinel))
+            {
+                Console.WriteLine(
+                    "SKIP linked managed-mod regression: platform denied file symlink creation");
+                return;
+            }
+
+            try
+            {
+                await service.SetEnabledAsync(
+                    disableId,
+                    "linked.jar",
+                    enabled: false);
+                throw new Exception(
+                    "Disabling a linked managed JAR should fail closed.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                !File.Exists(Path.Combine(disableMods, "linked.jar.disabled")),
+                "Rejecting a linked managed JAR must not publish a disabled entry.");
+            Assert(
+                (await File.ReadAllBytesAsync(sentinel)).SequenceEqual(sentinelBytes),
+                "Disabling a linked managed JAR must not modify its external target.");
+
+            var removeId = Guid.NewGuid().ToString("N");
+            var removeMods = Path.Combine(
+                paths.GetInstanceGameDirectory(removeId),
+                "mods");
+            Directory.CreateDirectory(removeMods);
+            var linkedRemove = Path.Combine(removeMods, "remove.jar");
+            Assert(
+                TryCreateFileLink(linkedRemove, sentinel),
+                "File symlink support changed during linked managed-mod regression.");
+
+            try
+            {
+                await service.RemoveAsync(
+                    removeId,
+                    "remove.jar");
+                throw new Exception(
+                    "Removing a linked managed JAR should fail closed.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                File.Exists(linkedRemove),
+                "Rejecting removal should leave the linked managed entry untouched.");
+            Assert(
+                (await File.ReadAllBytesAsync(sentinel)).SequenceEqual(sentinelBytes),
+                "Removing a linked managed JAR must not modify its external target.");
+
+            var targetId = Guid.NewGuid().ToString("N");
+            var targetMods = Path.Combine(
+                paths.GetInstanceGameDirectory(targetId),
+                "mods");
+            Directory.CreateDirectory(targetMods);
+            var physical = Path.Combine(targetMods, "target.jar");
+            await File.WriteAllBytesAsync(physical, [1, 2, 3]);
+            var linkedTarget = Path.Combine(targetMods, "target.jar.disabled");
+            Assert(
+                TryCreateFileLink(linkedTarget, sentinel),
+                "File symlink support changed before target-path regression.");
+
+            try
+            {
+                await service.SetEnabledAsync(
+                    targetId,
+                    "target.jar",
+                    enabled: false);
+                throw new Exception(
+                    "Disabling onto a linked target entry should fail closed.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                File.Exists(physical),
+                "Rejecting a linked state target must preserve the physical source JAR.");
+            Assert(
+                (await File.ReadAllBytesAsync(sentinel)).SequenceEqual(sentinelBytes),
+                "Rejecting a linked state target must not modify its external target.");
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(externalRoot, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static bool TryCreateFileLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static void Assert(bool condition, string message)
