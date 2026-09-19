@@ -4,6 +4,38 @@ public static class MavenArtifactPath
 {
     public static string FromCoordinate(string coordinate)
     {
+        var parsed = Parse(coordinate);
+        var groupPath = string.Join(
+            Path.DirectorySeparatorChar,
+            parsed.Group.Split('.'));
+
+        var fileName = $"{parsed.Artifact}-{parsed.Version}";
+        if (!string.IsNullOrWhiteSpace(parsed.Classifier))
+            fileName += $"-{parsed.Classifier}";
+        fileName += $".{parsed.Extension}";
+
+        return Path.Combine(
+            groupPath,
+            parsed.Artifact,
+            parsed.Version,
+            fileName);
+    }
+
+    public static string InheritanceIdentity(string coordinate)
+    {
+        var parsed = Parse(coordinate);
+        return string.Concat(
+            parsed.Group,
+            ":",
+            parsed.Artifact,
+            ":",
+            parsed.Classifier ?? string.Empty,
+            "@",
+            parsed.Extension);
+    }
+
+    private static ParsedCoordinate Parse(string coordinate)
+    {
         if (string.IsNullOrWhiteSpace(coordinate))
             throw new InvalidDataException("Maven coordinate is empty.");
 
@@ -18,7 +50,8 @@ public static class MavenArtifactPath
 
         var parts = value.Split(':');
         if (parts.Length is < 3 or > 4)
-            throw new InvalidDataException($"Unsupported Maven coordinate: {coordinate}");
+            throw new InvalidDataException(
+                $"Unsupported Maven coordinate: {coordinate}");
 
         var group = parts[0];
         var artifact = parts[1];
@@ -31,14 +64,13 @@ public static class MavenArtifactPath
         var groupParts = group.Split('.');
         foreach (var groupPart in groupParts)
             ValidateSegment(groupPart, coordinate);
-        var groupPath = string.Join(Path.DirectorySeparatorChar, groupParts);
 
-        var fileName = $"{artifact}-{version}";
-        if (!string.IsNullOrWhiteSpace(classifier))
-            fileName += $"-{classifier}";
-        fileName += $".{extension}";
-
-        return Path.Combine(groupPath, artifact, version, fileName);
+        return new ParsedCoordinate(
+            group,
+            artifact,
+            version,
+            classifier,
+            extension);
     }
 
     private static void ValidateSegment(string value, string coordinate)
@@ -48,6 +80,14 @@ public static class MavenArtifactPath
             || value.Contains('/')
             || value.Contains('\\')
             || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-            throw new InvalidDataException($"Unsafe Maven coordinate: {coordinate}");
+            throw new InvalidDataException(
+                $"Unsafe Maven coordinate: {coordinate}");
     }
+
+    private sealed record ParsedCoordinate(
+        string Group,
+        string Artifact,
+        string Version,
+        string? Classifier,
+        string Extension);
 }
