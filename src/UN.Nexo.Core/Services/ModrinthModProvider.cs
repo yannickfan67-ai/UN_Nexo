@@ -140,21 +140,17 @@ public sealed class ModrinthModProvider : IModProvider
         if (installedMods.Count == 0 || !Directory.Exists(modsDirectory))
             return new Dictionary<string, ModProviderInstalledMatch>(StringComparer.Ordinal);
 
-        var fullRoot = Path.GetFullPath(modsDirectory);
-        var rootWithSeparator = Path.EndsInDirectorySeparator(fullRoot)
-            ? fullRoot
-            : fullRoot + Path.DirectorySeparatorChar;
-        var pathComparison = OperatingSystem.IsWindows()
-            ? StringComparison.OrdinalIgnoreCase
-            : StringComparison.Ordinal;
-
         var byHash = new Dictionary<string, InstalledMod>(StringComparer.OrdinalIgnoreCase);
         foreach (var mod in installedMods)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var candidate = Path.GetFullPath(Path.Combine(fullRoot, mod.FileName));
-            if (!candidate.StartsWith(rootWithSeparator, pathComparison) || !File.Exists(candidate))
+            if (!InstanceModService.TryResolvePhysicalManagedModPath(
+                    modsDirectory,
+                    mod.FileName,
+                    out var candidate))
+            {
                 continue;
+            }
 
             await using var stream = new FileStream(
                 candidate,
@@ -163,6 +159,18 @@ public sealed class ModrinthModProvider : IModProvider
                 FileShare.ReadWrite,
                 64 * 1024,
                 FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+            // Revalidate after open. If a regular candidate was replaced by a
+            // symlink/reparse point before the handle opened, do not hash it.
+            if (!InstanceModService.TryResolvePhysicalManagedModPath(
+                    modsDirectory,
+                    mod.FileName,
+                    out var revalidated)
+                || !PathEquals(candidate, revalidated))
+            {
+                continue;
+            }
+
             using var sha1 = SHA1.Create();
             var hash = await sha1.ComputeHashAsync(stream, cancellationToken);
             byHash[Convert.ToHexString(hash).ToLowerInvariant()] = mod;
@@ -243,23 +251,12 @@ public sealed class ModrinthModProvider : IModProvider
         try
         {
             await DownloadVerifiedAsync(file, stagedPath, cancellationToken);
-            var installed = await modService.InstallAsync(
+            var installed = await modService.InstallProviderUpdateAsync(
                 instanceId,
                 stagedPath,
-                replaceExisting: true,
+                existing?.LocalFileName,
+                existing?.IsEnabled ?? true,
                 cancellationToken);
-
-            if (existing is not null
-                && !FileNameEquals(existing.LocalFileName, installed.FileName))
-            {
-                var oldStillExists = modService.List(instanceId)
-                    .Any(item => FileNameEquals(item.FileName, existing.LocalFileName));
-                if (oldStillExists)
-                    modService.Remove(instanceId, existing.LocalFileName);
-            }
-
-            if (existing is { IsEnabled: false } && installed.IsEnabled)
-                installed = modService.SetEnabled(instanceId, installed.FileName, enabled: false);
 
             return new ModProviderInstallResult(project, version, installed);
         }
@@ -275,6 +272,14 @@ public sealed class ModrinthModProvider : IModProvider
             }
         }
     }
+
+    private static bool PathEquals(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
 
     private async Task DownloadVerifiedAsync(
         ModProviderFile file,
