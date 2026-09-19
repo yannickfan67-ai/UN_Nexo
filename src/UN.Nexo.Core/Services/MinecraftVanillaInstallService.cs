@@ -739,6 +739,19 @@ public sealed class MinecraftVanillaInstallService
         }
     }
 
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+            // Best-effort quarantine cleanup only.
+        }
+    }
+
     private async Task DownloadFileAsync(
         string url,
         string path,
