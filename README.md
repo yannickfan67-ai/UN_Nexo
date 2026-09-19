@@ -14,7 +14,8 @@ The current development line includes:
 - Lightweight cold-start splash and main-window fade-in without heavy GPU effects
 - Bundled Avalonia Inter plus Linux Noto CJK fallback dependencies
 - Compact in-app game-session status overlay with separate **starting** and **running** states
-- Persistent per-instance launch traces and Java-process health diagnostics for stuck launches
+- Persistent per-instance launch traces, crash diagnosis and bounded sanitized diagnostic ZIP export for stuck/failed launches
+- Diagnostic export accepts only explicitly trusted log roots, rejects symlink/reparse-point source paths and revalidates authorization before every read
 - Supervised stdout/stderr/heartbeat workers that stop and reap the Java process tree if launch diagnostics or output handling fails
 - Terminal launch results remain visible after the session ends instead of being immediately replaced by a generic Ready message
 - Mojang version catalog with release history and recent snapshots
@@ -25,6 +26,8 @@ The current development line includes:
 - Official downloads or BMCLAPI acceleration with automatic official fallback and SHA-1 verification
 - Response-body idle timeouts so a source that returns headers and then stops sending data cannot leave preparation stuck forever
 - Explicit user cancellation remains cancellation and is not silently converted into a source retry
+- Same-instance Prepare, Repair, Play, Backup/Restore and mod mutations share one operation coordinator, including cooperating Nexo processes
+- Persistent account/server stores, instance-name creation and settings publication are serialized across Nexo processes to avoid lost updates
 - Offline local profiles plus Microsoft account profiles, kept as distinct account types
 - Java discovery through `JAVA_HOME`, `PATH` and common platform install locations
 - Automatic exact-major Java selection from Minecraft version metadata
@@ -99,7 +102,7 @@ Authenticated public/online-mode servers can use a signed-in Microsoft profile. 
 
 UN_Nexo now implements Microsoft public-client sign-in through the system browser, then exchanges the Microsoft session through Xbox Live, XSTS and Minecraft Services. Refresh credentials are persisted with the operating system-backed MSAL secure cache; `accounts.json` stores only profile metadata and the non-secret MSAL account identifier. Before an online launch, Nexo silently refreshes the Microsoft session, verifies the Minecraft entitlement/profile and passes the resulting short-lived Minecraft access token only in memory to the launch plan.
 
-The registered UN_Nexo Client ID is `ac6485d3-1fd4-42d1-89c0-40ffee68d915`. Minecraft Services can still reject a newly registered third-party Client ID with `Invalid app registration` until Microsoft/Minecraft authorizes it; Nexo reports that condition explicitly and will not substitute another launcher's Client ID. See [`docs/microsoft-auth.md`](docs/microsoft-auth.md) for the flow and storage model.
+The registered UN_Nexo Client ID is `ac6485d3-1fd4-42d1-89c0-40ffee68d915`. Minecraft Services can still reject a newly registered third-party Client ID with `Invalid app registration` until Microsoft/Minecraft authorizes it; Nexo reports that condition explicitly, points to the official [Minecraft AppID review route](https://aka.ms/mce-reviewappid), and will not substitute another launcher's Client ID. See [`docs/microsoft-auth.md`](docs/microsoft-auth.md) for the flow and storage model.
 
 ## Project layout
 
@@ -131,25 +134,24 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 
 ## Current limitations
 
-- Live Microsoft/Minecraft sign-in still depends on Minecraft Services authorizing the registered UN_Nexo Client ID
+- Live Microsoft/Minecraft sign-in still depends on Minecraft Services authorizing the registered UN_Nexo Client ID and completing real-account acceptance testing
 - Runtime overrides are global; per-instance memory/JVM overrides are not implemented yet
 - Friend-to-friend room-code/P2P networking is not included yet
-- Fabric, Forge and NeoForge installers are not included yet
+- Fabric preparation/repair is included; Forge and NeoForge installers are not included yet
 - HTTP Range resume for partially downloaded files is not implemented yet
-- Mod/resource-pack/shader management is not implemented yet
-- Repair currently targets Vanilla instance contents; loader-specific repair will arrive with loader support
+- Mod management supports local JARs and Modrinth-compatible mods; resource-pack/shader management is not included yet
+- Repair supports Vanilla and Fabric; other loader-specific repair is not implemented yet
 - Linux CI uses Ubuntu/Xvfb; Linux Mint/Cinnamon still needs real-device acceptance testing
 
 ## Next milestones
 
-1. Add crash diagnosis and safe diagnostic export on top of launch traces and repair findings
-2. Add resumable downloads, retries/backoff, speed reporting and cancel/retry UX
-3. Complete live Minecraft Services authorization/acceptance for the UN_Nexo Client ID and real-account acceptance testing
-4. Add per-instance runtime overrides and richer managed-Java controls
-5. Add instance import, duplicate, rename, delete and safe world backup/restore
-6. Add Fabric first, then NeoForge and Forge support
-7. Add Modrinth-oriented mod/resource-pack/shader management and dependency handling
-8. Add Server Hub status ping/default-instance association and Terracotta/EasyTier/Scaffolding-compatible friend room networking after protocol/license review
-9. Add app/package icons, signing and updater
+1. Add resumable downloads, retries/backoff and stronger cancel/retry UX
+2. Complete live Minecraft Services authorization/acceptance for the UN_Nexo Client ID and real-account acceptance testing
+3. Add per-instance runtime overrides and richer managed-Java controls
+4. Add instance rename/delete and richer backup/restore management
+5. Add NeoForge and Forge support after the current Fabric path
+6. Extend Modrinth management to resource packs/shaders and richer dependency handling
+7. Add Terracotta/EasyTier/Scaffolding-compatible friend room networking after protocol/license review
+8. Add app/package icons, signing and updater
 
 UN_Nexo is under active development and its releases are currently marked as prereleases.
