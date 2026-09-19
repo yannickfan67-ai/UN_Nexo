@@ -385,10 +385,30 @@ sealed class FabricPrepareHandler(byte[] artifactBytes) : HttpMessageHandler
         var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
         if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
         {
-            const string json = "{\"id\":\"1.21.4\",\"libraries\":[]}";
+            const string json =
+                "{\"id\":\"1.21.4\",\"libraries\":[],"
+                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                + "\"assetIndex\":{\"id\":\"fabric-base-assets\","
+                + "\"url\":\"https://launchermeta.mojang.com/fabric-base-assets.json\"}}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
+        }
+
+        if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(Encoding.UTF8.GetBytes("client"))
+            });
+        }
+
+        if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"objects\":{}}", Encoding.UTF8, "application/json")
             });
         }
 
