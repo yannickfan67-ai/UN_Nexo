@@ -6,14 +6,17 @@ public sealed class ModrinthBrowserItem
 {
     public ModrinthBrowserItem(
         ModProviderProject project,
-        ModProviderInstalledMatch? installed)
+        ModProviderInstalledMatch? installed,
+        string? recommendationSignal = null)
     {
         Project = project;
         Installed = installed;
+        RecommendationSignal = recommendationSignal;
     }
 
     public ModProviderProject Project { get; }
     public ModProviderInstalledMatch? Installed { get; }
+    public string? RecommendationSignal { get; }
     public string Title => Project.Title;
     public string Description => Project.Description;
     public string SourceLabel
@@ -24,7 +27,9 @@ public sealed class ModrinthBrowserItem
             _ => Project.ProviderId
         };
     public string Subtitle
-        => $"by {Project.Author} · {FormatDownloads(Project.Downloads)} downloads";
+        => RecommendationSignal is null
+            ? $"by {Project.Author} · {FormatDownloads(Project.Downloads)} downloads"
+            : $"{RecommendationSignal} · by {Project.Author} · {FormatDownloads(Project.Downloads)} downloads";
     public string InstallState
         => Installed is null ? "Not installed" : $"Installed {Installed.VersionNumber}";
 
