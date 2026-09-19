@@ -15,6 +15,7 @@ internal static class InstanceOperationCoordinatorRegression
         await TestSameInstanceServicesSerializeAndReuseAsync();
         await TestCancellationIsInstanceLocalAsync();
         await TestLifecycleWaitsForSharedLeaseAsync();
+        await TestLinkedLockSidecarIsRejectedAsync();
     }
 
     private static async Task TestDifferentInstancesPrepareConcurrentlyAsync()
@@ -265,6 +266,77 @@ internal static class InstanceOperationCoordinatorRegression
         finally
         {
             TryDelete(root);
+        }
+    }
+
+    private static async Task TestLinkedLockSidecarIsRejectedAsync()
+    {
+        var root = NewRoot("linked-lock");
+        var outsideRoot = NewRoot("linked-lock-target");
+        try
+        {
+            var paths = new NexoPathService(root);
+            paths.EnsureDirectories();
+            var instance = Instance("linked-lock");
+            var lockDirectory = Path.Combine(
+                paths.GetDataRoot(),
+                "locks",
+                "instances");
+            Directory.CreateDirectory(lockDirectory);
+
+            var lockPath = Path.Combine(
+                lockDirectory,
+                instance.Id + ".lock");
+            var outsidePath = Path.Combine(
+                outsideRoot,
+                "outside.txt");
+            const string marker =
+                "instance-lock-target-must-remain-unchanged";
+            await File.WriteAllTextAsync(
+                outsidePath,
+                marker);
+
+            try
+            {
+                File.CreateSymbolicLink(
+                    lockPath,
+                    outsidePath);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or PlatformNotSupportedException
+                or IOException)
+            {
+                Console.WriteLine(
+                    "SKIP instance linked lock fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            var coordinator =
+                new InstanceOperationCoordinator(paths);
+            try
+            {
+                await using var lease =
+                    await coordinator.AcquireAsync(
+                        instance.Id,
+                        "linked-lock-test");
+                throw new Exception(
+                    "Linked instance lock sidecar unexpectedly acquired.");
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            Assert(
+                await File.ReadAllTextAsync(outsidePath)
+                    == marker,
+                "Rejected instance lock sidecar must not modify its target.");
+        }
+        finally
+        {
+            TryDelete(root);
+            TryDelete(outsideRoot);
         }
     }
 
