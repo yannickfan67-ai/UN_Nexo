@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using UN.Nexo.Core.Models;
@@ -12,6 +14,7 @@ internal static class PersistedStoreRegression
         await TestSettingsStoresAsync();
         await TestAccountStoreAsync();
         await TestServerStoreAsync();
+        await TestServerStoreCrossProcessAsync();
     }
 
     private static async Task TestSettingsStoresAsync()
@@ -281,6 +284,245 @@ internal static class PersistedStoreRegression
         {
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+
+    internal static async Task<int> RunServerStoreAddHelperAsync(string[] args)
+    {
+        if (args.Length != 6)
+            return 2;
+
+        var root = args[1];
+        var name = args[2];
+        var address = args[3];
+        var readyPath = args[4];
+        var releasePath = args[5];
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        await File.WriteAllTextAsync(readyPath, "ready", timeout.Token);
+        while (!File.Exists(releasePath))
+            await Task.Delay(25, timeout.Token);
+
+        var store = new ServerStoreService(new NexoPathService(root));
+        await store.AddAsync(name, address, timeout.Token);
+        return 0;
+    }
+
+    internal static async Task<int> RunStoreLockHolderHelperAsync(string[] args)
+    {
+        if (args.Length != 3)
+            return 2;
+
+        var root = args[1];
+        var readyPath = args[2];
+        var storePath = Path.Combine(root, "servers.json");
+
+        await using var lease = await PersistedStoreMutationLock.AcquireAsync(storePath);
+        await File.WriteAllTextAsync(readyPath, "ready");
+        await Task.Delay(Timeout.InfiniteTimeSpan);
+        return 0;
+    }
+
+    private static async Task TestServerStoreCrossProcessAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-server-store-process-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var helpers = new List<Process>();
+        try
+        {
+            var paths = new NexoPathService(root);
+            paths.EnsureDirectories();
+            var store = new ServerStoreService(paths);
+            var storePath = Path.Combine(root, "servers.json");
+
+            // A mutation in another process must remain blocked until the complete
+            // read-modify-write transaction owns the store lease.
+            var blockedReady = Path.Combine(root, "blocked.ready");
+            var blockedGo = Path.Combine(root, "blocked.go");
+            await using (var held = await PersistedStoreMutationLock.AcquireAsync(storePath))
+            {
+                var blocked = StartHelper(
+                    "--server-store-add",
+                    root,
+                    "Blocked",
+                    "blocked.example",
+                    blockedReady,
+                    blockedGo);
+                helpers.Add(blocked);
+                using var blockedTimeout =
+                    new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await WaitForReadyAsync(blocked, blockedReady, blockedTimeout.Token);
+                await File.WriteAllTextAsync(blockedGo, "go", blockedTimeout.Token);
+                await Task.Delay(200, blockedTimeout.Token);
+
+                Equal(false, blocked.HasExited,
+                    "cross-process server mutation must wait for the persisted-store lease");
+                Equal(false, File.Exists(storePath),
+                    "blocked store mutation must not publish before acquiring the lease");
+            }
+
+            await WaitForSuccessAsync(helpers[0], TimeSpan.FromSeconds(10));
+
+            // Cancellation while queued must leave the store byte-for-byte unchanged.
+            var stableBytes = await File.ReadAllBytesAsync(storePath);
+            await using (var held = await PersistedStoreMutationLock.AcquireAsync(storePath))
+            {
+                using var cancelled =
+                    new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+                await ThrowsAsync<OperationCanceledException>(
+                    async () =>
+                    {
+                        _ = await store.AddAsync(
+                            "Cancelled",
+                            "cancelled.example",
+                            cancelled.Token);
+                    },
+                    "cancelled store mutation should stop while waiting for the lease");
+            }
+            EqualBytes(stableBytes, await File.ReadAllBytesAsync(storePath),
+                "cancelled store mutation must not alter the persisted store");
+
+            // Two separate Nexo processes released at the same barrier must preserve
+            // both additions rather than publishing two snapshots from the same old state.
+            var readyA = Path.Combine(root, "a.ready");
+            var readyB = Path.Combine(root, "b.ready");
+            var go = Path.Combine(root, "concurrent.go");
+            var helperA = StartHelper(
+                "--server-store-add",
+                root,
+                "Concurrent A",
+                "a.example",
+                readyA,
+                go);
+            var helperB = StartHelper(
+                "--server-store-add",
+                root,
+                "Concurrent B",
+                "b.example",
+                readyB,
+                go);
+            helpers.Add(helperA);
+            helpers.Add(helperB);
+
+            using (var concurrentTimeout =
+                   new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                await Task.WhenAll(
+                    WaitForReadyAsync(helperA, readyA, concurrentTimeout.Token),
+                    WaitForReadyAsync(helperB, readyB, concurrentTimeout.Token));
+                await File.WriteAllTextAsync(go, "go", concurrentTimeout.Token);
+                await Task.WhenAll(
+                    WaitForSuccessAsync(helperA, TimeSpan.FromSeconds(10)),
+                    WaitForSuccessAsync(helperB, TimeSpan.FromSeconds(10)));
+            }
+
+            var concurrentItems = await store.GetAllAsync();
+            Equal(true, concurrentItems.Any(item => item.Address == "a.example:25565"),
+                "cross-process add A should be preserved");
+            Equal(true, concurrentItems.Any(item => item.Address == "b.example:25565"),
+                "cross-process add B should be preserved");
+
+            // The lock file may remain, but killing its owner must release the OS handle.
+            var crashReady = Path.Combine(root, "crash.ready");
+            var crashHolder = StartHelper(
+                "--hold-store-lock",
+                root,
+                crashReady);
+            helpers.Add(crashHolder);
+            using (var crashTimeout =
+                   new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                await WaitForReadyAsync(crashHolder, crashReady, crashTimeout.Token);
+                crashHolder.Kill(entireProcessTree: true);
+                await crashHolder.WaitForExitAsync(crashTimeout.Token);
+
+                _ = await store.AddAsync(
+                    "After crash",
+                    "after-crash.example",
+                    crashTimeout.Token);
+            }
+
+            Equal(true, (await store.GetAllAsync()).Any(
+                    item => item.Address == "after-crash.example:25565"),
+                "a crashed lock owner must not strand the persisted store");
+        }
+        finally
+        {
+            foreach (var helper in helpers)
+            {
+                try
+                {
+                    if (!helper.HasExited)
+                        helper.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+                helper.Dispose();
+            }
+
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static Process StartHelper(params string[] arguments)
+    {
+        var processPath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Could not determine the current test host.");
+        var entryAssembly = Assembly.GetEntryAssembly()?.Location
+            ?? throw new InvalidOperationException("Could not determine the core test assembly.");
+
+        var start = new ProcessStartInfo(processPath)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        if (Path.GetFileNameWithoutExtension(processPath)
+            .Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            start.ArgumentList.Add(entryAssembly);
+
+        foreach (var argument in arguments)
+            start.ArgumentList.Add(argument);
+
+        return Process.Start(start)
+            ?? throw new InvalidOperationException("Could not start persisted-store helper process.");
+    }
+
+    private static async Task WaitForReadyAsync(
+        Process process,
+        string readyPath,
+        CancellationToken cancellationToken)
+    {
+        while (!File.Exists(readyPath))
+        {
+            if (process.HasExited)
+            {
+                var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
+                throw new InvalidOperationException(
+                    $"Persisted-store helper exited with {process.ExitCode} before becoming ready: {stderr}");
+            }
+
+            await Task.Delay(25, cancellationToken);
+        }
+    }
+
+    private static async Task WaitForSuccessAsync(
+        Process process,
+        TimeSpan timeout)
+    {
+        using var cancellation = new CancellationTokenSource(timeout);
+        await process.WaitForExitAsync(cancellation.Token);
+        if (process.ExitCode == 0)
+            return;
+
+        var stderr = await process.StandardError.ReadToEndAsync(cancellation.Token);
+        throw new InvalidOperationException(
+            $"Persisted-store helper exited with {process.ExitCode}: {stderr}");
     }
 
     private static async Task ThrowsAsync<TException>(

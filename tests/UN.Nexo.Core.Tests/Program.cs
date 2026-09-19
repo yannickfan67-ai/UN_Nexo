@@ -11,8 +11,19 @@ namespace UN.Nexo.Core.Tests;
 
 internal static class Program
 {
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0)
+        {
+            if (args[0] == "--server-store-add")
+                return await PersistedStoreRegression.RunServerStoreAddHelperAsync(args);
+            if (args[0] == "--hold-store-lock")
+                return await PersistedStoreRegression.RunStoreLockHolderHelperAsync(args);
+
+            Console.Error.WriteLine("Unknown test helper mode: " + args[0]);
+            return 2;
+        }
+
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),

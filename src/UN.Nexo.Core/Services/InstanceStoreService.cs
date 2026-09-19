@@ -81,7 +81,7 @@ public sealed class InstanceStoreService
         _paths.EnsureDirectories();
         var instancesRoot = _paths.GetInstancesRoot();
         var nameGatePath = Path.Combine(instancesRoot, ".instance-name-gate");
-        using var nameLease = await PathKeyedLock.AcquireAsync(
+        await using var nameLease = await PersistedStoreMutationLock.AcquireAsync(
             nameGatePath,
             cancellationToken);
 

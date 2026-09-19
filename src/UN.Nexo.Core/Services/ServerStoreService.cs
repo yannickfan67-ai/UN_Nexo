@@ -26,7 +26,7 @@ public sealed class ServerStoreService
         var normalizedName = string.IsNullOrWhiteSpace(name) ? target.Authority : name.Trim();
         if (normalizedName.Length > 80) throw new ArgumentException("Server name is too long.", nameof(name));
 
-        using var lease = await PathKeyedLock.AcquireAsync(GetPath(), cancellationToken);
+        await using var lease = await PersistedStoreMutationLock.AcquireAsync(GetPath(), cancellationToken);
         var items = (await ReadExistingAsync(cancellationToken)).ToList();
         var existing = items.FirstOrDefault(item => item.Address.Equals(target.Authority, StringComparison.OrdinalIgnoreCase));
         var favorite = existing is null
@@ -40,7 +40,7 @@ public sealed class ServerStoreService
     public async Task<ServerFavorite?> SetDefaultInstanceAsync(string id, string? instanceId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Server id is required.", nameof(id));
-        using var lease = await PathKeyedLock.AcquireAsync(GetPath(), cancellationToken);
+        await using var lease = await PersistedStoreMutationLock.AcquireAsync(GetPath(), cancellationToken);
         var items = (await ReadExistingAsync(cancellationToken)).ToList();
         var index = items.FindIndex(item => item.Id.Equals(id, StringComparison.Ordinal));
         if (index < 0) return null;
@@ -53,7 +53,7 @@ public sealed class ServerStoreService
 
     public async Task RemoveAsync(string id, CancellationToken cancellationToken = default)
     {
-        using var lease = await PathKeyedLock.AcquireAsync(GetPath(), cancellationToken);
+        await using var lease = await PersistedStoreMutationLock.AcquireAsync(GetPath(), cancellationToken);
         var items = (await ReadExistingAsync(cancellationToken)).Where(item => !item.Id.Equals(id, StringComparison.Ordinal)).ToList();
         await SaveUnlockedAsync(items, cancellationToken);
     }
