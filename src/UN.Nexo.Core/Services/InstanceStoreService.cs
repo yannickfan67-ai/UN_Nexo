@@ -79,6 +79,20 @@ public sealed class InstanceStoreService
         var normalizedLoader = RequireValue(loader, nameof(loader), "Loader");
 
         _paths.EnsureDirectories();
+        var instancesRoot = _paths.GetInstancesRoot();
+        var nameGatePath = Path.Combine(instancesRoot, ".instance-name-gate");
+        using var nameLease = await PathKeyedLock.AcquireAsync(
+            nameGatePath,
+            cancellationToken);
+
+        var existing = await GetAllAsync(cancellationToken);
+        if (existing.Any(instance =>
+                instance.Name.Equals(
+                    normalizedName,
+                    StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException(
+                $"An instance named '{normalizedName}' already exists.");
+
         var id = Guid.NewGuid().ToString("N");
         var instance = new GameInstance(
             id,
@@ -88,7 +102,7 @@ public sealed class InstanceStoreService
             DateTimeOffset.UtcNow,
             string.IsNullOrWhiteSpace(baseVersionId) ? null : baseVersionId.Trim(),
             string.IsNullOrWhiteSpace(loaderVersion) ? null : loaderVersion.Trim());
-        var directory = Path.Combine(_paths.GetInstancesRoot(), id);
+        var directory = Path.Combine(instancesRoot, id);
         Directory.CreateDirectory(directory);
 
         var metadataPath = Path.Combine(directory, "instance.json");
