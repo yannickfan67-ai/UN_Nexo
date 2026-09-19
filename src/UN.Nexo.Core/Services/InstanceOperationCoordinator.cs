@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text;
 
 namespace UN.Nexo.Core.Services;
 
@@ -35,60 +34,30 @@ public sealed class InstanceOperationCoordinator
 
         await gate.WaitAsync(cancellationToken);
 
-        FileStream? lockStream = null;
+        CrossProcessFileLock.Lease? crossProcessLease = null;
         try
         {
             var lockDirectory = Path.Combine(
                 _paths.GetDataRoot(),
                 "locks",
                 "instances");
-            Directory.CreateDirectory(lockDirectory);
             var lockPath = Path.Combine(
                 lockDirectory,
                 instanceId + ".lock");
 
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    lockStream = new FileStream(
-                        lockPath,
-                        FileMode.OpenOrCreate,
-                        FileAccess.ReadWrite,
-                        FileShare.None,
-                        4096,
-                        FileOptions.Asynchronous
-                        | FileOptions.WriteThrough);
-                    break;
-                }
-                catch (IOException) when (
-                    !cancellationToken.IsCancellationRequested)
-                {
-                    await Task.Delay(
-                        TimeSpan.FromMilliseconds(100),
-                        cancellationToken);
-                }
-            }
-
-            lockStream.SetLength(0);
-            var metadata = Encoding.UTF8.GetBytes(
-                $"pid={Environment.ProcessId}\n"
-                + $"operation={operation}\n"
-                + $"started={DateTimeOffset.UtcNow:O}\n");
-            await lockStream.WriteAsync(
-                metadata,
-                cancellationToken);
-            await lockStream.FlushAsync(
+            crossProcessLease = await CrossProcessFileLock.AcquireAsync(
+                lockPath,
+                TimeSpan.FromMilliseconds(100),
                 cancellationToken);
 
             return new Lease(
                 gate,
-                lockStream);
+                crossProcessLease);
         }
         catch
         {
-            lockStream?.Dispose();
+            if (crossProcessLease is not null)
+                await crossProcessLease.DisposeAsync();
             gate.Release();
             throw;
         }
@@ -97,15 +66,15 @@ public sealed class InstanceOperationCoordinator
     private sealed class Lease : IAsyncDisposable
     {
         private SemaphoreSlim? _gate;
-        private FileStream? _lockStream;
+        private CrossProcessFileLock.Lease? _crossProcessLease;
         private bool _disposed;
 
         public Lease(
             SemaphoreSlim gate,
-            FileStream lockStream)
+            CrossProcessFileLock.Lease crossProcessLease)
         {
             _gate = gate;
-            _lockStream = lockStream;
+            _crossProcessLease = crossProcessLease;
         }
 
         public ValueTask DisposeAsync()
@@ -114,10 +83,11 @@ public sealed class InstanceOperationCoordinator
                 return ValueTask.CompletedTask;
             _disposed = true;
 
-            var stream = Interlocked.Exchange(
-                ref _lockStream,
+            var crossProcessLease = Interlocked.Exchange(
+                ref _crossProcessLease,
                 null);
-            stream?.Dispose();
+            if (crossProcessLease is not null)
+                crossProcessLease.DisposeAsync().GetAwaiter().GetResult();
 
             var gate = Interlocked.Exchange(
                 ref _gate,
