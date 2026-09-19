@@ -92,7 +92,12 @@ public sealed class InstanceLifecycleService
             await RewriteInstallStateAsync(stagingRoot, clone, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.Move(stagingRoot, destinationRoot);
+            _paths.EnsureInstancesRootPhysical();
+            var finalDestinationRoot = _paths.GetInstanceDirectory(newId);
+            if (Directory.Exists(finalDestinationRoot) || File.Exists(finalDestinationRoot))
+                throw new IOException("The clone destination changed before publication.");
+            _paths.EnsureInstancesRootPhysical();
+            Directory.Move(stagingRoot, finalDestinationRoot);
             return clone;
         }
         catch
