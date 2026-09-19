@@ -182,7 +182,7 @@ internal static class MetadataSizeRegression
         {
             const string core =
                 "{\"id\":\"version-near-limit\","
-                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                 + "\"assetIndex\":{\"id\":\"near-assets\",\"url\":\"https://launchermeta.mojang.com/near-assets.json\"},"
                 + "\"libraries\":[]}";
             var body = core.PadRight(VersionLimit - 1, ' ');
@@ -313,7 +313,7 @@ internal static class MetadataSizeRegression
             {
                 const string metadata =
                     "{\"id\":\"asset-index-limit\",\"libraries\":[],"
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                     + "\"assetIndex\":{\"id\":\"limit-assets\","
                     + "\"url\":\"https://launchermeta.mojang.com/index.json\"}}";
                 return Task.FromResult(Response(
