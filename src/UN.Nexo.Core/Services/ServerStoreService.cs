@@ -13,16 +13,11 @@ public sealed class ServerStoreService
 
     public async Task<IReadOnlyList<ServerFavorite>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        _paths.EnsureDirectories();
-        var path = GetPath();
-        if (!File.Exists(path)) return [];
-        try
-        {
-            var items = await ReadExistingAsync(cancellationToken);
-            return items.Where(item => !string.IsNullOrWhiteSpace(item.Id)).OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
-        }
-        catch (JsonException) { return []; }
-        catch (IOException) { return []; }
+        var items = await ReadExistingAsync(cancellationToken);
+        return items
+            .Where(item => !string.IsNullOrWhiteSpace(item.Id))
+            .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public async Task<ServerFavorite> AddAsync(string name, string address, CancellationToken cancellationToken = default)
@@ -68,12 +63,23 @@ public sealed class ServerStoreService
         _paths.EnsureDirectories();
         var path = GetPath();
         if (!File.Exists(path)) return [];
-        await using var stream = File.OpenRead(path);
-        var items = await JsonSerializer.DeserializeAsync<List<ServerFavorite?>>(
-            stream,
-            _json,
-            cancellationToken) ?? [];
-        return ValidateFavorites(items);
+        try
+        {
+            await using var stream = File.OpenRead(path);
+            var items = await JsonSerializer.DeserializeAsync<List<ServerFavorite?>>(
+                            stream,
+                            _json,
+                            cancellationToken)
+                        ?? throw new InvalidDataException(
+                            "Existing server favorite store contains a null root. The original servers.json was preserved.");
+            return ValidateFavorites(items);
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException(
+                "Existing server favorite store is malformed. The original servers.json was preserved.",
+                ex);
+        }
     }
 
     private static IReadOnlyList<ServerFavorite> ValidateFavorites(

@@ -23,16 +23,18 @@ public sealed class LauncherSettingsService
         try
         {
             await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<LauncherSettings>(stream, _jsonOptions, cancellationToken)
-                ?? new LauncherSettings();
+            return await JsonSerializer.DeserializeAsync<LauncherSettings>(
+                       stream,
+                       _jsonOptions,
+                       cancellationToken)
+                   ?? throw new InvalidDataException(
+                       "Existing launcher settings contain a null root. The original settings.json was preserved.");
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            return new LauncherSettings();
-        }
-        catch (IOException)
-        {
-            return new LauncherSettings();
+            throw new InvalidDataException(
+                "Existing launcher settings are malformed. The original settings.json was preserved.",
+                ex);
         }
     }
 

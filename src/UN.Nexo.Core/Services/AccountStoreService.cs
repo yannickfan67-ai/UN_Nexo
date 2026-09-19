@@ -17,7 +17,7 @@ public sealed partial class AccountStoreService
     }
 
     public Task<IReadOnlyList<LauncherAccount>> GetAllAsync(CancellationToken cancellationToken = default)
-        => ReadAccountsAsync(tolerateReadErrors: true, cancellationToken);
+        => ReadAccountsAsync(cancellationToken);
 
     public async Task<LauncherAccount> CreateOfflineAsync(string username, CancellationToken cancellationToken = default)
     {
@@ -26,7 +26,7 @@ public sealed partial class AccountStoreService
             throw new ArgumentException("Offline name must be 3-16 characters using letters, numbers or underscore.", nameof(username));
 
         using var lease = await PathKeyedLock.AcquireAsync(GetAccountsPath(), cancellationToken);
-        var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+        var accounts = (await ReadAccountsAsync(cancellationToken)).ToList();
         var existing = accounts.FirstOrDefault(x => x.IsOffline && x.DisplayName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
         if (existing is not null)
             return existing;
@@ -60,7 +60,7 @@ public sealed partial class AccountStoreService
         var normalizedUuid = parsedUuid.ToString("D");
         var accountId = "microsoft:" + parsedUuid.ToString("N");
         using var lease = await PathKeyedLock.AcquireAsync(GetAccountsPath(), cancellationToken);
-        var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+        var accounts = (await ReadAccountsAsync(cancellationToken)).ToList();
 
         var existingIndex = accounts.FindIndex(account =>
             account is not null && string.Equals(account.Id, accountId, StringComparison.Ordinal));
@@ -90,7 +90,7 @@ public sealed partial class AccountStoreService
             return;
 
         using var lease = await PathKeyedLock.AcquireAsync(GetAccountsPath(), cancellationToken);
-        var accounts = (await ReadAccountsAsync(tolerateReadErrors: false, cancellationToken)).ToList();
+        var accounts = (await ReadAccountsAsync(cancellationToken)).ToList();
         var removed = accounts.RemoveAll(account =>
             account is not null && string.Equals(account.Id, accountId, StringComparison.Ordinal));
         if (removed > 0)
@@ -98,7 +98,6 @@ public sealed partial class AccountStoreService
     }
 
     private async Task<IReadOnlyList<LauncherAccount>> ReadAccountsAsync(
-        bool tolerateReadErrors,
         CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
@@ -110,18 +109,18 @@ public sealed partial class AccountStoreService
         {
             await using var stream = File.OpenRead(path);
             var accounts = await JsonSerializer.DeserializeAsync<List<LauncherAccount?>>(
-                stream,
-                _jsonOptions,
-                cancellationToken) ?? [];
+                               stream,
+                               _jsonOptions,
+                               cancellationToken)
+                           ?? throw new InvalidDataException(
+                               "Existing account store contains a null root. The original accounts.json was preserved.");
             return ValidateAccounts(accounts);
         }
-        catch (JsonException) when (tolerateReadErrors)
+        catch (JsonException ex)
         {
-            return [];
-        }
-        catch (IOException) when (tolerateReadErrors)
-        {
-            return [];
+            throw new InvalidDataException(
+                "Existing account store is malformed. The original accounts.json was preserved.",
+                ex);
         }
     }
 

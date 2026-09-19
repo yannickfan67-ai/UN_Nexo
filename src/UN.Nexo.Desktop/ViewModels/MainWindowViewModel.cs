@@ -25,6 +25,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly MinecraftProcessService _gameProcess = new();
     private CancellationTokenSource? _gameCancellation;
     private readonly Queue<string> _gameLogLines = new();
+    private bool _settingsLoadFailed;
 
 
     [ObservableProperty] private bool isBusy;
@@ -136,10 +137,26 @@ public partial class MainWindowViewModel : ObservableObject
 
     public async Task InitializeAsync()
     {
-        var settings = await _settings.LoadAsync();
-        _downloadSources.SetSource(settings.DownloadSource);
-        SelectedDownloadSource = _downloadSources.SourceId == "bmclapi" ? "BMCLAPI" : "Official";
-        UpdateDownloadSourceStatus();
+        try
+        {
+            var settings = await _settings.LoadAsync();
+            _settingsLoadFailed = false;
+            _downloadSources.SetSource(settings.DownloadSource);
+            SelectedDownloadSource = _downloadSources.SourceId == "bmclapi" ? "BMCLAPI" : "Official";
+            UpdateDownloadSourceStatus();
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            _settingsLoadFailed = true;
+            SelectedDownloadSource = _downloadSources.SourceId == "bmclapi" ? "BMCLAPI" : "Official";
+            DownloadSourceStatus =
+                $"settings.json could not be loaded: {ex.Message} The existing file was preserved and download-source changes are disabled until it is recovered.";
+            LauncherStatus = "Launcher settings need recovery";
+        }
+
         await ReloadAccountsAsync();
         await RefreshEnvironmentAsync();
     }
@@ -728,6 +745,13 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveDownloadSourceAsync()
     {
+        if (_settingsLoadFailed)
+        {
+            LauncherStatus =
+                "Download source was not saved because settings.json could not be loaded. Recover or explicitly reset that file first.";
+            return;
+        }
+
         var id = SelectedDownloadSource.Equals("BMCLAPI", StringComparison.OrdinalIgnoreCase)
             ? "bmclapi"
             : "official";
@@ -741,11 +765,24 @@ public partial class MainWindowViewModel : ObservableObject
     private async Task ReloadAccountsAsync()
     {
         var previousId = SelectedAccount?.Id;
-        var accounts = await _accounts.GetAllAsync();
-        Accounts.Clear();
-        foreach (var account in accounts)
-            Accounts.Add(account);
-        SelectedAccount = Accounts.FirstOrDefault(x => x.Id == previousId) ?? Accounts.FirstOrDefault();
+        try
+        {
+            var accounts = await _accounts.GetAllAsync();
+            Accounts.Clear();
+            foreach (var account in accounts)
+                Accounts.Add(account);
+            SelectedAccount = Accounts.FirstOrDefault(x => x.Id == previousId)
+                ?? Accounts.FirstOrDefault();
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            MicrosoftAuthStatus =
+                $"Saved accounts could not be loaded: {ex.Message} The existing accounts.json was preserved.";
+            LauncherStatus = "Account store needs recovery";
+        }
     }
 
     private bool IsSelectedInstance(GameInstance instance)
