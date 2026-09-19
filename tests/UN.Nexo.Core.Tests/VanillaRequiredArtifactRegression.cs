@@ -265,8 +265,9 @@ internal static class VanillaRequiredArtifactRegression
 
             Assert(handler.ClientRequests == 1,
                 "Same-size wrong-SHA client cache must be replaced.");
-            Assert(client.SequenceEqual(
-                    await File.ReadAllBytesAsync(clientPath)),
+            var replacedClient =
+                await File.ReadAllBytesAsync(clientPath);
+            Assert(client.SequenceEqual(replacedClient),
                 "Wrong-SHA client cache was not replaced.");
 
             await service.InstallAsync(
@@ -320,8 +321,9 @@ internal static class VanillaRequiredArtifactRegression
 
             Assert(handler.ClientRequests == 1,
                 "Wrong-size hashless cache must not be accepted.");
-            Assert(client.SequenceEqual(
-                    await File.ReadAllBytesAsync(clientPath)),
+            var sizeValidatedClient =
+                await File.ReadAllBytesAsync(clientPath);
+            Assert(client.SequenceEqual(sizeValidatedClient),
                 "Size-validated client was not downloaded correctly.");
         }
         finally
