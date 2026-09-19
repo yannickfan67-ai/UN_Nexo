@@ -336,25 +336,17 @@ public sealed partial class ModManagerWindow : Window
             SelectedModrinthDetail.Text =
                 $"Loading compatible {provider.DisplayName} recommendations for {instance.MinecraftVersionId} · {instance.Loader}…";
 
-            var suggested = await recommendations.RecommendAsync(
-                instance.MinecraftVersionId,
-                instance.Loader,
-                limit: provider.ProviderId.Equals(
-                    "curseforge",
-                    StringComparison.OrdinalIgnoreCase)
-                    ? 30
-                    : 40);
-
             var installedMods = _mods.List(instance.Id);
-            var matches = await provider.MatchInstalledAsync(
-                _mods.GetModsDirectory(instance.Id),
-                installedMods);
+            var suggested = await new ModRecommendationService(
+                    recommendations)
+                .GetAsync(
+                    _mods.GetModsDirectory(instance.Id),
+                    installedMods,
+                    instance.MinecraftVersionId,
+                    instance.Loader,
+                    limit: 20);
 
             var items = suggested
-                .Where(recommendation =>
-                    !matches.ContainsKey(
-                        recommendation.Project.ProjectId))
-                .Take(20)
                 .Select(recommendation =>
                     new ModrinthBrowserItem(
                         recommendation.Project,
