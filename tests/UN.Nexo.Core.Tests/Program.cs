@@ -20,6 +20,7 @@ internal static class Program
             ("Java discovery process cleanup", JavaDiscoveryRegression.RunAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
             ("Managed Java metadata hardening", TestManagedJavaMetadataHardeningAsync),
+            ("Managed Java atomic publication", ManagedRuntimePublicationRegression.RunAsync),
             ("Managed Java archive containment", ManagedRuntimeArchiveRegression.RunAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
