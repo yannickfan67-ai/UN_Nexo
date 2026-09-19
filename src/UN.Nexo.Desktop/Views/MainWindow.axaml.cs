@@ -16,6 +16,8 @@ public sealed partial class MainWindow : Window
     private readonly InstanceStoreService _instances;
     private readonly FabricMetaService _fabricMeta;
     private readonly FabricInstallService _fabricInstaller;
+    private readonly QuiltMetaService _quiltMeta;
+    private readonly QuiltInstallService _quiltInstaller;
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
@@ -23,6 +25,7 @@ public sealed partial class MainWindow : Window
     private InstanceBackupWindow? _backupWindow;
     private GameImportWindow? _importWindow;
     private FabricManagerWindow? _fabricWindow;
+    private QuiltManagerWindow? _quiltWindow;
     private ModManagerWindow? _modWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
@@ -88,6 +91,12 @@ public sealed partial class MainWindow : Window
             _paths,
             _installer,
             _fabricMeta);
+        _quiltMeta = new QuiltMetaService(manifestHttpClient);
+        _quiltInstaller = new QuiltInstallService(
+            downloadHttpClient,
+            _paths,
+            _installer,
+            _quiltMeta);
         var accountStore = new AccountStoreService(_paths);
         var microsoftAuth = new MicrosoftMinecraftAuthService(
             authHttpClient,
@@ -100,6 +109,7 @@ public sealed partial class MainWindow : Window
             _instances,
             _installer,
             _fabricInstaller,
+            _quiltInstaller,
             accountStore,
             microsoftAuth,
             new RestrictedRegionService(regionHttpClient),
@@ -175,15 +185,26 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(Math.Min(instancesIndex + 1, nav.Children.Count), fabric);
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Quilt")))
+        {
+            var quilt = new Button { Content = "Quilt" };
+            quilt.Classes.Add("nav");
+            quilt.Click += (_, _) => OpenQuilt();
+            var fabricIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Fabric")).index;
+            nav.Children.Insert(Math.Min(fabricIndex + 1, nav.Children.Count), quilt);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Mods")))
         {
             var mods = new Button { Content = "Mods" };
             mods.Classes.Add("nav");
             mods.Click += (_, _) => OpenMods();
-            var fabricIndex = nav.Children
+            var quiltIndex = nav.Children
                 .Select((child, index) => (child, index))
-                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Fabric")).index;
-            nav.Children.Insert(Math.Min(fabricIndex + 1, nav.Children.Count), mods);
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Quilt")).index;
+            nav.Children.Insert(Math.Min(quiltIndex + 1, nav.Children.Count), mods);
         }
 
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Import")))
@@ -283,6 +304,25 @@ public sealed partial class MainWindow : Window
             _installer);
         _fabricWindow.Closed += (_, _) => _fabricWindow = null;
         _fabricWindow.Show(this);
+    }
+
+    private void OpenQuilt()
+    {
+        if (_quiltWindow is not null)
+        {
+            _quiltWindow.Activate();
+            return;
+        }
+
+        _quiltWindow = new QuiltManagerWindow(
+            _viewModel,
+            _manifest,
+            _instances,
+            _quiltMeta,
+            _quiltInstaller,
+            _installer);
+        _quiltWindow.Closed += (_, _) => _quiltWindow = null;
+        _quiltWindow.Show(this);
     }
 
     private void OpenMods()
