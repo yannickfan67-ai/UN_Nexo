@@ -15,7 +15,9 @@ public sealed partial class ModManagerWindow : Window
     private readonly NexoPathService _paths;
     private readonly InstanceModService _mods;
     private readonly HttpClient _modrinthHttpClient;
+    private readonly HttpClient _curseForgeHttpClient;
     private readonly IModDependencyProvider _modrinth;
+    private readonly CurseForgeModProvider _curseForge;
     private ModProviderVersion? _selectedModrinthVersion;
     private ModDependencyPlan? _selectedModrinthPlan;
     private int _modrinthSelectionGeneration;
@@ -33,9 +35,29 @@ public sealed partial class ModManagerWindow : Window
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
-        _modrinth = new ModrinthModProvider(_modrinthHttpClient, BuildModrinthUserAgent());
+        _modrinth = new ModrinthModProvider(_modrinthHttpClient, BuildProviderUserAgent());
+
+        _curseForgeHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(30)
+        };
+        _curseForge = new CurseForgeModProvider(
+            _curseForgeHttpClient,
+            new EnvironmentCurseForgeApiKeyProvider(),
+            BuildProviderUserAgent());
+
+        ProviderBox.ItemsSource = new[] { "Modrinth", "CurseForge" };
+        ProviderBox.SelectedIndex = 0;
+
         Opened += (_, _) => RefreshInstances();
-        Closed += (_, _) => _modrinthHttpClient.Dispose();
+        Closed += (_, _) =>
+        {
+            _modrinthHttpClient.Dispose();
+            _curseForgeHttpClient.Dispose();
+        };
     }
 
     public ModManagerWindow(MainWindowViewModel viewModel, NexoPathService paths) : this()
@@ -79,7 +101,7 @@ public sealed partial class ModManagerWindow : Window
 
         var isFabric = string.Equals(instance.Loader, "fabric", StringComparison.OrdinalIgnoreCase);
         InstanceDetail.Text = $"{instance.Name} · {instance.MinecraftVersionId} · {instance.Loader}" +
-            (isFabric ? string.Empty : " · Local JAR installation remains limited to Fabric; Modrinth follows the instance loader.");
+            (isFabric ? string.Empty : " · Local JAR installation remains limited to Fabric; provider browsing follows the instance loader.");
         ModsDirectoryLabel.Text = _mods.GetModsDirectory(instance.Id);
 
         try
@@ -246,18 +268,48 @@ public sealed partial class ModManagerWindow : Window
         }
     }
 
-    private async void OnModrinthSearchClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private IModDependencyProvider ActiveProvider
+        => ProviderBox.SelectedIndex == 1
+            ? _curseForge
+            : _modrinth;
+
+    private bool ActiveProviderConfigured
+        => ActiveProvider is not CurseForgeModProvider curseForge
+           || curseForge.IsConfigured;
+
+    private void OnProviderSelectionChanged(
+        object? sender,
+        SelectionChangedEventArgs e)
     {
-        await SearchModrinthAsync();
+        ResetModrinthResults();
+        UpdateModrinthAvailability();
     }
 
-    private async Task SearchModrinthAsync()
+    private async void OnModrinthSearchClicked(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await SearchProviderAsync();
+    }
+
+    private async Task SearchProviderAsync()
     {
         if (_busy || SelectedInstance is not { } instance)
             return;
-        if (!SupportsModrinth(instance.Loader))
+
+        var provider = ActiveProvider;
+        if (!SupportsProvider(instance.Loader))
         {
-            OperationStatus.Text = $"Modrinth browsing is not supported for the '{instance.Loader}' loader.";
+            OperationStatus.Text =
+                $"{provider.DisplayName} browsing is not supported for the '{instance.Loader}' loader.";
+            UpdateModrinthAvailability();
+            return;
+        }
+
+        if (!ActiveProviderConfigured)
+        {
+            OperationStatus.Text =
+                $"CurseForge is not configured. Set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} before starting Nexo; the key is read from the process environment and is never stored by Nexo.";
             UpdateModrinthAvailability();
             return;
         }
@@ -265,7 +317,7 @@ public sealed partial class ModManagerWindow : Window
         var query = ModrinthSearchBox.Text?.Trim();
         if (string.IsNullOrWhiteSpace(query))
         {
-            OperationStatus.Text = "Enter a Modrinth search query.";
+            OperationStatus.Text = $"Enter a {provider.DisplayName} search query.";
             return;
         }
 
@@ -274,37 +326,45 @@ public sealed partial class ModManagerWindow : Window
             _busy = true;
             UpdateModrinthAvailability();
             ModrinthSearchButton.Content = "Searching…";
-            SelectedModrinthDetail.Text = $"Searching Modrinth for {instance.MinecraftVersionId} · {instance.Loader}…";
+            SelectedModrinthDetail.Text =
+                $"Searching {provider.DisplayName} for {instance.MinecraftVersionId} · {instance.Loader}…";
 
-            var projects = await _modrinth.SearchAsync(
+            var projects = await provider.SearchAsync(
                 query,
                 instance.MinecraftVersionId,
                 instance.Loader,
-                limit: 30);
+                limit: provider.ProviderId.Equals("curseforge", StringComparison.OrdinalIgnoreCase)
+                    ? 20
+                    : 30);
             var installedMods = _mods.List(instance.Id);
-            var matches = await _modrinth.MatchInstalledAsync(
+            var matches = await provider.MatchInstalledAsync(
                 _mods.GetModsDirectory(instance.Id),
                 installedMods);
 
             var items = projects
                 .Select(project => new ModrinthBrowserItem(
                     project,
-                    matches.TryGetValue(project.ProjectId, out var installed) ? installed : null))
+                    matches.TryGetValue(project.ProjectId, out var installed)
+                        ? installed
+                        : null))
                 .ToArray();
 
             ModrinthResultsList.ItemsSource = items;
-            ModrinthResultCount.Text = $"{items.Length} result{(items.Length == 1 ? string.Empty : "s")}";
+            ModrinthResultCount.Text =
+                $"{items.Length} result{(items.Length == 1 ? string.Empty : "s")}";
             SelectedModrinthDetail.Text = items.Length == 0
-                ? "No compatible Modrinth projects matched this search."
+                ? $"No compatible {provider.DisplayName} projects matched this search."
                 : "Select a project to check its latest compatible version.";
-            OperationStatus.Text = $"Modrinth returned {items.Length} compatible project{(items.Length == 1 ? string.Empty : "s")}.";
+            OperationStatus.Text =
+                $"{provider.DisplayName} returned {items.Length} compatible project{(items.Length == 1 ? string.Empty : "s")}.";
         }
         catch (Exception ex)
         {
             ModrinthResultsList.ItemsSource = Array.Empty<ModrinthBrowserItem>();
             ModrinthResultCount.Text = "0 results";
-            SelectedModrinthDetail.Text = "Modrinth search failed.";
-            OperationStatus.Text = $"Modrinth search failed: {ex.Message}";
+            SelectedModrinthDetail.Text = $"{provider.DisplayName} search failed.";
+            OperationStatus.Text =
+                $"{provider.DisplayName} search failed: {ex.Message}";
         }
         finally
         {
@@ -315,24 +375,39 @@ public sealed partial class ModManagerWindow : Window
         }
     }
 
-    private async void OnModrinthSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    private async void OnModrinthSelectionChanged(
+        object? sender,
+        SelectionChangedEventArgs e)
     {
         var generation = ++_modrinthSelectionGeneration;
         _selectedModrinthVersion = null;
         _selectedModrinthPlan = null;
         UpdateModrinthSelectionButtons();
 
-        if (SelectedInstance is not { } instance || SelectedModrinthItem is not { } item)
+        var provider = ActiveProvider;
+        if (SelectedInstance is not { } instance
+            || SelectedModrinthItem is not { } item)
         {
-            SelectedModrinthDetail.Text = "Select a project to check its latest compatible version.";
+            SelectedModrinthDetail.Text =
+                "Select a project to check its latest compatible version.";
+            return;
+        }
+
+        if (!string.Equals(
+                item.Project.ProviderId,
+                provider.ProviderId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            ResetModrinthResults();
             return;
         }
 
         OpenProjectButton.IsEnabled = true;
-        SelectedModrinthDetail.Text = $"Checking latest compatible {item.Project.Title} version…";
+        SelectedModrinthDetail.Text =
+            $"Checking latest compatible {item.Project.Title} version on {provider.DisplayName}…";
         try
         {
-            var version = await _modrinth.GetLatestCompatibleVersionAsync(
+            var version = await provider.GetLatestCompatibleVersionAsync(
                 item.Project.ProjectId,
                 instance.MinecraftVersionId,
                 instance.Loader);
@@ -342,13 +417,14 @@ public sealed partial class ModManagerWindow : Window
             _selectedModrinthVersion = version;
             if (version is null)
             {
-                SelectedModrinthDetail.Text = "Modrinth has no installable JAR matching this Minecraft version and loader.";
+                SelectedModrinthDetail.Text =
+                    $"{provider.DisplayName} has no installable JAR matching this Minecraft version and loader.";
             }
             else
             {
                 SelectedModrinthDetail.Text =
                     $"Resolving required dependencies for {item.Project.Title} {version.VersionNumber}…";
-                var plan = await new ModDependencyPlanner(_modrinth).BuildAsync(
+                var plan = await new ModDependencyPlanner(provider).BuildAsync(
                     item.Project,
                     version,
                     instance.MinecraftVersionId,
@@ -382,13 +458,16 @@ public sealed partial class ModManagerWindow : Window
         {
             if (generation != _modrinthSelectionGeneration)
                 return;
-            SelectedModrinthDetail.Text = $"Could not load compatible version: {ex.Message}";
+            SelectedModrinthDetail.Text =
+                $"Could not load compatible version: {ex.Message}";
         }
 
         UpdateModrinthSelectionButtons();
     }
 
-    private async void OnModrinthInstallClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnModrinthInstallClicked(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_busy
             || SelectedInstance is not { } instance
@@ -397,8 +476,21 @@ public sealed partial class ModManagerWindow : Window
             return;
         if (_viewModel?.IsGameRunning == true)
         {
-            OperationStatus.Text = "Stop Minecraft before changing the instance mod set.";
+            OperationStatus.Text =
+                "Stop Minecraft before changing the instance mod set.";
             RefreshMods();
+            return;
+        }
+
+        var provider = ActiveProvider;
+        if (!string.Equals(
+                item.Project.ProviderId,
+                provider.ProviderId,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            OperationStatus.Text =
+                "The selected provider changed. Search again before installing.";
+            ResetModrinthResults();
             return;
         }
 
@@ -409,21 +501,21 @@ public sealed partial class ModManagerWindow : Window
             UpdateModrinthSelectionButtons();
             var plan = _selectedModrinthPlan
                 ?? throw new InvalidOperationException(
-                    "Resolve the Modrinth dependency plan before installing.");
+                    $"Resolve the {provider.DisplayName} dependency plan before installing.");
             OperationStatus.Text =
-                $"Downloading {plan.InstallOrder.Count} planned mod file{(plan.InstallOrder.Count == 1 ? string.Empty : "s")} from Modrinth…";
+                $"Downloading {plan.InstallOrder.Count} planned mod file{(plan.InstallOrder.Count == 1 ? string.Empty : "s")} from {provider.DisplayName}…";
 
             var installedBefore = _mods.List(instance.Id);
-            var matchesBefore = await _modrinth.MatchInstalledAsync(
+            var matchesBefore = await provider.MatchInstalledAsync(
                 _mods.GetModsDirectory(instance.Id),
                 installedBefore);
-            var result = await new ModDependencyInstaller(_modrinth, _mods).InstallAsync(
+            var result = await new ModDependencyInstaller(provider, _mods).InstallAsync(
                 instance.Id,
                 plan,
                 matchesBefore);
 
             var installedAfter = _mods.List(instance.Id);
-            var matchesAfter = await _modrinth.MatchInstalledAsync(
+            var matchesAfter = await provider.MatchInstalledAsync(
                 _mods.GetModsDirectory(instance.Id),
                 installedAfter);
             var rootMatch = matchesAfter.TryGetValue(
@@ -443,7 +535,8 @@ public sealed partial class ModManagerWindow : Window
         }
         catch (Exception ex)
         {
-            OperationStatus.Text = $"Modrinth installation failed: {ex.Message}";
+            OperationStatus.Text =
+                $"{provider.DisplayName} installation failed: {ex.Message}";
         }
         finally
         {
@@ -453,7 +546,9 @@ public sealed partial class ModManagerWindow : Window
         }
     }
 
-    private void OnOpenProjectClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnOpenProjectClicked(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (SelectedModrinthItem is not { } item)
             return;
@@ -466,13 +561,19 @@ public sealed partial class ModManagerWindow : Window
         }
         catch (Exception ex)
         {
-            OperationStatus.Text = $"Could not open the Modrinth project page: {ex.Message}";
+            OperationStatus.Text =
+                $"Could not open the project page: {ex.Message}";
         }
     }
 
-    private void ReplaceBrowserItem(ModrinthBrowserItem oldItem, ModrinthBrowserItem newItem)
+    private void ReplaceBrowserItem(
+        ModrinthBrowserItem oldItem,
+        ModrinthBrowserItem newItem)
     {
-        var items = (ModrinthResultsList.ItemsSource as IEnumerable<ModrinthBrowserItem>)?.ToArray() ?? [];
+        var items =
+            (ModrinthResultsList.ItemsSource as IEnumerable<ModrinthBrowserItem>)
+            ?.ToArray()
+            ?? [];
         var index = Array.IndexOf(items, oldItem);
         if (index < 0)
             return;
@@ -486,11 +587,17 @@ public sealed partial class ModManagerWindow : Window
         _modrinthSelectionGeneration++;
         _selectedModrinthVersion = null;
         _selectedModrinthPlan = null;
-        ModrinthResultsList.ItemsSource = Array.Empty<ModrinthBrowserItem>();
+        ModrinthResultsList.ItemsSource =
+            Array.Empty<ModrinthBrowserItem>();
         ModrinthResultCount.Text = "0 results";
+
+        var provider = ActiveProvider;
         SelectedModrinthDetail.Text = SelectedInstance is null
-            ? "Choose an instance before searching Modrinth."
-            : "Search Modrinth to find mods compatible with this instance.";
+            ? $"Choose an instance before searching {provider.DisplayName}."
+            : !ActiveProviderConfigured
+                ? $"CurseForge needs {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} in the launcher process environment. Nexo does not embed or persist the key."
+                : $"Search {provider.DisplayName} to find mods compatible with this instance.";
+
         OpenProjectButton.IsEnabled = false;
         ModrinthInstallButton.IsEnabled = false;
         ModrinthInstallButton.Content = "Install selected";
@@ -499,11 +606,35 @@ public sealed partial class ModManagerWindow : Window
 
     private void UpdateModrinthAvailability()
     {
+        var provider = ActiveProvider;
         var instance = SelectedInstance;
-        var supported = instance is not null && SupportsModrinth(instance.Loader);
-        ModrinthSearchButton.IsEnabled = !_busy && supported;
+        var supported =
+            instance is not null
+            && SupportsProvider(instance.Loader);
+        var configured = ActiveProviderConfigured;
+
+        ModrinthSearchButton.IsEnabled =
+            !_busy && supported && configured;
+
+        ProviderPolicyLabel.Text = provider.ProviderId.Equals(
+            "curseforge",
+            StringComparison.OrdinalIgnoreCase)
+            ? configured
+                ? $"CurseForge API · key from {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} · not persisted"
+                : $"CurseForge disabled · set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName}"
+            : "Public Modrinth API · no private API key";
+
         if (instance is not null && !supported && !_busy)
-            SelectedModrinthDetail.Text = $"Modrinth browsing is unavailable for loader '{instance.Loader}'.";
+        {
+            SelectedModrinthDetail.Text =
+                $"{provider.DisplayName} browsing is unavailable for loader '{instance.Loader}'.";
+        }
+        else if (!configured && !_busy)
+        {
+            SelectedModrinthDetail.Text =
+                $"CurseForge is disabled until {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} is set before launch.";
+        }
+
         UpdateModrinthSelectionButtons();
     }
 
@@ -511,31 +642,42 @@ public sealed partial class ModManagerWindow : Window
     {
         var item = SelectedModrinthItem;
         OpenProjectButton.IsEnabled = item is not null;
+        var provider = ActiveProvider;
+        var matchesProvider = item is not null
+            && string.Equals(
+                item.Project.ProviderId,
+                provider.ProviderId,
+                StringComparison.OrdinalIgnoreCase);
+
         var canInstall = !_busy
-                         && item is not null
+                         && matchesProvider
+                         && ActiveProviderConfigured
                          && _selectedModrinthVersion is not null
                          && _selectedModrinthPlan is not null
                          && _viewModel?.IsGameRunning != true;
         ModrinthInstallButton.IsEnabled = canInstall;
         ModrinthInstallButton.Content = item?.Installed is null
             ? "Install selected"
-            : _selectedModrinthVersion is not null && item.Installed.IsCurrent(_selectedModrinthVersion)
+            : _selectedModrinthVersion is not null
+              && item.Installed.IsCurrent(_selectedModrinthVersion)
                 ? "Reinstall selected"
                 : "Update selected";
     }
 
-    private static bool SupportsModrinth(string loader)
+    private static bool SupportsProvider(string loader)
         => loader.Equals("fabric", StringComparison.OrdinalIgnoreCase)
            || loader.Equals("forge", StringComparison.OrdinalIgnoreCase)
            || loader.Equals("neoforge", StringComparison.OrdinalIgnoreCase)
            || loader.Equals("quilt", StringComparison.OrdinalIgnoreCase);
 
-    private static string BuildModrinthUserAgent()
+    private static string BuildProviderUserAgent()
     {
         var version = typeof(ModManagerWindow).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
             ?? "dev";
         var safeVersion = version.Split('+', 2)[0];
-        return $"yannickfan67-ai-UN_Nexo/{safeVersion} (github.com/yannickfan67-ai/UN_Nexo)";
+        return
+            $"yannickfan67-ai-UN_Nexo/{safeVersion} (github.com/yannickfan67-ai/UN_Nexo)";
     }
 }
