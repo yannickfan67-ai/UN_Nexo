@@ -476,40 +476,46 @@ internal static class VanillaRequiredArtifactRegression
             };
         }
 
-        return JsonSerializer.Serialize(new
-        {
-            id = VersionId,
-            type = "release",
-            mainClass =
-                "net.minecraft.client.main.Main",
-            javaVersion = new
+        return JsonSerializer.Serialize(
+            new
             {
-                majorVersion = 21
-            },
-            downloads = new
-            {
-                client = clientMetadata
-            },
-            assetIndex = new
-            {
-                id = AssetId,
-                url =
-                    "https://launchermeta.mojang.com/assets.json",
-                sha1 = Sha1(assetIndex),
-                size = assetIndex.LongLength
-            },
-            libraries,
-            logging,
-            arguments = new
-            {
-                jvm = new[]
+                id = VersionId,
+                type = "release",
+                mainClass =
+                    "net.minecraft.client.main.Main",
+                javaVersion = new
                 {
-                    "-cp",
-                    "${classpath}"
+                    majorVersion = 21
                 },
-                game = Array.Empty<string>()
-            }
-        });
+                downloads = new
+                {
+                    client = clientMetadata
+                },
+                assetIndex = new
+                {
+                    id = AssetId,
+                    url =
+                        "https://launchermeta.mojang.com/assets.json",
+                    sha1 = Sha1(assetIndex),
+                    size = assetIndex.LongLength
+                },
+                libraries,
+                logging,
+                arguments = new
+                {
+                    jvm = new[]
+                    {
+                        "-cp",
+                        "${classpath}"
+                    },
+                    game = Array.Empty<string>()
+                }
+            },
+            new JsonSerializerOptions
+            {
+                DefaultIgnoreCondition =
+                    System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+            });
     }
 
     private static GameInstance Instance()
