@@ -229,7 +229,7 @@ internal static class InstallStateAtomicRegression
             {
                 const string metadata =
                     "{\"id\":\"1.21.4\",\"downloads\":{\"client\":{"
-                    + "\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                    + "\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                     + "\"assetIndex\":{\"id\":\"state-test-assets\","
                     + "\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
                     + "\"libraries\":[]}";
