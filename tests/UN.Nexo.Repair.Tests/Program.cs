@@ -589,11 +589,12 @@ internal static class Program
                 return uri.AbsolutePath switch
                 {
                     "/version.json" => Task.FromResult(Json(
-                        "{\"id\":\"" + baseVersionId + "\",\"libraries\":[]}")),
+                        BaseMetadata())),
                     "/client.jar" => Task.FromResult(Bytes(clientBytes)),
                     "/base-library.jar" => Task.FromResult(Bytes(baseLibraryBytes)),
                     "/fabric-loader.jar" => Task.FromResult(FabricBytes()),
-                    "/assets.json" => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)),
+                    "/assets.json" => Task.FromResult(Json(
+                        AssetIndex())),
                     _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))
                 };
             }
@@ -602,6 +603,49 @@ internal static class Program
                 return Task.FromResult(Bytes(assetBytes));
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private string BaseMetadata()
+        {
+            var clientSha = Convert.ToHexString(
+                    SHA1.HashData(clientBytes))
+                .ToLowerInvariant();
+            var librarySha = Convert.ToHexString(
+                    SHA1.HashData(baseLibraryBytes))
+                .ToLowerInvariant();
+            var indexBytes = Encoding.UTF8.GetBytes(
+                AssetIndex());
+            var indexSha = Convert.ToHexString(
+                    SHA1.HashData(indexBytes))
+                .ToLowerInvariant();
+
+            return "{\"id\":\"" + baseVersionId + "\","
+                   + "\"type\":\"release\","
+                   + "\"downloads\":{\"client\":{"
+                   + "\"url\":\"https://piston-data.mojang.com/client.jar\","
+                   + "\"sha1\":\"" + clientSha + "\"}},"
+                   + "\"assetIndex\":{"
+                   + "\"id\":\"fabric-assets\","
+                   + "\"url\":\"https://piston-data.mojang.com/assets.json\","
+                   + "\"sha1\":\"" + indexSha + "\"},"
+                   + "\"libraries\":[{"
+                   + "\"name\":\"example:base:1.0\","
+                   + "\"downloads\":{\"artifact\":{"
+                   + "\"path\":\"example/base/1.0/base-1.0.jar\","
+                   + "\"url\":\"https://piston-data.mojang.com/base-library.jar\","
+                   + "\"sha1\":\"" + librarySha + "\"}}}]}";
+        }
+
+        private string AssetIndex()
+        {
+            var assetSha = Convert.ToHexString(
+                    SHA1.HashData(assetBytes))
+                .ToLowerInvariant();
+            return "{\"objects\":{"
+                   + "\"minecraft/fabric-test.txt\":{"
+                   + "\"hash\":\"" + assetSha + "\","
+                   + "\"size\":" + assetBytes.LongLength
+                   + "}}}";
         }
 
         private HttpResponseMessage FabricBytes()
