@@ -101,9 +101,10 @@ public sealed class FabricInstallService(
                 ?? throw new InvalidDataException("Fabric profile does not declare a Fabric Loader library.");
 
             var statePath = Path.Combine(instanceRoot, "install-state.json");
-            byte[]? previousState = null;
-            if (File.Exists(statePath))
-                previousState = await File.ReadAllBytesAsync(statePath, cancellationToken);
+            var previousState =
+                await InstallStateSnapshot.ReadAsync(
+                    instanceRoot,
+                    cancellationToken);
 
             try
             {
@@ -120,8 +121,8 @@ public sealed class FabricInstallService(
                     baseVersion,
                     progress,
                     cancellationToken);
-                if (File.Exists(statePath))
-                    File.Delete(statePath);
+                InstallStateSnapshot.Delete(
+                    instanceRoot);
                 Report(progress, new InstallProgress("Vanilla base", 1, 1, baseVersion.Id));
 
                 var libraries = CollectLibraries(root, Path.Combine(gameRoot, "libraries"));
@@ -170,9 +171,14 @@ public sealed class FabricInstallService(
             }
             catch
             {
-                TryDeleteFile(statePath);
+                InstallStateSnapshot.Delete(
+                    instanceRoot);
                 if (previousState is not null)
-                    await File.WriteAllBytesAsync(statePath, previousState, CancellationToken.None);
+                {
+                    await InstallStateSnapshot.RestoreAsync(
+                        instanceRoot,
+                        previousState);
+                }
                 throw;
             }
         }

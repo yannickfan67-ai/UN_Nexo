@@ -201,6 +201,14 @@ internal static class QuiltLoaderRegression
                 profileId,
                 minecraftVersion,
                 loaderVersion);
+
+            await TestLinkedInstallStateRejectedAsync(
+                paths,
+                service,
+                baseVersion,
+                profileId,
+                minecraftVersion,
+                loaderVersion);
         }
         finally
         {
@@ -286,6 +294,116 @@ internal static class QuiltLoaderRegression
                 TryDeleteDirectoryLink(linkedOrg);
             TryDeleteTree(instanceRoot);
             TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static async Task TestLinkedInstallStateRejectedAsync(
+        NexoPathService paths,
+        QuiltInstallService service,
+        MinecraftVersionInfo baseVersion,
+        string profileId,
+        string minecraftVersion,
+        string loaderVersion)
+    {
+        var instance = new GameInstance(
+            Guid.NewGuid().ToString("N"),
+            "Quilt linked-state regression",
+            profileId,
+            "quilt",
+            DateTimeOffset.UtcNow,
+            minecraftVersion,
+            loaderVersion);
+        var instanceRoot =
+            paths.GetInstanceDirectory(instance.Id);
+        Directory.CreateDirectory(instanceRoot);
+
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-quilt-linked-state-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel =
+            Path.Combine(
+                externalRoot,
+                "outside.json");
+        var sentinelBytes =
+            Encoding.UTF8.GetBytes(
+                "{\"outside\":true}");
+        await File.WriteAllBytesAsync(
+            sentinel,
+            sentinelBytes);
+
+        var statePath =
+            Path.Combine(
+                instanceRoot,
+                "install-state.json");
+        var linked = false;
+        try
+        {
+            linked =
+                TryCreateFileLink(
+                    statePath,
+                    sentinel);
+            if (!linked)
+                return;
+
+            try
+            {
+                await service.PrepareAsync(
+                    instance,
+                    baseVersion);
+                throw new InvalidOperationException(
+                    "Linked Quilt install state unexpectedly produced a rollback snapshot.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                (await File.ReadAllBytesAsync(sentinel))
+                    .SequenceEqual(sentinelBytes),
+                "Rejecting linked Quilt install state must preserve the external target.");
+        }
+        finally
+        {
+            if (linked)
+                TryDeleteFileLink(statePath);
+            TryDeleteTree(instanceRoot);
+            TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static bool TryCreateFileLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(
+                linkPath,
+                targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteFileLink(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
         }
     }
 

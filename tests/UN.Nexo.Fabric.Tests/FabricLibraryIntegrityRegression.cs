@@ -19,6 +19,7 @@ internal static class FabricLibraryIntegrityRegression
         await TestCorruptCachedMavenJarIsReplacedAsync();
         await TestTruncatedMavenJarIsRejectedAsync();
         await TestStalledMavenJarTimesOutAsync();
+        await TestLinkedInstallStateRejectedAsync();
     }
 
     private static async Task TestCorruptCachedMavenJarIsReplacedAsync()
@@ -143,6 +144,89 @@ internal static class FabricLibraryIntegrityRegression
         }
     }
 
+    private static async Task TestLinkedInstallStateRejectedAsync()
+    {
+        var root = NewRoot();
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-fabric-state-external-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+
+        try
+        {
+            var jar = CreateJarBytes("valid-library");
+            var handler =
+                new FabricLibraryHandler(
+                    jar,
+                    LibraryMode.Valid);
+            using var fixture =
+                await CreateFixtureAsync(
+                    root,
+                    handler,
+                    TimeSpan.FromSeconds(1));
+
+            var sentinel =
+                Path.Combine(
+                    externalRoot,
+                    "outside.json");
+            var sentinelBytes =
+                Encoding.UTF8.GetBytes(
+                    "{\"outside\":true}");
+            await File.WriteAllBytesAsync(
+                sentinel,
+                sentinelBytes);
+
+            var statePath =
+                Path.Combine(
+                    fixture.Paths.GetInstanceDirectory(
+                        fixture.Instance.Id),
+                    "install-state.json");
+            if (!TryCreateFileLink(
+                    statePath,
+                    sentinel))
+            {
+                Console.WriteLine(
+                    "SKIP Fabric linked install-state regression: platform denied symlink creation");
+                return;
+            }
+
+            try
+            {
+                await fixture.Service.PrepareAsync(
+                    fixture.Instance,
+                    fixture.BaseVersion);
+                throw new Exception(
+                    "Fabric unexpectedly accepted a linked install-state rollback source.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Equal(
+                true,
+                File.Exists(statePath),
+                "Fabric rejection should leave the linked state path in place.");
+            Equal(
+                Convert.ToHexString(sentinelBytes),
+                Convert.ToHexString(
+                    await File.ReadAllBytesAsync(sentinel)),
+                "Fabric must not modify the external install-state target.");
+            Equal(
+                0,
+                handler.TestLibraryJarRequests,
+                "Fabric must reject linked install state before loader library mutation.");
+        }
+        finally
+        {
+            // Recursive cleanup removes the symlink itself; the external target
+            // lives outside the test root and is removed separately.
+            TryDelete(root);
+            TryDelete(externalRoot);
+        }
+    }
+
     private static async Task<Fixture> CreateFixtureAsync(
         string root,
         FabricLibraryHandler handler,
@@ -218,6 +302,27 @@ internal static class FabricLibraryIntegrityRegression
             writer.Write(payload);
         }
         return memory.ToArray();
+    }
+
+    private static bool TryCreateFileLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(
+                linkPath,
+                targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static string NewRoot()
