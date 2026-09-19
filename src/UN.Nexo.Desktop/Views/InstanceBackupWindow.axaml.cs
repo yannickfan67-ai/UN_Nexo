@@ -13,6 +13,7 @@ public sealed partial class InstanceBackupWindow : Window
     private readonly MainWindowViewModel? _viewModel;
     private readonly InstanceLifecycleService _lifecycle;
     private readonly GameInstance? _instance;
+    private CancellationTokenSource? _operationCancellation;
     private bool _busy;
 
     public InstanceBackupWindow()
@@ -21,6 +22,7 @@ public sealed partial class InstanceBackupWindow : Window
         _lifecycle = new InstanceLifecycleService(new NexoPathService());
         BackupList.ItemsSource = _backups;
         Opened += OnOpened;
+        Closed += OnClosed;
     }
 
     public InstanceBackupWindow(MainWindowViewModel viewModel, NexoPathService paths) : this()
@@ -46,6 +48,24 @@ public sealed partial class InstanceBackupWindow : Window
         await ReloadBackupsAsync();
     }
 
+    private void OnClosed(object? sender, EventArgs e)
+        => _operationCancellation?.Cancel();
+
+    private CancellationToken BeginOperation()
+    {
+        _operationCancellation?.Dispose();
+        _operationCancellation = new CancellationTokenSource();
+        SetBusy(true);
+        return _operationCancellation.Token;
+    }
+
+    private void EndOperation()
+    {
+        _operationCancellation?.Dispose();
+        _operationCancellation = null;
+        SetBusy(false);
+    }
+
     private async void OnRefreshClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         => await ReloadBackupsAsync();
 
@@ -54,14 +74,15 @@ public sealed partial class InstanceBackupWindow : Window
         if (!CanStartOperation("clone"))
             return;
 
-        SetBusy(true);
+        var cancellationToken = BeginOperation();
         try
         {
             OperationStatus.Text = "Cloning instance to staging…";
             var clone = await _lifecycle.CloneAsync(
                 _instance!,
                 CloneNameBox.Text ?? string.Empty,
-                IncludeWorldsBox.IsChecked == true);
+                IncludeWorldsBox.IsChecked == true,
+                cancellationToken);
 
             if (_viewModel is not null)
             {
@@ -72,13 +93,17 @@ public sealed partial class InstanceBackupWindow : Window
 
             OperationStatus.Text = $"Created independent clone '{clone.Name}'.";
         }
+        catch (OperationCanceledException)
+        {
+            OperationStatus.Text = "Clone cancelled; staging was cleaned up.";
+        }
         catch (Exception ex)
         {
             OperationStatus.Text = $"Clone failed: {ex.Message}";
         }
         finally
         {
-            SetBusy(false);
+            EndOperation();
         }
     }
 
@@ -93,15 +118,22 @@ public sealed partial class InstanceBackupWindow : Window
         if (!CanStartOperation("back up worlds"))
             return;
 
-        SetBusy(true);
+        var cancellationToken = BeginOperation();
         try
         {
             OperationStatus.Text = kind == "pre-upgrade"
                 ? "Creating pre-upgrade world backup…"
                 : "Creating world backup…";
-            var created = await _lifecycle.CreateWorldBackupAsync(_instance!, kind);
+            var created = await _lifecycle.CreateWorldBackupAsync(
+                _instance!,
+                kind,
+                cancellationToken);
             await ReloadBackupsAsync(created.Id);
             OperationStatus.Text = $"Backup complete · {created.Worlds.Count} world{(created.Worlds.Count == 1 ? string.Empty : "s")} · {created.ArchiveSizeLabel}.";
+        }
+        catch (OperationCanceledException)
+        {
+            OperationStatus.Text = "Backup cancelled; temporary archive was cleaned up.";
         }
         catch (Exception ex)
         {
@@ -109,7 +141,7 @@ public sealed partial class InstanceBackupWindow : Window
         }
         finally
         {
-            SetBusy(false);
+            EndOperation();
         }
     }
 
@@ -124,14 +156,22 @@ public sealed partial class InstanceBackupWindow : Window
             return;
         }
 
-        SetBusy(true);
+        var cancellationToken = BeginOperation();
         try
         {
             OperationStatus.Text = $"Restoring {world.Name} through staging…";
-            var result = await _lifecycle.RestoreWorldAsync(_instance!, backup, world.Name);
+            var result = await _lifecycle.RestoreWorldAsync(
+                _instance!,
+                backup,
+                world.Name,
+                cancellationToken);
             OperationStatus.Text = result.SafetyCopyPath is null
                 ? $"Restored {result.WorldName}. No previous world needed a safety copy."
                 : $"Restored {result.WorldName}. Previous world preserved at {result.SafetyCopyPath}";
+        }
+        catch (OperationCanceledException)
+        {
+            OperationStatus.Text = "Restore cancelled; staged world data was cleaned up.";
         }
         catch (Exception ex)
         {
@@ -139,7 +179,7 @@ public sealed partial class InstanceBackupWindow : Window
         }
         finally
         {
-            SetBusy(false);
+            EndOperation();
         }
     }
 
