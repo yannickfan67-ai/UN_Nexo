@@ -210,7 +210,7 @@ public sealed class InstanceLifecycleService
         }
         catch
         {
-            TryDeleteFile(tempPath);
+            TryDeleteBackupTempFile(instance.Id, tempPath);
             throw;
         }
     }
@@ -476,7 +476,7 @@ public sealed class InstanceLifecycleService
         }
         finally
         {
-            TryDeleteDirectory(stagingRoot);
+            TryDeleteRestoreStagingDirectory(instance.Id, stagingRoot);
         }
     }
 
@@ -1020,6 +1020,59 @@ public sealed class InstanceLifecycleService
             OperatingSystem.IsWindows()
                 ? StringComparison.OrdinalIgnoreCase
                 : StringComparison.Ordinal);
+
+    private void TryDeleteBackupTempFile(
+        string instanceId,
+        string tempPath)
+    {
+        try
+        {
+            var root = EnsureBackupRootPhysical(instanceId, create: false);
+            ValidateBackupFilePhysical(
+                root,
+                tempPath,
+                requireZipExtension: false);
+            File.Delete(tempPath);
+        }
+        catch
+        {
+            // If the storage root/path changed, leave the temp file rather than
+            // following an untrusted path during cleanup.
+        }
+    }
+
+    private void TryDeleteRestoreStagingDirectory(
+        string instanceId,
+        string stagingRoot)
+    {
+        try
+        {
+            var instanceRoot = _paths.EnsureInstanceDirectoryPhysical(instanceId);
+            var stagingParent = ResolveChild(instanceRoot, ".restore-staging");
+            EnsurePhysicalDirectory(
+                stagingParent,
+                create: false,
+                "Restore staging root");
+            if (!Directory.Exists(stagingParent))
+                return;
+
+            EnsureContained(stagingParent, stagingRoot);
+            if (!Directory.Exists(stagingRoot))
+                return;
+
+            RejectReparsePoint(stagingRoot);
+            _paths.EnsureInstanceDirectoryPhysical(instanceId);
+            EnsurePhysicalDirectory(
+                stagingParent,
+                create: false,
+                "Restore staging root");
+            Directory.Delete(stagingRoot, recursive: true);
+        }
+        catch
+        {
+            // Best-effort cleanup only. Unsafe or swapped paths are preserved.
+        }
+    }
 
     private static string NormalizeInstanceName(string value)
     {
