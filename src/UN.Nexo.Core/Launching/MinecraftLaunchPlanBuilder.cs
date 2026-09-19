@@ -302,7 +302,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             java.JavaPath,
             gameRoot,
             arguments,
-            Within(instanceRoot, "launcher-logs"));
+            Within(instanceRoot, "launcher-logs"))
+        {
+            InstanceId = instance.Id
+        };
     }
 
     public static int JavaMajor(string version)
