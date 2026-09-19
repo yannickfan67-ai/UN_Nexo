@@ -150,11 +150,15 @@ internal static class InstallStateAtomicRegression
             await installer.InstallAsync(instance, version);
 
             using var state = JsonDocument.Parse(await File.ReadAllTextAsync(statePath));
+            var rootElement = state.RootElement;
+            var storedId = rootElement.TryGetProperty("Id", out var legacyId)
+                ? legacyId.GetString()
+                : rootElement.GetProperty("id").GetString();
             Assert(
-                state.RootElement.GetProperty("id").GetString() == instance.Id,
+                storedId == instance.Id,
                 "Vanilla Prepare should atomically replace install state with the current instance id.");
             Assert(
-                state.RootElement.GetProperty("state").GetString() == "prepared",
+                rootElement.GetProperty("state").GetString() == "prepared",
                 "Vanilla Prepare should publish a complete prepared marker.");
             AssertNoTemps(instanceRoot, statePath);
         }
