@@ -36,7 +36,13 @@ internal static class Program
             var sanitized = service.Sanitize(
                 "--accessToken super-secret-token\nAuthorization: Bearer abcdefghijklmnop\n"
                 + "{\"access_token\":\"minecraft-json-token\",\"refresh_token\":\"microsoft-refresh-token\","
-                + "\"identityToken\":\"XBL3.0 x=123;xsts-token-value\",\"Token\":\"xbox-token-value\"}\n"
+                + "\"identityToken\":\"XBL3.0 x=123;xsts-token-value\",\"Token\":\"xbox-token-value\","
+                + "\"client_token\":\"client-json-token\",\"session_id\":\"session-json-token\","
+                + "\"authorization\":\"json-authorization-secret\"}\n"
+                + "https://example.test/callback?access_token=query-access-secret&state=keep-state\n"
+                + "https://example.test/callback?client_token=query-client-secret&code=keep-code\n"
+                + "access_token=form-access-secret&scope=keep-scope\n"
+                + "benign-tokenizer=keep-this-value\n"
                 + "secret=" + explicitSecret,
                 explicitSecret);
             Contains(sanitized, "--accessToken <REDACTED>", "access token marker");
@@ -46,6 +52,16 @@ internal static class Program
             DoesNotContain(sanitized, "microsoft-refresh-token", "JSON Microsoft refresh token");
             DoesNotContain(sanitized, "xsts-token-value", "JSON identity token");
             DoesNotContain(sanitized, "xbox-token-value", "JSON Xbox token");
+            DoesNotContain(sanitized, "client-json-token", "JSON client token");
+            DoesNotContain(sanitized, "session-json-token", "JSON session id");
+            DoesNotContain(sanitized, "json-authorization-secret", "JSON authorization value");
+            DoesNotContain(sanitized, "query-access-secret", "query access token");
+            DoesNotContain(sanitized, "query-client-secret", "query client token");
+            DoesNotContain(sanitized, "form-access-secret", "form access token");
+            Contains(sanitized, "&state=keep-state", "query state should remain useful");
+            Contains(sanitized, "&code=keep-code", "query code should remain useful");
+            Contains(sanitized, "&scope=keep-scope", "form scope should remain useful");
+            Contains(sanitized, "benign-tokenizer=keep-this-value", "benign token-like text should remain");
             DoesNotContain(sanitized, explicitSecret, "explicit secret");
 
             Console.WriteLine("[diagnostics] bounded-tail and ZIP checks");
@@ -83,7 +99,14 @@ internal static class Program
                 var minecraftLog = Path.Combine(tempDirectory, "minecraft.log");
                 await File.WriteAllTextAsync(
                     minecraftLog,
-                    $"[stdout] user-home={home}\n--accessToken {token}\nAuthorization: Bearer abcdefghijklmnop\n[stderr] GLFW error 65542: test\n");
+                    $"[stdout] user-home={home}\n"
+                    + $"--accessToken {token}\n"
+                    + "Authorization: Bearer abcdefghijklmnop\n"
+                    + "{\"access_token\":\"zip-json-secret\",\"client_token\":\"zip-client-secret\"}\n"
+                    + "https://example.test/callback?access_token=zip-query-secret&state=keep-state\n"
+                    + "access_token=zip-form-secret&scope=keep-scope\n"
+                    + "benign-tokenizer=keep-this-value\n"
+                    + "[stderr] GLFW error 65542: test\n");
 
                 var diagnosis = service.Analyze(1, await File.ReadAllTextAsync(minecraftLog));
                 var bundles = new DiagnosticBundleService(service);
@@ -112,6 +135,13 @@ internal static class Program
                 var packageText = combined.ToString();
                 DoesNotContain(packageText, token, "archive explicit secret");
                 DoesNotContain(packageText, "abcdefghijklmnop", "archive Bearer token");
+                DoesNotContain(packageText, "zip-json-secret", "archive JSON access token");
+                DoesNotContain(packageText, "zip-client-secret", "archive JSON client token");
+                DoesNotContain(packageText, "zip-query-secret", "archive query token");
+                DoesNotContain(packageText, "zip-form-secret", "archive form token");
+                Contains(packageText, "&state=keep-state", "archive query state should remain");
+                Contains(packageText, "&scope=keep-scope", "archive form scope should remain");
+                Contains(packageText, "benign-tokenizer=keep-this-value", "archive benign token-like text should remain");
                 if (!string.IsNullOrWhiteSpace(home))
                     DoesNotContainInsensitive(packageText, home, "archive home path");
                 Contains(packageText, "<REDACTED>", "archive token redaction marker");
