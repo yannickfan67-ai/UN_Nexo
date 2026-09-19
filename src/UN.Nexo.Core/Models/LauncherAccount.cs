@@ -8,7 +8,6 @@ public sealed record LauncherAccount(
     DateTimeOffset CreatedAt)
 {
     public string? AuthenticationId { get; init; }
-    public DateTimeOffset? LastEntitlementVerifiedAt { get; init; }
     public DateTimeOffset? EntitlementVerifiedAt { get; init; }
 
     public bool IsOffline => Type.Equals("offline", StringComparison.OrdinalIgnoreCase);
