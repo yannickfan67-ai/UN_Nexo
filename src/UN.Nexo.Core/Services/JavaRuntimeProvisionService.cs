@@ -94,15 +94,10 @@ public sealed class JavaRuntimeProvisionService
                     ?? throw new InvalidDataException("Downloaded Java runtime has an invalid home directory.");
                 var relativeJavaPath = Path.GetRelativePath(runtimeHome, javaPath);
 
-                if (Directory.Exists(targetRoot))
-                    Directory.Delete(targetRoot, recursive: true);
-                Directory.Move(runtimeHome, targetRoot);
-
-                var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
-                EnsureUnixExecutable(finalJavaPath);
-                var spawnHelper = Path.Combine(targetRoot, "lib", "jspawnhelper");
-                if (File.Exists(spawnHelper))
-                    EnsureUnixExecutable(spawnHelper);
+                EnsureUnixExecutable(javaPath);
+                var stagedSpawnHelper = Path.Combine(runtimeHome, "lib", "jspawnhelper");
+                if (File.Exists(stagedSpawnHelper))
+                    EnsureUnixExecutable(stagedSpawnHelper);
 
                 var manifest = new ManagedRuntimeManifest(
                     major,
@@ -111,11 +106,14 @@ public sealed class JavaRuntimeProvisionService
                     asset.Link,
                     asset.Sha256,
                     DateTimeOffset.UtcNow);
-                await File.WriteAllTextAsync(
-                    Path.Combine(targetRoot, "nexo-runtime.json"),
-                    JsonSerializer.Serialize(manifest, JsonOptions),
+                await WriteRuntimeManifestAtomicAsync(
+                    runtimeHome,
+                    manifest,
                     cancellationToken);
 
+                PublishRuntimeDirectory(runtimeHome, targetRoot, cancellationToken);
+
+                var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
                 _trustedThisSession.Add(targetRoot);
                 progress?.Report($"Java {major} runtime ready.");
                 return new JavaInstallation(
@@ -137,6 +135,103 @@ public sealed class JavaRuntimeProvisionService
                 File.Delete(partPath);
             if (File.Exists(archivePath))
                 File.Delete(archivePath);
+        }
+    }
+
+    private static async Task WriteRuntimeManifestAtomicAsync(
+        string runtimeHome,
+        ManagedRuntimeManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var manifestPath = Path.Combine(runtimeHome, "nexo-runtime.json");
+        var temporaryPath = manifestPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            await File.WriteAllTextAsync(
+                temporaryPath,
+                JsonSerializer.Serialize(manifest, JsonOptions),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, manifestPath, overwrite: true);
+        }
+        catch
+        {
+            try
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
+            catch
+            {
+            }
+            throw;
+        }
+    }
+
+    internal static void PublishRuntimeDirectory(
+        string preparedRuntimeRoot,
+        string targetRoot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(preparedRuntimeRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetRoot);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var prepared = Path.GetFullPath(preparedRuntimeRoot);
+        var target = Path.GetFullPath(targetRoot);
+        if (string.Equals(prepared, target, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Prepared runtime and target runtime paths must differ.");
+
+        var parent = Path.GetDirectoryName(target)
+            ?? throw new InvalidDataException("Managed Java target has no parent directory.");
+        Directory.CreateDirectory(parent);
+
+        var backup = target + ".rollback-" + Guid.NewGuid().ToString("N");
+        var movedPrevious = false;
+        try
+        {
+            if (Directory.Exists(target))
+            {
+                Directory.Move(target, backup);
+                movedPrevious = true;
+            }
+            else if (File.Exists(target))
+            {
+                throw new InvalidDataException("Managed Java target path is occupied by a file.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            Directory.Move(prepared, target);
+        }
+        catch
+        {
+            try
+            {
+                if (!Directory.Exists(target)
+                    && movedPrevious
+                    && Directory.Exists(backup))
+                    Directory.Move(backup, target);
+            }
+            catch
+            {
+                // Preserve the original publication exception. A leftover rollback
+                // directory remains recoverable and is safer than deleting it.
+            }
+            throw;
+        }
+
+        if (movedPrevious && Directory.Exists(backup))
+        {
+            try
+            {
+                Directory.Delete(backup, recursive: true);
+            }
+            catch
+            {
+                // The new runtime is already published atomically. A stale rollback
+                // directory is harmless and can be cleaned up by a later maintenance pass.
+            }
         }
     }
 
