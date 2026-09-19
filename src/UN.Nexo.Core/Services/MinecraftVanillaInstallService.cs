@@ -17,8 +17,10 @@ public sealed class MinecraftVanillaInstallService
     private readonly NexoPathService _paths;
     private readonly DownloadSourceService _downloadSources;
     private readonly TimeSpan _transferIdleTimeout;
+    private readonly InstanceOperationCoordinator _instanceOperations;
     private readonly object _activityGate = new();
-    private CancellationTokenSource? _activeInstallCancellation;
+    private readonly Dictionary<string, CancellationTokenSource>
+        _activeInstallCancellations = new(StringComparer.Ordinal);
 
     public event Action<InstallProgress>? ProgressChanged;
     public event Action<bool>? InstallActivityChanged;
@@ -32,6 +34,7 @@ public sealed class MinecraftVanillaInstallService
         _httpClient = httpClient;
         _paths = paths;
         _downloadSources = downloadSources;
+        _instanceOperations = new InstanceOperationCoordinator(paths);
         _transferIdleTimeout = transferIdleTimeout ?? TimeSpan.FromSeconds(30);
         if (_transferIdleTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(transferIdleTimeout), "Transfer idle timeout must be positive.");
@@ -42,7 +45,7 @@ public sealed class MinecraftVanillaInstallService
         get
         {
             lock (_activityGate)
-                return _activeInstallCancellation is not null;
+                return _activeInstallCancellations.Count > 0;
         }
     }
 
@@ -50,9 +53,26 @@ public sealed class MinecraftVanillaInstallService
     {
         lock (_activityGate)
         {
-            if (_activeInstallCancellation is null)
+            if (_activeInstallCancellations.Count != 1)
                 return false;
-            _activeInstallCancellation.Cancel();
+
+            _activeInstallCancellations.Values
+                .Single()
+                .Cancel();
+            return true;
+        }
+    }
+
+    public bool CancelInstall(string instanceId)
+    {
+        lock (_activityGate)
+        {
+            if (!_activeInstallCancellations.TryGetValue(
+                    instanceId,
+                    out var cancellation))
+                return false;
+
+            cancellation.Cancel();
             return true;
         }
     }
@@ -63,30 +83,70 @@ public sealed class MinecraftVanillaInstallService
         IProgress<InstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        CancellationTokenSource activityCancellation;
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(version);
+
+        var activityCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+        var publishActive = false;
+
         lock (_activityGate)
         {
-            if (_activeInstallCancellation is not null)
-                throw new InvalidOperationException("Another Minecraft file preparation task is already running.");
+            if (_activeInstallCancellations.ContainsKey(
+                    instance.Id))
+            {
+                activityCancellation.Dispose();
+                throw new InvalidOperationException(
+                    $"Minecraft file preparation is already active for instance '{instance.Name}'.");
+            }
 
-            activityCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _activeInstallCancellation = activityCancellation;
+            publishActive =
+                _activeInstallCancellations.Count == 0;
+            _activeInstallCancellations.Add(
+                instance.Id,
+                activityCancellation);
         }
 
-        PublishActivity(true);
+        if (publishActive)
+            PublishActivity(true);
+
         try
         {
-            await InstallCoreAsync(instance, version, progress, activityCancellation.Token);
+            using var operation =
+                await _instanceOperations.AcquireAsync(
+                    instance.Id,
+                    "prepare Minecraft files",
+                    activityCancellation.Token);
+            await InstallCoreAsync(
+                instance,
+                version,
+                progress,
+                activityCancellation.Token);
         }
         finally
         {
+            var publishInactive = false;
             lock (_activityGate)
             {
-                if (ReferenceEquals(_activeInstallCancellation, activityCancellation))
-                    _activeInstallCancellation = null;
+                if (_activeInstallCancellations.TryGetValue(
+                        instance.Id,
+                        out var current)
+                    && ReferenceEquals(
+                        current,
+                        activityCancellation))
+                {
+                    _activeInstallCancellations.Remove(
+                        instance.Id);
+                }
+
+                publishInactive =
+                    _activeInstallCancellations.Count == 0;
             }
+
             activityCancellation.Dispose();
-            PublishActivity(false);
+            if (publishInactive)
+                PublishActivity(false);
         }
     }
 
