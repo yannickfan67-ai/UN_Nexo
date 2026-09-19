@@ -7,7 +7,7 @@ using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
 
-public sealed class ModrinthModProvider : IModProvider
+public sealed class ModrinthModProvider : IModDependencyProvider
 {
     private const string ApiBase = "https://api.modrinth.com/v2/";
     private const int MaxMetadataBytes = 4 * 1024 * 1024;
@@ -96,6 +96,44 @@ public sealed class ModrinthModProvider : IModProvider
         return projects;
     }
 
+    public async Task<ModProviderProject?> GetProjectAsync(
+        string projectId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!IsOpaqueId(projectId))
+            throw new ArgumentException("A valid Modrinth project id is required.", nameof(projectId));
+
+        using var request = CreateRequest(
+            HttpMethod.Get,
+            "project/" + Uri.EscapeDataString(projectId));
+        using var document = await SendJsonAsync(request, cancellationToken);
+        var item = document.RootElement;
+        if (item.ValueKind != JsonValueKind.Object
+            || !TryGetRequiredString(item, "id", out var resolvedId)
+            || !string.Equals(resolvedId, projectId, StringComparison.Ordinal)
+            || !TryGetRequiredString(item, "slug", out var slug)
+            || !TryGetRequiredString(item, "title", out var title))
+            return null;
+
+        var description = TryGetString(item, "description") ?? string.Empty;
+        var iconUrl = TryGetString(item, "icon_url");
+        var downloads = item.TryGetProperty("downloads", out var downloadsElement)
+                        && downloadsElement.TryGetInt64(out var parsedDownloads)
+            ? Math.Max(0, parsedDownloads)
+            : 0;
+
+        return new ModProviderProject(
+            ProviderId,
+            resolvedId,
+            slug,
+            title,
+            description,
+            "Unknown author",
+            iconUrl,
+            downloads,
+            "https://modrinth.com/mod/" + Uri.EscapeDataString(slug));
+    }
+
     public async Task<ModProviderVersion?> GetLatestCompatibleVersionAsync(
         string projectId,
         string minecraftVersion,
@@ -129,6 +167,50 @@ public sealed class ModrinthModProvider : IModProvider
         }
 
         return latest;
+    }
+
+    public async Task<ModProviderVersion?> GetCompatibleVersionAsync(
+        string? projectId,
+        string? versionId,
+        string minecraftVersion,
+        string loader,
+        CancellationToken cancellationToken = default)
+    {
+        if (projectId is not null && !IsOpaqueId(projectId))
+            throw new ArgumentException("A valid Modrinth project id is required.", nameof(projectId));
+        if (versionId is not null && !IsOpaqueId(versionId))
+            throw new ArgumentException("A valid Modrinth version id is required.", nameof(versionId));
+
+        var gameVersion = RequireValue(minecraftVersion, nameof(minecraftVersion));
+        var normalizedLoader = NormalizeLoader(loader);
+
+        if (versionId is null)
+        {
+            if (projectId is null)
+                throw new ArgumentException(
+                    "A project id is required when no specific version id is supplied.",
+                    nameof(projectId));
+            return await GetLatestCompatibleVersionAsync(
+                projectId,
+                gameVersion,
+                normalizedLoader,
+                cancellationToken);
+        }
+
+        using var request = CreateRequest(
+            HttpMethod.Get,
+            "version/" + Uri.EscapeDataString(versionId));
+        using var document = await SendJsonAsync(request, cancellationToken);
+        var item = document.RootElement;
+        var candidate = ParseVersion(item);
+        if (candidate is null
+            || !string.Equals(candidate.VersionId, versionId, StringComparison.Ordinal)
+            || projectId is not null
+               && !string.Equals(candidate.ProjectId, projectId, StringComparison.Ordinal)
+            || !IsVersionCompatible(item, gameVersion, normalizedLoader))
+            return null;
+
+        return candidate;
     }
 
     public async Task<IReadOnlyDictionary<string, ModProviderInstalledMatch>> MatchInstalledAsync(
@@ -215,28 +297,12 @@ public sealed class ModrinthModProvider : IModProvider
         return result;
     }
 
-    public async Task<ModProviderInstallResult> InstallAsync(
-        string instanceId,
+    public async Task<ModProviderStagedInstall> StageAsync(
         ModProviderProject project,
         ModProviderVersion version,
-        ModProviderInstalledMatch? existing,
-        InstanceModService modService,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(instanceId))
-            throw new ArgumentException("An instance id is required.", nameof(instanceId));
-        ArgumentNullException.ThrowIfNull(project);
-        ArgumentNullException.ThrowIfNull(version);
-        ArgumentNullException.ThrowIfNull(modService);
-        if (!string.Equals(project.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(version.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(project.ProjectId, version.ProjectId, StringComparison.Ordinal))
-            throw new InvalidDataException("The selected Modrinth project and version do not match.");
-        if (existing is not null
-            && (!string.Equals(existing.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase)
-                || !string.Equals(existing.ProjectId, project.ProjectId, StringComparison.Ordinal)))
-            throw new InvalidDataException("The installed Modrinth match does not belong to the selected project.");
-
+        ValidateProjectVersion(project, version);
         var file = version.SelectPrimaryFile();
         ValidateProviderFile(file);
 
@@ -251,25 +317,50 @@ public sealed class ModrinthModProvider : IModProvider
         try
         {
             await DownloadVerifiedAsync(file, stagedPath, cancellationToken);
+            return new ModProviderStagedInstall(
+                project,
+                version,
+                stagedPath,
+                stagingRoot);
+        }
+        catch
+        {
+            TryDeleteDirectory(stagingRoot);
+            throw;
+        }
+    }
+
+    public async Task<ModProviderInstallResult> InstallAsync(
+        string instanceId,
+        ModProviderProject project,
+        ModProviderVersion version,
+        ModProviderInstalledMatch? existing,
+        InstanceModService modService,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(instanceId))
+            throw new ArgumentException("An instance id is required.", nameof(instanceId));
+        ArgumentNullException.ThrowIfNull(modService);
+        ValidateProjectVersion(project, version);
+        if (existing is not null
+            && (!string.Equals(existing.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(existing.ProjectId, project.ProjectId, StringComparison.Ordinal)))
+            throw new InvalidDataException("The installed Modrinth match does not belong to the selected project.");
+
+        var staged = await StageAsync(project, version, cancellationToken);
+        try
+        {
             var installed = await modService.InstallProviderUpdateAsync(
                 instanceId,
-                stagedPath,
+                staged.StagedPath,
                 existing?.LocalFileName,
                 existing?.IsEnabled ?? true,
                 cancellationToken);
-
             return new ModProviderInstallResult(project, version, installed);
         }
         finally
         {
-            try
-            {
-                if (Directory.Exists(stagingRoot))
-                    Directory.Delete(stagingRoot, recursive: true);
-            }
-            catch
-            {
-            }
+            TryDeleteDirectory(staged.CleanupDirectory);
         }
     }
 
@@ -416,6 +507,7 @@ public sealed class ModrinthModProvider : IModProvider
         if (files.Count == 0)
             return null;
 
+        var dependencies = ParseDependencies(item);
         var name = TryGetString(item, "name") ?? versionNumber;
         return new ModProviderVersion(
             ProviderId,
@@ -424,7 +516,78 @@ public sealed class ModrinthModProvider : IModProvider
             name,
             versionNumber,
             published,
-            files);
+            files)
+        {
+            Dependencies = dependencies
+        };
+    }
+
+    private static IReadOnlyList<ModProviderDependency> ParseDependencies(
+        JsonElement item)
+    {
+        if (!item.TryGetProperty("dependencies", out var dependencies)
+            || dependencies.ValueKind == JsonValueKind.Null)
+            return [];
+        if (dependencies.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("Modrinth version dependencies must be an array.");
+
+        var result = new List<ModProviderDependency>();
+        foreach (var dependency in dependencies.EnumerateArray())
+        {
+            if (dependency.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var projectId = TryGetString(dependency, "project_id");
+            var versionId = TryGetString(dependency, "version_id");
+            if (projectId is not null && !IsOpaqueId(projectId))
+                continue;
+            if (versionId is not null && !IsOpaqueId(versionId))
+                continue;
+            if (projectId is null && versionId is null)
+                continue;
+
+            var typeText = TryGetString(dependency, "dependency_type");
+            var type = typeText switch
+            {
+                "required" => ModProviderDependencyType.Required,
+                "optional" => ModProviderDependencyType.Optional,
+                "incompatible" => ModProviderDependencyType.Incompatible,
+                "embedded" => ModProviderDependencyType.Embedded,
+                _ => (ModProviderDependencyType?)null
+            };
+            if (type is not null)
+                result.Add(new ModProviderDependency(projectId, versionId, type.Value));
+        }
+
+        return result;
+    }
+
+    private static bool IsVersionCompatible(
+        JsonElement item,
+        string minecraftVersion,
+        string loader)
+    {
+        if (!item.TryGetProperty("game_versions", out var gameVersions)
+            || gameVersions.ValueKind != JsonValueKind.Array
+            || !gameVersions.EnumerateArray().Any(value =>
+                value.ValueKind == JsonValueKind.String
+                && string.Equals(
+                    value.GetString(),
+                    minecraftVersion,
+                    StringComparison.Ordinal)))
+            return false;
+
+        if (!item.TryGetProperty("loaders", out var loaders)
+            || loaders.ValueKind != JsonValueKind.Array
+            || !loaders.EnumerateArray().Any(value =>
+                value.ValueKind == JsonValueKind.String
+                && string.Equals(
+                    value.GetString(),
+                    loader,
+                    StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        return true;
     }
 
     private static ModProviderFile? ParseFile(JsonElement item)
@@ -559,6 +722,30 @@ public sealed class ModrinthModProvider : IModProvider
             or HttpStatusCode.SeeOther
             or HttpStatusCode.TemporaryRedirect
             or HttpStatusCode.PermanentRedirect;
+
+    private void ValidateProjectVersion(
+        ModProviderProject project,
+        ModProviderVersion version)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(version);
+        if (!string.Equals(project.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(version.ProviderId, ProviderId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(project.ProjectId, version.ProjectId, StringComparison.Ordinal))
+            throw new InvalidDataException("The selected Modrinth project and version do not match.");
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
+    }
 
     private static void ValidateProviderFile(ModProviderFile file)
     {
