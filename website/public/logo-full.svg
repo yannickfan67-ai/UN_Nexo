@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 180" role="img" aria-labelledby="title desc">
+  <title id="title">UN_Nexo</title>
+  <desc id="desc">UN_Nexo Minecraft Launcher wordmark</desc>
+  <rect x="10" y="10" width="160" height="160" fill="#6A36AA"/>
+  <path fill="#FFFFFF" d="M40 38h24v104H40V38Zm76 0h24v104h-24V38ZM64 38h24l28 59v45h-12L64 62V38Z"/>
+  <g font-family="Segoe UI,Arial,sans-serif">
+    <text x="205" y="88" fill="#FFFFFF" font-size="54" font-weight="600">UN_Nexo</text>
+    <text x="208" y="128" fill="#AFAFAF" font-size="22" font-weight="300">Minecraft Launcher</text>
+  </g>
+</svg>
