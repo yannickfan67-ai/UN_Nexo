@@ -45,6 +45,39 @@ internal static class CurseForgeProviderRegression
             Assert(handler.LastUserAgent.Contains("UN_Nexo", StringComparison.Ordinal),
                 "CurseForge requests must carry the UN_Nexo user agent.");
 
+            var recommendations = await provider.RecommendAsync(
+                "1.21.4",
+                "fabric",
+                20);
+            Assert(recommendations.Count == 1,
+                "Expected one compatible CurseForge recommendation.");
+            Assert(recommendations[0].Project.ProjectId == "100",
+                "CurseForge recommendation should preserve the project identity.");
+            Assert(recommendations[0].Signal.Contains(
+                    "Popularity",
+                    StringComparison.OrdinalIgnoreCase),
+                "CurseForge recommendation signal should explain its ranking.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "gameVersion=1.21.4",
+                    StringComparison.Ordinal),
+                "CurseForge recommendations must retain Minecraft version filtering.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "modLoaderType=4",
+                    StringComparison.Ordinal),
+                "CurseForge recommendations must retain loader filtering.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "sortField=2",
+                    StringComparison.Ordinal),
+                "CurseForge recommendations must use the Popularity sort field.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "sortOrder=desc",
+                    StringComparison.OrdinalIgnoreCase),
+                "CurseForge recommendations must sort popularity descending.");
+            Assert(!handler.LastSearchQuery.Contains(
+                    "searchFilter=",
+                    StringComparison.OrdinalIgnoreCase),
+                "CurseForge recommendations should browse popularity rather than inventing a text query.");
+
             var proxyHandler = new CurseForgeProxyHandler();
             using (var proxyClient = new HttpClient(proxyHandler))
             {
