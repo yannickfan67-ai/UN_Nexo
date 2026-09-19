@@ -45,15 +45,28 @@ public sealed partial class ServerHubWindow : Window
         UpdateSelectionSummary();
     }
 
-    private async Task ReloadAsync(string? selectId = null)
+    private async Task<bool> ReloadAsync(string? selectId = null)
     {
-        var items = await _store.GetAllAsync();
-        _servers.Clear();
-        foreach (var item in items)
-            _servers.Add(item);
+        try
+        {
+            var items = await _store.GetAllAsync();
+            _servers.Clear();
+            foreach (var item in items)
+                _servers.Add(item);
 
-        if (selectId is not null)
-            ServerList.SelectedItem = _servers.FirstOrDefault(item => item.Id == selectId);
+            if (selectId is not null)
+                ServerList.SelectedItem = _servers.FirstOrDefault(item => item.Id == selectId);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            ServerStatus.Text =
+                $"Saved servers could not be loaded: {ex.Message} The existing servers.json and current in-memory list were preserved.";
+            return false;
+        }
     }
 
     private async void OnSaveClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -61,10 +74,15 @@ public sealed partial class ServerHubWindow : Window
         try
         {
             var favorite = await _store.AddAsync(ServerNameBox.Text ?? string.Empty, ServerAddressBox.Text ?? string.Empty);
-            await ReloadAsync(favorite.Id);
-            ServerStatus.Text = $"Saved {favorite.Name} · {favorite.Address}";
+            if (await ReloadAsync(favorite.Id))
+                ServerStatus.Text = $"Saved {favorite.Name} · {favorite.Address}";
         }
-        catch (Exception ex) when (ex is ArgumentException or FormatException or IOException)
+        catch (Exception ex) when (
+            ex is ArgumentException
+            or FormatException
+            or InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
         {
             ServerStatus.Text = ex.Message;
         }
@@ -76,13 +94,25 @@ public sealed partial class ServerHubWindow : Window
             return;
 
         _statusCancellation?.Cancel();
-        await _store.RemoveAsync(favorite.Id);
-        await ReloadAsync();
-        ServerNameBox.Text = string.Empty;
-        ServerAddressBox.Text = "localhost:25565";
-        DefaultInstanceBox.SelectedItem = _viewModel?.SelectedInstance;
-        ClearStatusCard("Select a saved server or enter an address, then refresh status.");
-        ServerStatus.Text = $"Removed {favorite.Name}.";
+        try
+        {
+            await _store.RemoveAsync(favorite.Id);
+            if (!await ReloadAsync())
+                return;
+
+            ServerNameBox.Text = string.Empty;
+            ServerAddressBox.Text = "localhost:25565";
+            DefaultInstanceBox.SelectedItem = _viewModel?.SelectedInstance;
+            ClearStatusCard("Select a saved server or enter an address, then refresh status.");
+            ServerStatus.Text = $"Removed {favorite.Name}.";
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            ServerStatus.Text = $"Could not remove {favorite.Name}: {ex.Message}";
+        }
     }
 
     private async void OnSaveDefaultInstanceClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -94,18 +124,30 @@ public sealed partial class ServerHubWindow : Window
         }
 
         var instance = DefaultInstanceBox.SelectedItem as GameInstance;
-        var updated = await _store.SetDefaultInstanceAsync(favorite.Id, instance?.Id);
-        if (updated is null)
+        try
         {
-            ServerStatus.Text = "The selected server no longer exists.";
-            return;
-        }
+            var updated = await _store.SetDefaultInstanceAsync(favorite.Id, instance?.Id);
+            if (updated is null)
+            {
+                ServerStatus.Text = "The selected server no longer exists.";
+                return;
+            }
 
-        await ReloadAsync(updated.Id);
-        ServerStatus.Text = instance is null
-            ? $"Cleared the default instance for {updated.Name}."
-            : $"{updated.Name} will use {instance.Name} by default.";
-        UpdateCompatibility();
+            if (!await ReloadAsync(updated.Id))
+                return;
+
+            ServerStatus.Text = instance is null
+                ? $"Cleared the default instance for {updated.Name}."
+                : $"{updated.Name} will use {instance.Name} by default.";
+            UpdateCompatibility();
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            ServerStatus.Text = $"Could not save the default instance for {favorite.Name}: {ex.Message}";
+        }
     }
 
     private async void OnClearDefaultInstanceClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
