@@ -3,213 +3,144 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#090c13">
-  <meta name="description" content="UN_Nexo is an independent, cross-platform Minecraft: Java Edition launcher for Windows and Linux.">
-  <meta property="og:title" content="UN_Nexo — Minecraft: Java Edition launcher">
-  <meta property="og:description" content="Modern, lightweight and extensible. Built with C#, .NET 10 and Avalonia 12.">
-  <meta property="og:type" content="website">
-  <title>UN_Nexo — Minecraft: Java Edition launcher</title>
+  <meta name="theme-color" content="#07080c">
+  <meta name="description" content="UN_Nexo — an independent Minecraft: Java Edition launcher for Windows and Linux.">
+  <title>UN_Nexo — Minecraft launcher</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div class="noise" aria-hidden="true"></div>
-
-  <header class="site-header">
-    <a class="brand" href="/" aria-label="UN_Nexo home">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span>UN_Nexo</span>
-    </a>
-    <nav class="nav" aria-label="Primary navigation">
-      <a href="#features">Features</a>
-      <a href="#downloads">Downloads</a>
-      <a href="#status">Status</a>
-      <a href="https://github.com/yannickfan67-ai/UN_Nexo" target="_blank" rel="noreferrer">GitHub</a>
-    </nav>
-    <a class="button button-small button-ghost" href="#downloads">Get Nexo</a>
+  <div class="page-grid" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="nmark"><i></i><i></i><i></i></span><span>UN_Nexo</span></a>
+    <nav><a href="#preview">Preview</a><a href="#features">Features</a><a href="#download">Download</a><a href="https://github.com/yannickfan67-ai/UN_Nexo" target="_blank" rel="noreferrer">GitHub ↗</a></nav>
+    <a class="small-cta" href="#download">Get Nexo</a>
   </header>
 
   <main>
-    <section class="hero shell">
+    <section class="hero wrap">
       <div class="hero-copy">
-        <div class="eyebrow"><span class="dot"></span> Open development · Windows + Linux</div>
-        <h1>Your Minecraft launcher,<br><span>without the clutter.</span></h1>
-        <p class="hero-lead">UN_Nexo is an independent, cross-platform Minecraft: Java Edition launcher built around fast startup, reliable game preparation, repair tools and transparent diagnostics.</p>
+        <p class="kicker"><span></span> WINDOWS + LINUX · ACTIVE DEVELOPMENT</p>
+        <h1>Minecraft,<br><em>under your control.</em></h1>
+        <p class="lead">A desktop-first launcher for people who want clean instances, predictable Java runtimes, repair tools and diagnostics that actually explain what failed.</p>
         <div class="hero-actions">
-          <a class="button button-primary" href="#downloads">Download latest</a>
-          <a class="button button-ghost" href="https://github.com/yannickfan67-ai/UN_Nexo" target="_blank" rel="noreferrer">View source ↗</a>
+          <a class="btn primary" href="#download">Download latest</a>
+          <a class="btn ghost" href="#preview">See the launcher</a>
         </div>
-        <div class="tech-row" aria-label="Technology">
-          <span>C#</span><span>.NET 10</span><span>Avalonia 12</span><span>Mojang metadata</span>
-        </div>
+        <div class="chips"><span>C#</span><span>.NET 10</span><span>Avalonia 12</span><span>Open development</span></div>
       </div>
 
-      <div class="launcher-card" aria-label="Scaled preview of the current UN_Nexo desktop interface">
-        <svg class="launcher-shot" viewBox="0 0 1180 720" role="img" aria-label="UN_Nexo current desktop home screen preview" xmlns="http://www.w3.org/2000/svg">
-          <rect width="1180" height="720" rx="18" fill="#0B0F14"/>
-          <rect x="0" y="0" width="238" height="720" rx="18" fill="#0E141C"/>
-          <rect x="237" y="0" width="1" height="720" fill="#1D2732"/>
-
-          <text x="18" y="42" fill="#F4F7FB" font-size="26" font-weight="600" font-family="Inter,Segoe UI,sans-serif">UN_Nexo</text>
-          <text x="18" y="66" fill="#8E9AAA" font-size="14" font-family="Inter,Segoe UI,sans-serif">Minecraft Launcher</text>
-
-          <g font-family="Inter,Segoe UI,sans-serif" font-size="15" fill="#E8EDF4">
-            <rect x="18" y="108" width="202" height="42" rx="9" fill="#151D2A"/>
-            <text x="32" y="134">Home</text>
-            <text x="32" y="181">Instances</text>
-            <text x="32" y="228">Accounts</text>
-            <text x="32" y="275" opacity=".35">Downloads</text>
-            <text x="32" y="322">Settings</text>
-          </g>
-
-          <rect x="18" y="628" width="202" height="74" rx="10" fill="#111923"/>
-          <text x="32" y="655" fill="#F4F7FB" font-size="14" font-weight="600" font-family="Inter,Segoe UI,sans-serif">v0.7.9-dev</text>
-          <text x="32" y="680" fill="#8E9AAA" font-size="12" font-family="Inter,Segoe UI,sans-serif">Ready.</text>
-
-          <text x="272" y="60" fill="#F4F7FB" font-size="32" font-weight="600" font-family="Inter,Segoe UI,sans-serif">Ready when you are.</text>
-          <text x="272" y="88" fill="#8E9AAA" font-size="15" font-family="Inter,Segoe UI,sans-serif">Pick an instance and account, then let Nexo handle the environment.</text>
-          <rect x="1027" y="34" width="113" height="42" rx="9" fill="#151D2A" stroke="#2A3543"/>
-          <text x="1053" y="60" fill="#F4F7FB" font-size="14" font-family="Inter,Segoe UI,sans-serif">Refresh</text>
-
-          <rect x="272" y="118" width="868" height="126" rx="14" fill="#151D2A" stroke="#202B38"/>
-          <text x="294" y="148" fill="#8E9AAA" font-size="11" font-weight="600" font-family="Inter,Segoe UI,sans-serif">CURRENT INSTANCE</text>
-          <text x="294" y="181" fill="#F4F7FB" font-size="25" font-weight="600" font-family="Inter,Segoe UI,sans-serif">Survival</text>
-          <text x="294" y="208" fill="#8E9AAA" font-size="14" font-family="Inter,Segoe UI,sans-serif">1.21.4</text>
-          <text x="294" y="229" fill="#8E9AAA" font-size="13" font-family="Inter,Segoe UI,sans-serif">Offline profile · Player</text>
-          <rect x="982" y="158" width="134" height="48" rx="9" fill="#6D5DFB"/>
-          <text x="1005" y="188" fill="#FFFFFF" font-size="14" font-weight="600" font-family="Inter,Segoe UI,sans-serif">Play offline</text>
-
-          <rect x="272" y="264" width="868" height="218" rx="14" fill="#121923" stroke="#202B38"/>
-          <text x="294" y="296" fill="#F4F7FB" font-size="15" font-family="Inter,Segoe UI,sans-serif">Ready to launch Minecraft 1.21.4.</text>
-          <text x="294" y="322" fill="#8E9AAA" font-size="12" font-family="Inter,Segoe UI,sans-serif">Offline profiles support local worlds and offline-mode servers. Java is selected automatically for the instance version.</text>
-          <rect x="294" y="344" width="824" height="116" rx="7" fill="#0B0F14" stroke="#202B38"/>
-          <text x="312" y="372" fill="#667488" font-size="12" font-family="ui-monospace,SFMono-Regular,Consolas,monospace">[UN_Nexo] Ready. Launch output will appear here…</text>
-          <text x="312" y="400" fill="#667488" font-size="12" font-family="ui-monospace,SFMono-Regular,Consolas,monospace">Java runtime: automatic · Instance: Survival · Version: 1.21.4</text>
-
-          <rect x="272" y="502" width="520" height="146" rx="14" fill="#121923" stroke="#202B38"/>
-          <text x="294" y="536" fill="#F4F7FB" font-size="18" font-weight="600" font-family="Inter,Segoe UI,sans-serif">Minecraft catalog</text>
-          <text x="294" y="563" fill="#8E9AAA" font-size="13" font-family="Inter,Segoe UI,sans-serif">Version metadata and downloads</text>
-          <text x="294" y="594" fill="#8E9AAA" font-size="11" font-family="Inter,Segoe UI,sans-serif">Catalog ready</text>
-          <text x="682" y="536" fill="#8E9AAA" font-size="11" font-family="Inter,Segoe UI,sans-serif">Latest release</text>
-          <text x="698" y="574" fill="#F4F7FB" font-size="24" font-weight="600" font-family="Inter,Segoe UI,sans-serif">1.21.4</text>
-
-          <rect x="810" y="502" width="330" height="146" rx="14" fill="#121923" stroke="#202B38"/>
-          <text x="832" y="536" fill="#F4F7FB" font-size="18" font-weight="600" font-family="Inter,Segoe UI,sans-serif">Environment</text>
-          <text x="832" y="570" fill="#F4F7FB" font-size="14" font-family="Inter,Segoe UI,sans-serif">Java 21 · x64</text>
-          <text x="832" y="596" fill="#8E9AAA" font-size="12" font-family="Inter,Segoe UI,sans-serif">Runtime selected automatically</text>
-        </svg>
+      <div class="hero-visual">
+        <div class="beam beam-a"></div><div class="beam beam-b"></div><div class="beam beam-c"></div>
+        <div class="shot main-shot"><img src="/preview-home.svg" alt="UN_Nexo Home interface preview"></div>
+        <div class="shot mini-shot one"><img src="/preview-instances.svg" alt="UN_Nexo Instances interface preview"></div>
+        <div class="shot mini-shot two"><img src="/preview-accounts.svg" alt="UN_Nexo Accounts interface preview"></div>
       </div>
     </section>
 
-    <section class="metrics shell" aria-label="Highlights">
-      <div><strong>1.21.4</strong><span>Modern path verified</span></div>
-      <div><strong>1.8.9</strong><span>Legacy path verified</span></div>
-      <div><strong>1.5.2</strong><span>Pre-1.6 assets tested</span></div>
-      <div><strong>Win + Linux</strong><span>Desktop packages</span></div>
+    <section class="proof wrap">
+      <div><b>1.21.4</b><span>modern launch path</span></div>
+      <div><b>1.8.9</b><span>legacy launch path</span></div>
+      <div><b>1.5.2</b><span>pre-1.6 assets tested</span></div>
+      <div><b>EXE · DEB · RPM</b><span>desktop packages</span></div>
     </section>
 
-    <section class="section shell" id="features">
-      <div class="section-heading">
-        <p class="eyebrow">Built for actual use</p>
-        <h2>Small launcher. Serious plumbing.</h2>
-        <p>Nexo keeps the interface lightweight while the core handles version metadata, Java selection, integrity checking and failure diagnosis.</p>
+    <section class="section wrap" id="preview">
+      <div class="section-head">
+        <p class="kicker">THE LAUNCHER</p>
+        <h2>Not a landing-page mockup.<br><em>A real desktop workflow.</em></h2>
+        <p>The previews below mirror the current Avalonia layout so the website shows how Nexo is actually organized.</p>
       </div>
-      <div class="feature-grid">
-        <article class="feature-card featured">
-          <span class="icon">↻</span>
-          <h3>Repair what is broken</h3>
-          <p>Verify client files, libraries, assets and natives against trusted metadata, then reacquire only what is missing or corrupt.</p>
-          <div class="terminal">
-            <span>repair / 1.21.4</span>
-            <b>✓ metadata verified</b>
-            <b>✓ libraries verified</b>
-            <b>✓ assets verified</b>
-          </div>
+
+      <div class="gallery">
+        <article class="gallery-card large">
+          <div class="gallery-bar"><div><span class="live-dot"></span>Home</div><small>Launch & environment overview</small></div>
+          <img src="/preview-home.svg" alt="UN_Nexo Home preview">
         </article>
-        <article class="feature-card">
-          <span class="icon">J</span>
-          <h3>Java that matches</h3>
-          <p>Discover installed runtimes and select the exact major version required by the selected Minecraft version.</p>
+        <article class="gallery-card">
+          <div class="gallery-bar"><div><span class="live-dot"></span>Instances</div><small>Isolated game setups</small></div>
+          <img src="/preview-instances.svg" alt="UN_Nexo Instances preview">
         </article>
-        <article class="feature-card">
-          <span class="icon">◎</span>
-          <h3>Useful diagnostics</h3>
-          <p>Per-instance launch traces, process health, exit codes and sanitized diagnostic ZIP export when a launch goes wrong.</p>
-        </article>
-        <article class="feature-card">
-          <span class="icon">M</span>
-          <h3>Modrinth support</h3>
-          <p>Manage compatible mods with dependency-aware metadata while keeping local JAR workflows available.</p>
-        </article>
-        <article class="feature-card">
-          <span class="icon">⇄</span>
-          <h3>Reliable downloads</h3>
-          <p>Official Mojang downloads or BMCLAPI acceleration with verification and automatic official fallback.</p>
+        <article class="gallery-card">
+          <div class="gallery-bar"><div><span class="live-dot"></span>Accounts</div><small>Offline + Microsoft profiles</small></div>
+          <img src="/preview-accounts.svg" alt="UN_Nexo Accounts preview">
         </article>
       </div>
     </section>
 
-    <section class="section shell" id="downloads">
-      <div class="download-panel">
-        <div class="download-copy">
-          <p class="eyebrow">Latest build</p>
-          <h2>Pick your platform.</h2>
-          <p id="release-summary">Checking the latest UN_Nexo prerelease on GitHub…</p>
-          <div class="release-meta">
-            <span id="release-tag">Loading…</span>
-            <span id="release-date"></span>
-          </div>
+    <section class="feature-stack wrap" id="features">
+      <article class="feature-row">
+        <div class="feature-copy">
+          <span class="feature-no">01</span>
+          <p class="kicker">REPAIR</p>
+          <h3>Fix the instance,<br>not your whole game folder.</h3>
+          <p>Nexo verifies metadata, client files, libraries, natives and assets, then reacquires only missing or corrupt components while leaving worlds and ordinary user content alone.</p>
+          <div class="mono-lines"><span>✓ metadata verified</span><span>✓ libraries verified</span><span>✓ assets verified</span></div>
         </div>
-        <div class="download-list" id="download-list" aria-live="polite">
-          <a class="download-item" href="https://github.com/yannickfan67-ai/UN_Nexo/releases" target="_blank" rel="noreferrer">
-            <div><strong>All releases</strong><span>Open GitHub Releases</span></div><b>↗</b>
-          </a>
+        <div class="feature-art repair-art">
+          <div class="scan-card"><small>INSTANCE CHECK</small><strong>Survival · 1.21.4</strong><div class="scan"><i></i></div><ul><li>Client JAR <b>verified</b></li><li>Libraries <b>verified</b></li><li>Assets <b>verified</b></li><li>Java 21 <b>ready</b></li></ul></div>
         </div>
-      </div>
-      <p class="fine-print">Releases are currently prerelease builds. Back up important worlds before testing development software.</p>
+      </article>
+
+      <article class="feature-row reverse">
+        <div class="feature-copy">
+          <span class="feature-no">02</span>
+          <p class="kicker">RUNTIME</p>
+          <h3>Old Minecraft.<br>New Minecraft. Right Java.</h3>
+          <p>Nexo discovers local Java installations, matches the required major version and can acquire a verified Temurin runtime when the machine does not have what the selected version needs.</p>
+          <div class="runtime-pills"><span>Java 8</span><span>Java 17</span><span class="active">Java 21</span><span>Auto</span></div>
+        </div>
+        <div class="feature-art runtime-art">
+          <div class="runtime-ring"><div><small>SELECTED</small><strong>Java 21</strong><span>x64 · Temurin</span></div></div>
+        </div>
+      </article>
+
+      <article class="feature-row">
+        <div class="feature-copy">
+          <span class="feature-no">03</span>
+          <p class="kicker">DIAGNOSTICS</p>
+          <h3>When launch fails,<br>you get evidence.</h3>
+          <p>Per-instance traces, process status, exit codes and sanitized diagnostic exports make failures inspectable instead of reducing everything to “something went wrong”.</p>
+          <a class="text-link" href="https://github.com/yannickfan67-ai/UN_Nexo#launch-debug-tracing" target="_blank" rel="noreferrer">Read about launch tracing →</a>
+        </div>
+        <div class="feature-art diag-art">
+          <div class="terminal-window"><div class="term-top">launch-trace-2026.log</div><code><span>[phase]</span> preparing instance<br><span>[java]</span> 21.0.x / x64<br><span>[proc]</span> minecraft started pid=8421<br><span>[watch]</span> heartbeat ok · 10s<br><span>[exit]</span> code 0</code></div>
+        </div>
+      </article>
     </section>
 
-    <section class="section shell" id="status">
-      <div class="status-layout">
-        <div class="section-heading">
-          <p class="eyebrow">Development status</p>
-          <h2>Open about what works — and what does not yet.</h2>
-          <p>UN_Nexo is actively developed. The project publishes implementation details, current limitations and diagnostics instead of hiding unfinished areas.</p>
-        </div>
-        <div class="status-card">
-          <div class="status-line"><span class="status-dot good"></span><div><strong>Vanilla preparation + repair</strong><small>Modern and legacy paths implemented</small></div></div>
-          <div class="status-line"><span class="status-dot good"></span><div><strong>Windows + Linux packages</strong><small>EXE, DEB and RPM prereleases</small></div></div>
-          <div class="status-line"><span class="status-dot progress"></span><div><strong>Microsoft account acceptance</strong><small>Flow implemented; live Minecraft Services authorization remains subject to Microsoft/Minecraft approval and testing</small></div></div>
-          <div class="status-line"><span class="status-dot progress"></span><div><strong>Forge / NeoForge</strong><small>Planned after the current Fabric path</small></div></div>
-          <a class="text-link" href="https://github.com/yannickfan67-ai/UN_Nexo#current-limitations" target="_blank" rel="noreferrer">Read current limitations →</a>
-        </div>
+    <section class="why wrap">
+      <div class="why-title"><p class="kicker">WHY NEXO</p><h2>A launcher that behaves<br>more like a tool than a toy.</h2></div>
+      <div class="why-grid">
+        <div><b>Separated core</b><span>Launcher logic stays independent from the desktop UI.</span></div>
+        <div><b>Transparent state</b><span>Starting, running, failed and repaired are visible states.</span></div>
+        <div><b>Legacy-aware</b><span>Modern metadata and older Minecraft paths are both first-class concerns.</span></div>
+        <div><b>Open development</b><span>Source, issues, release notes and limitations are public.</span></div>
       </div>
     </section>
 
-    <section class="cta shell">
-      <div>
-        <p class="eyebrow">Built in public</p>
-        <h2>See the code. Report the weird stuff.</h2>
-        <p>UN_Nexo is developed on GitHub. Follow releases, inspect the implementation or open an issue when something fails.</p>
+    <section class="download-section wrap" id="download">
+      <div class="download-intro">
+        <p class="kicker">DOWNLOAD</p>
+        <h2>Pick the package.<br>Keep the control.</h2>
+        <p id="release-summary">Checking the latest UN_Nexo prerelease on GitHub…</p>
+        <div class="release-meta"><span id="release-tag">Loading…</span><span id="release-date"></span></div>
       </div>
-      <div class="cta-actions">
-        <a class="button button-primary" href="https://github.com/yannickfan67-ai/UN_Nexo/issues" target="_blank" rel="noreferrer">Open an issue</a>
-        <a class="button button-ghost" href="https://github.com/yannickfan67-ai/UN_Nexo" target="_blank" rel="noreferrer">Repository ↗</a>
+      <div class="download-list" id="download-list">
+        <a class="download-item" href="https://github.com/yannickfan67-ai/UN_Nexo/releases" target="_blank" rel="noreferrer"><div><strong>All releases</strong><span>Open GitHub Releases</span></div><b>↗</b></a>
       </div>
+    </section>
+
+    <section class="closing wrap">
+      <div><p class="kicker">BUILT IN PUBLIC</p><h2>Break it. Trace it.<br>Report it.</h2></div>
+      <div><p>UN_Nexo is still in prerelease development. If something behaves strangely, the issue tracker is part of the product workflow.</p><a class="btn primary" href="https://github.com/yannickfan67-ai/UN_Nexo/issues" target="_blank" rel="noreferrer">Open an issue</a></div>
     </section>
   </main>
 
-  <footer class="site-footer shell">
-    <div class="footer-brand">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <div><strong>UN_Nexo</strong><small>Independent Minecraft: Java Edition launcher</small></div>
-    </div>
-    <div class="footer-links">
-      <a href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/README.md">README</a>
-      <a href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/PRIVACY.md">Privacy</a>
-      <a href="https://github.com/yannickfan67-ai/UN_Nexo/releases">Releases</a>
-    </div>
-    <p class="legal">UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft. <span id="year"></span></p>
+  <footer class="footer wrap">
+    <div class="brand"><span class="nmark"><i></i><i></i><i></i></span><span>UN_Nexo</span></div>
+    <div class="footer-links"><a href="https://github.com/yannickfan67-ai/UN_Nexo">GitHub</a><a href="https://github.com/yannickfan67-ai/UN_Nexo/releases">Releases</a><a href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/PRIVACY.md">Privacy</a></div>
+    <p>Independent Minecraft: Java Edition launcher. Not approved by or associated with Mojang or Microsoft. <span id="year"></span></p>
   </footer>
 </body>
 </html>
