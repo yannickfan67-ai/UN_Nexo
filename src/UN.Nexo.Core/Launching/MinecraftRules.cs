@@ -12,15 +12,46 @@ public static class MinecraftRules
     public static string OsName => OperatingSystem.IsWindows() ? "windows"
         : OperatingSystem.IsMacOS() ? "osx" : "linux";
 
-    public static string ArchitectureName => RuntimeInformation.OSArchitecture switch
-    {
-        Architecture.X64 => "x86_64",
-        Architecture.X86 => "x86",
-        Architecture.Arm64 => "aarch64",
-        _ => "arm"
-    };
+    public static string ArchitectureName
+        => ArchitectureNameFor(RuntimeInformation.OSArchitecture);
 
-    public static bool Allows(JsonElement element)
+    internal static string ArchitectureNameFor(Architecture architecture)
+        => architecture switch
+        {
+            Architecture.X64 => "x86_64",
+            Architecture.X86 => "x86",
+            Architecture.Arm64 => "aarch64",
+            Architecture.Arm => "arm",
+            _ => architecture.ToString().ToLowerInvariant()
+        };
+
+    public static bool Allows(
+        JsonElement element,
+        IReadOnlyDictionary<string, bool>? featureContext = null)
+        => Allows(
+            element,
+            OsName,
+            ArchitectureName,
+            Environment.OSVersion.Version.ToString(),
+            featureContext);
+
+    internal static bool Allows(
+        JsonElement element,
+        Architecture architecture,
+        IReadOnlyDictionary<string, bool>? featureContext = null)
+        => Allows(
+            element,
+            OsName,
+            ArchitectureNameFor(architecture),
+            Environment.OSVersion.Version.ToString(),
+            featureContext);
+
+    internal static bool Allows(
+        JsonElement element,
+        string osName,
+        string architectureName,
+        string osVersion,
+        IReadOnlyDictionary<string, bool>? featureContext = null)
     {
         RequireObject(element, "rule-bearing metadata");
         if (!element.TryGetProperty("rules", out var rules))
@@ -41,10 +72,10 @@ public static class MinecraftRules
             {
                 RequireObject(os, "rules[].os");
                 if (TryGetOptionalString(os, "name", out var name)
-                    && !string.Equals(name, OsName, StringComparison.OrdinalIgnoreCase))
+                    && !string.Equals(name, osName, StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (TryGetOptionalString(os, "arch", out var arch)
-                    && !string.Equals(arch, ArchitectureName, StringComparison.OrdinalIgnoreCase))
+                    && !string.Equals(arch, architectureName, StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (TryGetOptionalString(os, "version", out var version))
                 {
@@ -52,8 +83,11 @@ public static class MinecraftRules
                         continue;
                     try
                     {
-                        if (!Regex.IsMatch(Environment.OSVersion.Version.ToString(), version,
-                                RegexOptions.CultureInvariant, OsVersionRegexTimeout))
+                        if (!Regex.IsMatch(
+                                osVersion,
+                                version,
+                                RegexOptions.CultureInvariant,
+                                OsVersionRegexTimeout))
                             continue;
                     }
                     catch (ArgumentException ex)
@@ -67,15 +101,27 @@ public static class MinecraftRules
                 }
             }
 
-            if (rule.TryGetProperty("features", out var features))
+            if (rule.TryGetProperty("features", out var requestedFeatures))
             {
-                RequireObject(features, "rules[].features");
-                foreach (var feature in features.EnumerateObject())
+                RequireObject(requestedFeatures, "rules[].features");
+                var featureMismatch = false;
+                foreach (var feature in requestedFeatures.EnumerateObject())
                 {
                     if (feature.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                         throw Invalid($"rules[].features.{feature.Name}", "a boolean");
+
+                    var expected = feature.Value.ValueKind == JsonValueKind.True;
+                    var actual = featureContext is not null
+                        && featureContext.TryGetValue(feature.Name, out var enabled)
+                        && enabled;
+                    if (actual != expected)
+                    {
+                        featureMismatch = true;
+                        break;
+                    }
                 }
-                if (features.EnumerateObject().Any(item => item.Value.ValueKind != JsonValueKind.False))
+
+                if (featureMismatch)
                     continue;
             }
 
