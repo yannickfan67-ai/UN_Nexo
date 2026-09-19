@@ -44,6 +44,7 @@ public sealed class DiagnosticBundleService
 
             try
             {
+                EnsureRegularSourceLog(path);
                 var tail = await _diagnosis.ReadLogTailAsync(path, PreviewTailBytes, cancellationToken);
                 var sanitized = _diagnosis.Sanitize(tail, secretValues);
                 preview.AppendLine($"--- {Path.GetFileName(path)} ---");
@@ -93,11 +94,8 @@ public sealed class DiagnosticBundleService
             ?? throw new InvalidOperationException("The diagnostic archive path has no parent directory.");
         Directory.CreateDirectory(directory);
 
-        using var publishLease = await PathKeyedLock.AcquireAsync(
-            fullArchivePath,
-            cancellationToken);
-        var temporaryPath =
-            fullArchivePath + "." + Guid.NewGuid().ToString("N") + ".partial";
+        using var publishLease = await PathKeyedLock.AcquireAsync(fullArchivePath, cancellationToken);
+        var temporaryPath = fullArchivePath + "." + Guid.NewGuid().ToString("N") + ".partial";
         try
         {
             await using (var stream = new FileStream(
@@ -108,17 +106,12 @@ public sealed class DiagnosticBundleService
                              64 * 1024,
                              FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
-                using (var archive = new ZipArchive(
-                           stream,
-                           ZipArchiveMode.Create,
-                           leaveOpen: true))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
                 {
                     await WriteTextEntryAsync(
                         archive,
                         "diagnosis.txt",
-                        _diagnosis.Sanitize(
-                            _diagnosis.BuildSummary(sanitizedDiagnosis),
-                            secretValues),
+                        _diagnosis.Sanitize(_diagnosis.BuildSummary(sanitizedDiagnosis), secretValues),
                         cancellationToken);
 
                     var manifest = new StringBuilder()
@@ -136,11 +129,7 @@ public sealed class DiagnosticBundleService
                     manifest.AppendLine()
                         .AppendLine("Access tokens, explicit secrets, and the current user home path are redacted before files are written to this archive.");
 
-                    await WriteTextEntryAsync(
-                        archive,
-                        "manifest.txt",
-                        manifest.ToString(),
-                        cancellationToken);
+                    await WriteTextEntryAsync(archive, "manifest.txt", manifest.ToString(), cancellationToken);
 
                     for (var index = 0; index < logs.Count; index++)
                     {
@@ -149,10 +138,10 @@ public sealed class DiagnosticBundleService
                         string text;
                         try
                         {
-                            text = await _diagnosis.ReadLogTailAsync(
-                                path,
-                                ExportTailBytes,
-                                cancellationToken);
+                            // Revalidate immediately before every read. This prevents a regular
+                            // file selected during preview from being replaced by a symlink before export.
+                            EnsureRegularSourceLog(path);
+                            text = await _diagnosis.ReadLogTailAsync(path, ExportTailBytes, cancellationToken);
                         }
                         catch (IOException ex)
                         {
@@ -164,13 +153,8 @@ public sealed class DiagnosticBundleService
                         }
 
                         text = _diagnosis.Sanitize(text, secretValues);
-                        var entryName =
-                            $"logs/{index + 1:D2}-{SafeEntryName(Path.GetFileName(path))}";
-                        await WriteTextEntryAsync(
-                            archive,
-                            entryName,
-                            text,
-                            cancellationToken);
+                        var entryName = $"logs/{index + 1:D2}-{SafeEntryName(Path.GetFileName(path))}";
+                        await WriteTextEntryAsync(archive, entryName, text, cancellationToken);
                     }
                 }
 
@@ -179,10 +163,7 @@ public sealed class DiagnosticBundleService
 
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporaryPath, fullArchivePath, overwrite: true);
-            return new DiagnosticExportResult(
-                fullArchivePath,
-                logs.Count,
-                createdAt);
+            return new DiagnosticExportResult(fullArchivePath, logs.Count, createdAt);
         }
         finally
         {
@@ -224,15 +205,32 @@ public sealed class DiagnosticBundleService
                 var full = Path.GetFullPath(candidate);
                 if (!File.Exists(full) || !seen.Add(full))
                     continue;
+                EnsureRegularSourceLog(full);
                 result.Add(full);
             }
             catch
             {
-                // Ignore invalid or inaccessible path syntax; callers still get a useful package.
+                // Ignore invalid, inaccessible, or linked source paths; callers still get a useful package.
             }
         }
 
         return result;
+    }
+
+    private static void EnsureRegularSourceLog(string path)
+    {
+        FileAttributes attributes;
+        try
+        {
+            attributes = File.GetAttributes(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException("The diagnostic source log is no longer readable.", ex);
+        }
+
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Linked diagnostic source logs are not allowed.");
     }
 
     private static string?[] NormalizeSecrets(IEnumerable<string?>? secrets)
