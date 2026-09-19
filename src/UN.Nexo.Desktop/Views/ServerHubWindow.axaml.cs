@@ -232,18 +232,28 @@ public sealed partial class ServerHubWindow : Window
             return;
         }
 
-        if (DefaultInstanceBox.SelectedItem is GameInstance requestedInstance)
-            _viewModel.SelectedInstance = requestedInstance;
-        else if (ServerList.SelectedItem is ServerFavorite { DefaultInstanceId: { Length: > 0 } instanceId })
+        var favorite = ServerList.SelectedItem as ServerFavorite;
+        var fallbackInstance = favorite is { DefaultInstanceId: { Length: > 0 } }
+            ? null
+            : DefaultInstanceBox.SelectedItem as GameInstance
+              ?? _viewModel.SelectedInstance;
+        var instanceResolution = ServerFavoriteInstanceResolver.Resolve(
+            favorite,
+            _viewModel.Instances,
+            fallbackInstance);
+        if (instanceResolution.HasStaleDefault)
         {
-            var linkedInstance = _viewModel.Instances.FirstOrDefault(instance => instance.Id == instanceId);
-            if (linkedInstance is null)
-            {
-                ServerStatus.Text = "This server points to an instance that no longer exists. Choose another instance and save the link.";
-                return;
-            }
-            _viewModel.SelectedInstance = linkedInstance;
-            DefaultInstanceBox.SelectedItem = linkedInstance;
+            DefaultInstanceBox.SelectedItem = null;
+            ServerStatus.Text =
+                "This server points to an instance that no longer exists. Choose another instance and save the replacement link, or clear the saved default before launching.";
+            UpdateSelectionSummary();
+            return;
+        }
+
+        if (instanceResolution.Instance is { } requestedInstance)
+        {
+            _viewModel.SelectedInstance = requestedInstance;
+            DefaultInstanceBox.SelectedItem = requestedInstance;
         }
 
         if (_lastStatus is { IsOnline: true }
@@ -282,8 +292,19 @@ public sealed partial class ServerHubWindow : Window
 
         ServerNameBox.Text = favorite.Name;
         ServerAddressBox.Text = favorite.Address;
-        DefaultInstanceBox.SelectedItem = _viewModel?.Instances.FirstOrDefault(instance => instance.Id == favorite.DefaultInstanceId)
-            ?? _viewModel?.SelectedInstance;
+        if (_viewModel is not null)
+        {
+            var resolution = ServerFavoriteInstanceResolver.Resolve(
+                favorite,
+                _viewModel.Instances,
+                _viewModel.SelectedInstance);
+            DefaultInstanceBox.SelectedItem = resolution.Instance;
+            if (resolution.HasStaleDefault)
+            {
+                ServerStatus.Text =
+                    "Saved default instance is missing. Choose a replacement and save the link, or clear the saved default.";
+            }
+        }
         _ = RefreshStatusAsync(favorite.Address);
     }
 
@@ -320,8 +341,34 @@ public sealed partial class ServerHubWindow : Window
             return;
         }
 
-        var instance = DefaultInstanceBox.SelectedItem as GameInstance ?? _viewModel?.SelectedInstance;
-        CompatibilityText.Text = MinecraftProtocolCompatibility.Compare(instance, _lastStatus).Message;
+        GameInstance? instance;
+        if (_viewModel is null)
+        {
+            instance = DefaultInstanceBox.SelectedItem as GameInstance;
+        }
+        else
+        {
+            var favorite = ServerList.SelectedItem as ServerFavorite;
+            var fallback = favorite is { DefaultInstanceId: { Length: > 0 } }
+                ? null
+                : DefaultInstanceBox.SelectedItem as GameInstance
+                  ?? _viewModel.SelectedInstance;
+            var resolution = ServerFavoriteInstanceResolver.Resolve(
+                favorite,
+                _viewModel.Instances,
+                fallback);
+            if (resolution.HasStaleDefault)
+            {
+                CompatibilityText.Text =
+                    "Saved default instance is missing. Save or clear the link before comparing/launching.";
+                return;
+            }
+
+            instance = resolution.Instance;
+        }
+
+        CompatibilityText.Text =
+            MinecraftProtocolCompatibility.Compare(instance, _lastStatus).Message;
     }
 
     private void ClearStatusCard(string message)
@@ -340,8 +387,18 @@ public sealed partial class ServerHubWindow : Window
         if (_viewModel is null)
             return;
 
-        var selected = DefaultInstanceBox.SelectedItem as GameInstance ?? _viewModel.SelectedInstance;
-        var instance = selected?.Name ?? "No instance";
+        var favorite = ServerList.SelectedItem as ServerFavorite;
+        var fallback = favorite is { DefaultInstanceId: { Length: > 0 } }
+            ? null
+            : DefaultInstanceBox.SelectedItem as GameInstance
+              ?? _viewModel.SelectedInstance;
+        var resolution = ServerFavoriteInstanceResolver.Resolve(
+            favorite,
+            _viewModel.Instances,
+            fallback);
+        var instance = resolution.HasStaleDefault
+            ? "Missing saved instance"
+            : resolution.Instance?.Name ?? "No instance";
         var account = _viewModel.SelectedAccount?.DisplayName ?? "No profile";
         SelectionSummary.Text = $"{instance} · {account}";
     }

@@ -39,6 +39,7 @@ internal static class Program
             ("Version metadata resolver typing", VersionMetadataResolverRegression.RunAsync),
             ("Rule features and ARM64 compatibility", RuleArchitectureRegression.RunAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
+            ("Server favorite instance resolution", ServerFavoriteInstanceRegression.RunAsync),
             ("Server decorator inherited metadata", TestServerDecoratorInheritedMetadataAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
             ("Version catalog schema and stall fallback", VersionCatalogRegression.RunAsync),
