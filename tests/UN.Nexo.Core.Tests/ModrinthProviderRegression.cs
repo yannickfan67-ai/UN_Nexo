@@ -37,6 +37,27 @@ internal static class ModrinthProviderRegression
                          ?? throw new Exception("Expected a compatible Modrinth version.");
             Assert(latest.VersionId == "NEWVER01", "Latest compatible Modrinth version was not selected.");
             Assert(latest.SelectPrimaryFile().FileName == "sodium.jar", "Primary Modrinth file was not selected.");
+            Assert(
+                latest.Dependencies.Count == 1
+                && latest.Dependencies[0].ProjectId == "DEP00001"
+                && latest.Dependencies[0].Type == ModProviderDependencyType.Required,
+                "Required Modrinth dependency metadata was not parsed.");
+
+            var dependencyProject = await provider.GetProjectAsync("DEP00001")
+                ?? throw new Exception("Expected Modrinth dependency project metadata.");
+            Assert(
+                dependencyProject.Title == "Fabric API",
+                "Modrinth dependency project lookup returned the wrong project.");
+
+            var dependencyVersion = await provider.GetCompatibleVersionAsync(
+                null,
+                "DEPVER01",
+                "1.21.4",
+                "fabric")
+                ?? throw new Exception("Expected a compatible version-only Modrinth dependency.");
+            Assert(
+                dependencyVersion.ProjectId == "DEP00001",
+                "Version-only dependency lookup must resolve its owning project.");
 
             var paths = new NexoPathService(root);
             var mods = new InstanceModService(paths);
@@ -522,6 +543,75 @@ internal static class ModrinthProviderRegression
                         }));
             }
 
+            if (uri.AbsolutePath.Equals("/v2/project/DEP00001", StringComparison.Ordinal))
+            {
+                return Json(
+                    """
+                    {
+                      "id": "DEP00001",
+                      "slug": "fabric-api",
+                      "title": "Fabric API",
+                      "description": "Core hooks for Fabric mods",
+                      "downloads": 987654,
+                      "icon_url": "https://cdn.modrinth.com/data/DEP00001/icon.png"
+                    }
+                    """);
+            }
+
+            if (uri.AbsolutePath.Contains("/v2/project/DEP00001/version", StringComparison.Ordinal))
+            {
+                return Json(
+                    $$"""
+                    [
+                      {
+                        "id": "DEPVER01",
+                        "project_id": "DEP00001",
+                        "name": "Fabric API compatible",
+                        "version_number": "1.0.0",
+                        "date_published": "2026-09-18T01:00:00Z",
+                        "game_versions": ["1.21.4"],
+                        "loaders": ["fabric"],
+                        "dependencies": [],
+                        "files": [
+                          {
+                            "filename": "fabric-api.jar",
+                            "url": "https://cdn.modrinth.com/data/DEP00001/versions/DEPVER01/fabric-api.jar",
+                            "size": {{downloadBytes.Length}},
+                            "primary": true,
+                            "hashes": {"sha1": "{{_sha1}}"}
+                          }
+                        ]
+                      }
+                    ]
+                    """);
+            }
+
+            if (uri.AbsolutePath.Equals("/v2/version/DEPVER01", StringComparison.Ordinal))
+            {
+                return Json(
+                    $$"""
+                    {
+                      "id": "DEPVER01",
+                      "project_id": "DEP00001",
+                      "name": "Fabric API compatible",
+                      "version_number": "1.0.0",
+                      "date_published": "2026-09-18T01:00:00Z",
+                      "game_versions": ["1.21.4"],
+                      "loaders": ["fabric"],
+                      "dependencies": [],
+                      "files": [
+                        {
+                          "filename": "fabric-api.jar",
+                          "url": "https://cdn.modrinth.com/data/DEP00001/versions/DEPVER01/fabric-api.jar",
+                          "size": {{downloadBytes.Length}},
+                          "primary": true,
+                          "hashes": {"sha1": "{{_sha1}}"}
+                        }
+                      ]
+                    }
+                    """);
+            }
+
             if (uri.AbsolutePath.Contains("/v2/project/AABBCCDD/version", StringComparison.Ordinal))
             {
                 if (UnsafeOnlyVersion)
@@ -575,6 +665,15 @@ internal static class ModrinthProviderRegression
                         "name": "Current",
                         "version_number": "0.6.0",
                         "date_published": "2026-09-18T00:00:00Z",
+                        "game_versions": ["1.21.4"],
+                        "loaders": ["fabric"],
+                        "dependencies": [
+                          {
+                            "project_id": "DEP00001",
+                            "version_id": null,
+                            "dependency_type": "required"
+                          }
+                        ],
                         "files": [
                           {
                             "filename": "sodium-sources.jar",
