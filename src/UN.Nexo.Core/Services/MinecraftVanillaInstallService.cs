@@ -793,7 +793,10 @@ public sealed class MinecraftVanillaInstallService
         int index)
     {
         var relativePath =
-            MavenArtifactPath.FromCoordinate(coordinate);
+            MavenArtifactPath.FromCoordinate(coordinate)
+                .Replace(
+                    Path.DirectorySeparatorChar,
+                    '/');
         var localPath = MetadataPath.ResolveRelativePath(
             librariesRoot,
             relativePath,
