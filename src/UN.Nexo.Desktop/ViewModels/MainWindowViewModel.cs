@@ -67,7 +67,7 @@ public partial class MainWindowViewModel : ObservableObject
 
     public bool CanPlay => !IsBusy && !IsInstallBusy && !IsAccountAuthBusy && !IsGameRunning
         && SelectedInstance is not null
-        && SelectedAccount is not null;
+        && SelectedAccount is { IsMicrosoft: true };
 
     private void UpdatePlayAvailability()
     {
