@@ -48,6 +48,9 @@ internal static class NetworkTargetRegression
         await TestPrivateRedirectRejectedBeforeFollowAsync();
         await TestPrivateArtifactRejectedBeforeRequestAsync();
         await TestTrustedRedirectStillWorksAsync();
+        await TestTransientResponsesRetryAsync();
+        await TestNonTransientResponseDoesNotRetryAsync();
+        await TestCancellationInterruptsRetryBackoffAsync();
     }
 
     private static async Task TestPrivateRedirectRejectedBeforeFollowAsync()
@@ -160,6 +163,83 @@ internal static class NetworkTargetRegression
         }
     }
 
+    private static async Task TestTransientResponsesRetryAsync()
+    {
+        var handler =
+            new RetryHandler(
+                RetryScenario.TransientThenSuccess);
+        using var client =
+            new HttpClient(handler);
+
+        using var response =
+            await TrustedHttpDownload.SendGetAsync(
+                client,
+                "https://piston-meta.mojang.com/retry-test",
+                "Retry regression",
+                CancellationToken.None);
+
+        Assert(
+            response.StatusCode == HttpStatusCode.OK,
+            "Transient trusted GET failures should retry to the healthy response.");
+        Assert(
+            handler.Requests == 3,
+            "408/429/5xx retry handling should remain bounded and stop after success.");
+    }
+
+    private static async Task TestNonTransientResponseDoesNotRetryAsync()
+    {
+        var handler =
+            new RetryHandler(
+                RetryScenario.NonTransient);
+        using var client =
+            new HttpClient(handler);
+
+        using var response =
+            await TrustedHttpDownload.SendGetAsync(
+                client,
+                "https://piston-meta.mojang.com/not-found",
+                "Non-transient retry regression",
+                CancellationToken.None);
+
+        Assert(
+            response.StatusCode == HttpStatusCode.NotFound,
+            "Non-transient HTTP status should be returned to the caller.");
+        Assert(
+            handler.Requests == 1,
+            "Non-transient HTTP status must not be retried.");
+    }
+
+    private static async Task TestCancellationInterruptsRetryBackoffAsync()
+    {
+        var handler =
+            new RetryHandler(
+                RetryScenario.LongRetryAfter);
+        using var client =
+            new HttpClient(handler);
+        using var cancellation =
+            new CancellationTokenSource(
+                TimeSpan.FromMilliseconds(100));
+
+        try
+        {
+            using var response =
+                await TrustedHttpDownload.SendGetAsync(
+                    client,
+                    "https://piston-meta.mojang.com/cancel-retry",
+                    "Retry cancellation regression",
+                    cancellation.Token);
+            throw new Exception(
+                "Cancellation during Retry-After backoff unexpectedly completed.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        Assert(
+            handler.Requests == 1,
+            "Cancellation should stop retry backoff before another network request.");
+    }
+
     private static MinecraftVersionInfo Version(string id, string url)
         => new(
             id,
@@ -203,6 +283,77 @@ internal static class NetworkTargetRegression
         PrivateRedirect,
         PrivateArtifact,
         TrustedRedirect
+    }
+
+    private enum RetryScenario
+    {
+        TransientThenSuccess,
+        NonTransient,
+        LongRetryAfter
+    }
+
+    private sealed class RetryHandler(
+        RetryScenario scenario) : HttpMessageHandler
+    {
+        public int Requests { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Requests++;
+
+            if (scenario == RetryScenario.NonTransient)
+            {
+                return Task.FromResult(
+                    new HttpResponseMessage(
+                        HttpStatusCode.NotFound));
+            }
+
+            if (scenario == RetryScenario.LongRetryAfter)
+            {
+                var unavailable =
+                    new HttpResponseMessage(
+                        HttpStatusCode.ServiceUnavailable);
+                unavailable.Headers.TryAddWithoutValidation(
+                    "Retry-After",
+                    "5");
+                return Task.FromResult(unavailable);
+            }
+
+            if (Requests == 1)
+            {
+                var unavailable =
+                    new HttpResponseMessage(
+                        HttpStatusCode.ServiceUnavailable);
+                unavailable.Headers.TryAddWithoutValidation(
+                    "Retry-After",
+                    "0");
+                return Task.FromResult(unavailable);
+            }
+
+            if (Requests == 2)
+            {
+                var throttled =
+                    new HttpResponseMessage(
+                        HttpStatusCode.TooManyRequests);
+                throttled.Headers.TryAddWithoutValidation(
+                    "Retry-After",
+                    "0");
+                return Task.FromResult(throttled);
+            }
+
+            return Task.FromResult(
+                new HttpResponseMessage(
+                    HttpStatusCode.OK)
+                {
+                    Content =
+                        new StringContent(
+                            "healthy",
+                            Encoding.UTF8,
+                            "text/plain")
+                });
+        }
     }
 
     private sealed class TargetPolicyHandler(TargetScenario scenario) : HttpMessageHandler
