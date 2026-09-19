@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -150,7 +151,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                     var artifactPath = artifact.GetProperty("path").GetString()
                         ?? throw new InvalidDataException("A library artifact has no path.");
                     var file = Within(librariesRoot, artifactPath);
-                    RequireFile(file, artifact);
+                    await RequireFileAsync(file, artifact, cancellationToken);
                     classpath.Add(file);
                     artifactAdded = true;
                 }
@@ -175,7 +176,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
                 var nativePath = nativeArtifact.GetProperty("path").GetString()
                     ?? throw new InvalidDataException("A native library has no path.");
-                RequireFile(Within(librariesRoot, nativePath), nativeArtifact);
+                await RequireFileAsync(
+                    Within(librariesRoot, nativePath),
+                    nativeArtifact,
+                    cancellationToken);
             }
         }
 
@@ -186,7 +190,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         if (!root.TryGetProperty("downloads", out var rootDownloads)
             || !rootDownloads.TryGetProperty("client", out var clientMetadata))
             throw new InvalidDataException("Resolved version metadata has no Minecraft client download.");
-        RequireFile(clientPath, clientMetadata);
+        await RequireFileAsync(
+            clientPath,
+            clientMetadata,
+            cancellationToken);
         classpath.Add(clientPath);
 
         var assetsRoot = Within(gameRoot, "assets");
@@ -200,7 +207,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             assetId,
             ".json",
             "assetIndex.id");
-        RequireFile(indexPath, assetIndex);
+        await RequireFileAsync(
+            indexPath,
+            assetIndex,
+            cancellationToken);
         using var indexDocument = await ReadJsonAsync(indexPath, cancellationToken);
         var index = indexDocument.RootElement;
         ValidateAssetIndexForLaunch(index);
@@ -237,11 +247,21 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
                 var objectPath = Within(
                     Path.Combine(assetsRoot, "objects"),
                     Path.Combine(hash[..2], hash));
-                RequireFile(objectPath, property.Value);
+                await RequireAssetObjectAsync(
+                    objectPath,
+                    property.Value,
+                    hash,
+                    cancellationToken);
                 if (virtualAssets)
-                    CopyAsset(objectPath, Within(virtualRoot, property.Name));
+                    await CopyAssetAsync(
+                        objectPath,
+                        Within(virtualRoot, property.Name),
+                        cancellationToken);
                 if (mapToResources)
-                    CopyAsset(objectPath, Within(resourceRoot, property.Name));
+                    await CopyAssetAsync(
+                        objectPath,
+                        Within(resourceRoot, property.Name),
+                        cancellationToken);
             }
         }
 
@@ -533,27 +553,123 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
     private static InvalidDataException InvalidMetadata(string propertyName, string expected)
         => new($"Minecraft metadata property '{propertyName}' must be {expected}.");
 
-    private static void RequireFile(string file, JsonElement? metadata = null)
+    private static void RequireFile(string file)
     {
+        var info = new FileInfo(file);
+        if (!info.Exists || info.Length == 0)
+            throw MissingOrCorrupt(file);
+    }
+
+    private static async Task RequireFileAsync(
+        string file,
+        JsonElement metadata,
+        CancellationToken cancellationToken)
+    {
+        if (metadata.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("file metadata", "an object");
+
         long? expectedSize = null;
-        if (metadata.HasValue)
+        if (metadata.TryGetProperty("size", out var size))
         {
-            if (metadata.Value.ValueKind != JsonValueKind.Object)
-                throw InvalidMetadata("file metadata", "an object");
-            if (metadata.Value.TryGetProperty("size", out var size))
-            {
-                if (size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var parsedSize) || parsedSize < 0)
-                    throw InvalidMetadata("size", "a non-negative integer");
-                expectedSize = parsedSize;
-            }
+            if (size.ValueKind != JsonValueKind.Number
+                || !size.TryGetInt64(out var parsedSize)
+                || parsedSize < 0)
+                throw InvalidMetadata("size", "a non-negative integer");
+            expectedSize = parsedSize;
+        }
+
+        string? expectedSha1 = null;
+        if (metadata.TryGetProperty("sha1", out var sha1))
+        {
+            if (sha1.ValueKind != JsonValueKind.String)
+                throw InvalidMetadata("sha1", "a string");
+            expectedSha1 = sha1.GetString();
+            if (string.IsNullOrWhiteSpace(expectedSha1)
+                || !Regex.IsMatch(
+                    expectedSha1,
+                    "^[a-fA-F0-9]{40}$"))
+                throw InvalidMetadata(
+                    "sha1",
+                    "a 40-character hexadecimal SHA-1");
         }
 
         var info = new FileInfo(file);
-        if (!info.Exists || info.Length == 0
-            || (expectedSize.HasValue && info.Length != expectedSize.Value))
-            throw new FileNotFoundException(
-                $"Missing or incomplete file: {file}. Run Prepare instance files again.",
-                file);
+        if (!info.Exists
+            || info.Length == 0
+            || (expectedSize.HasValue
+                && info.Length != expectedSize.Value))
+            throw MissingOrCorrupt(file);
+
+        if (expectedSha1 is not null)
+        {
+            var actual = await ComputeSha1Async(
+                file,
+                cancellationToken);
+            if (!actual.Equals(
+                    expectedSha1,
+                    StringComparison.OrdinalIgnoreCase))
+                throw MissingOrCorrupt(file);
+        }
+    }
+
+    private static async Task RequireAssetObjectAsync(
+        string file,
+        JsonElement metadata,
+        string expectedSha1,
+        CancellationToken cancellationToken)
+    {
+        long? expectedSize = null;
+        if (metadata.TryGetProperty("size", out var size))
+        {
+            if (size.ValueKind != JsonValueKind.Number
+                || !size.TryGetInt64(out var parsedSize)
+                || parsedSize < 0)
+                throw InvalidMetadata(
+                    "asset size",
+                    "a non-negative integer");
+            expectedSize = parsedSize;
+        }
+
+        var info = new FileInfo(file);
+        if (!info.Exists
+            || info.Length == 0
+            || (expectedSize.HasValue
+                && info.Length != expectedSize.Value))
+            throw MissingOrCorrupt(file);
+
+        var actual = await ComputeSha1Async(
+            file,
+            cancellationToken);
+        if (!actual.Equals(
+                expectedSha1,
+                StringComparison.OrdinalIgnoreCase))
+            throw MissingOrCorrupt(file);
+    }
+
+    private static FileNotFoundException MissingOrCorrupt(
+        string file)
+        => new(
+            $"Missing, incomplete or corrupted file: {file}. Run Prepare instance files again.",
+            file);
+
+    private static async Task<string> ComputeSha1Async(
+        string file,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+            file,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            128 * 1024,
+            FileOptions.Asynchronous
+            | FileOptions.SequentialScan);
+        using var sha1 = SHA1.Create();
+        var digest = await sha1.ComputeHashAsync(
+            stream,
+            cancellationToken);
+        return Convert.ToHexString(digest)
+            .ToLowerInvariant();
     }
 
     private static async Task<JsonDocument> ReadJsonAsync(
@@ -571,12 +687,73 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         }
     }
 
-    private static void CopyAsset(string source, string target)
+    private static async Task CopyAssetAsync(
+        string source,
+        string target,
+        CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        if (!File.Exists(target)
-            || new FileInfo(source).Length != new FileInfo(target).Length)
-            File.Copy(source, target, overwrite: true);
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(target)!);
+
+        if (File.Exists(target))
+        {
+            var sourceHash = await ComputeSha1Async(
+                source,
+                cancellationToken);
+            var targetHash = await ComputeSha1Async(
+                target,
+                cancellationToken);
+            if (sourceHash.Equals(
+                    targetHash,
+                    StringComparison.OrdinalIgnoreCase))
+                return;
+        }
+
+        var temporaryPath =
+            target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await using (var input = new FileStream(
+                             source,
+                             FileMode.Open,
+                             FileAccess.Read,
+                             FileShare.Read,
+                             128 * 1024,
+                             FileOptions.Asynchronous
+                             | FileOptions.SequentialScan))
+            await using (var output = new FileStream(
+                             temporaryPath,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             128 * 1024,
+                             FileOptions.Asynchronous
+                             | FileOptions.WriteThrough))
+            {
+                await input.CopyToAsync(
+                    output,
+                    cancellationToken);
+                await output.FlushAsync(
+                    cancellationToken);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(
+                temporaryPath,
+                target,
+                overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
+            catch
+            {
+            }
+        }
     }
 
     private static IEnumerable<string> ReadArguments(
