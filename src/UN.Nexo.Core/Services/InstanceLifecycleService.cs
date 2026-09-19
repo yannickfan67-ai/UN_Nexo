@@ -136,8 +136,7 @@ public sealed class InstanceLifecycleService
             RejectReparsePoint(world);
 
         var totalBytes = worlds.Sum(MeasureSafeDirectoryBytes);
-        var backupRoot = GetBackupRoot(instance.Id);
-        Directory.CreateDirectory(backupRoot);
+        var backupRoot = EnsureBackupRootPhysical(instance.Id, create: true);
         EnsureFreeSpace(backupRoot, totalBytes + FreeSpaceReserveBytes);
 
         var createdAt = DateTimeOffset.UtcNow;
@@ -189,6 +188,11 @@ public sealed class InstanceLifecycleService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            backupRoot = EnsureBackupRootPhysical(instance.Id, create: false);
+            ValidateBackupFilePhysical(
+                backupRoot,
+                tempPath,
+                requireZipExtension: false);
             File.Move(tempPath, finalPath);
             var archiveBytes = new FileInfo(finalPath).Length;
             return new WorldBackupInfo(
@@ -216,7 +220,7 @@ public sealed class InstanceLifecycleService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(instance);
-        var root = GetBackupRoot(instance.Id);
+        var root = EnsureBackupRootPhysical(instance.Id, create: false);
         if (!Directory.Exists(root))
             return [];
 
@@ -226,7 +230,7 @@ public sealed class InstanceLifecycleService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var info = await ReadBackupAsync(path, cancellationToken);
+                var info = await ReadBackupAsync(root, path, cancellationToken);
                 if (info.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
                     result.Add(info);
             }
@@ -256,13 +260,11 @@ public sealed class InstanceLifecycleService
         if (!backup.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
             throw new InvalidOperationException("This backup belongs to a different instance.");
 
+        var backupRoot = EnsureBackupRootPhysical(instance.Id, create: false);
         var backupPath = Path.GetFullPath(backup.FilePath);
-        var backupRoot = Path.GetFullPath(GetBackupRoot(instance.Id));
-        EnsureContained(backupRoot, backupPath);
-        if (!File.Exists(backupPath))
-            throw new FileNotFoundException("The selected backup file no longer exists.", backupPath);
+        ValidateBackupFilePhysical(backupRoot, backupPath);
 
-        var inspected = await ReadBackupAsync(backupPath, cancellationToken);
+        var inspected = await ReadBackupAsync(backupRoot, backupPath, cancellationToken);
         if (!inspected.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
             throw new InvalidOperationException("The backup file was replaced and now belongs to a different instance.");
         var world = inspected.Worlds.FirstOrDefault(
@@ -281,18 +283,34 @@ public sealed class InstanceLifecycleService
             expectedFiles = world.Files.ToDictionary(item => item.Path, StringComparer.Ordinal);
         }
 
-        var instanceRoot = _paths.GetInstanceDirectory(instance.Id);
-        var savesRoot = Path.Combine(_paths.GetInstanceGameDirectory(instance.Id), "saves");
-        Directory.CreateDirectory(savesRoot);
+        var instanceRoot = _paths.EnsureInstanceDirectoryPhysical(instance.Id);
+        var savesRoot = EnsureRestoreSavesRootPhysical(instance.Id);
         var destinationWorld = ResolveChild(savesRoot, world.Name);
 
-        var stagingRoot = Path.Combine(instanceRoot, ".restore-staging", Guid.NewGuid().ToString("N"));
-        var stagedWorld = Path.Combine(stagingRoot, "world");
-        Directory.CreateDirectory(stagedWorld);
+        var stagingParent = ResolveChild(instanceRoot, ".restore-staging");
+        EnsurePhysicalDirectory(
+            stagingParent,
+            create: true,
+            "Restore staging root");
+        _paths.EnsureInstanceDirectoryPhysical(instance.Id);
+        var stagingRoot = ResolveChild(
+            stagingParent,
+            Guid.NewGuid().ToString("N"));
+        EnsurePhysicalDirectory(
+            stagingRoot,
+            create: true,
+            "Restore staging operation directory");
+        var stagedWorld = ResolveChild(stagingRoot, "world");
+        EnsurePhysicalDirectory(
+            stagedWorld,
+            create: true,
+            "Restore staged world directory");
 
         try
         {
             EnsureFreeSpace(instanceRoot, world.UncompressedBytes + FreeSpaceReserveBytes);
+            backupRoot = EnsureBackupRootPhysical(instance.Id, create: false);
+            ValidateBackupFilePhysical(backupRoot, backupPath);
             using var archive = ZipFile.OpenRead(backupPath);
             var prefix = world.ArchivePrefix.TrimEnd('/') + "/";
             var extractedFiles = 0;
@@ -386,26 +404,71 @@ public sealed class InstanceLifecycleService
             cancellationToken.ThrowIfCancellationRequested();
 
             string? safetyCopy = null;
+            savesRoot = EnsureRestoreSavesRootPhysical(instance.Id);
+            destinationWorld = ResolveChild(savesRoot, world.Name);
             if (Directory.Exists(destinationWorld))
             {
                 RejectReparsePoint(destinationWorld);
-                var safetyRoot = Path.Combine(
-                    instanceRoot,
-                    "restore-safety",
+
+                instanceRoot = _paths.EnsureInstanceDirectoryPhysical(instance.Id);
+                var safetyParent = ResolveChild(instanceRoot, "restore-safety");
+                EnsurePhysicalDirectory(
+                    safetyParent,
+                    create: true,
+                    "Restore safety root");
+                _paths.EnsureInstanceDirectoryPhysical(instance.Id);
+
+                var safetyRoot = ResolveChild(
+                    safetyParent,
                     $"{DateTimeOffset.UtcNow:yyyyMMdd-HHmmssfff}-{Guid.NewGuid():N}");
-                Directory.CreateDirectory(safetyRoot);
+                EnsurePhysicalDirectory(
+                    safetyRoot,
+                    create: true,
+                    "Restore safety operation directory");
                 safetyCopy = ResolveChild(safetyRoot, world.Name);
+
+                savesRoot = EnsureRestoreSavesRootPhysical(instance.Id);
+                destinationWorld = ResolveChild(savesRoot, world.Name);
+                RejectReparsePoint(destinationWorld);
                 Directory.Move(destinationWorld, safetyCopy);
+            }
+            else if (File.Exists(destinationWorld))
+            {
+                throw new InvalidDataException(
+                    "Restore destination is occupied by a file.");
             }
 
             try
             {
+                savesRoot = EnsureRestoreSavesRootPhysical(instance.Id);
+                destinationWorld = ResolveChild(savesRoot, world.Name);
+                if (Directory.Exists(destinationWorld) || File.Exists(destinationWorld))
+                    throw new IOException(
+                        "Restore destination changed before publication.");
+
+                _paths.EnsureInstanceDirectoryPhysical(instance.Id);
                 Directory.Move(stagedWorld, destinationWorld);
             }
             catch
             {
-                if (safetyCopy is not null && Directory.Exists(safetyCopy) && !Directory.Exists(destinationWorld))
-                    Directory.Move(safetyCopy, destinationWorld);
+                if (safetyCopy is not null && Directory.Exists(safetyCopy))
+                {
+                    try
+                    {
+                        savesRoot = EnsureRestoreSavesRootPhysical(instance.Id);
+                        destinationWorld = ResolveChild(savesRoot, world.Name);
+                        if (!Directory.Exists(destinationWorld)
+                            && !File.Exists(destinationWorld))
+                        {
+                            Directory.Move(safetyCopy, destinationWorld);
+                        }
+                    }
+                    catch
+                    {
+                        // Preserve the publication failure. The safety copy remains
+                        // recoverable rather than being moved through an unsafe path.
+                    }
+                }
                 throw;
             }
 
@@ -417,8 +480,12 @@ public sealed class InstanceLifecycleService
         }
     }
 
-    private async Task<WorldBackupInfo> ReadBackupAsync(string path, CancellationToken cancellationToken)
+    private async Task<WorldBackupInfo> ReadBackupAsync(
+        string backupRoot,
+        string path,
+        CancellationToken cancellationToken)
     {
+        ValidateBackupFilePhysical(backupRoot, path);
         using var archive = ZipFile.OpenRead(path);
         var entry = archive.GetEntry("manifest.json")
             ?? throw new InvalidDataException("Backup manifest is missing.");
@@ -813,6 +880,147 @@ public sealed class InstanceLifecycleService
     private string GetBackupRoot(string instanceId)
         => Path.Combine(_paths.GetDataRoot(), "backups", instanceId);
 
+    private string EnsureBackupRootPhysical(
+        string instanceId,
+        bool create)
+    {
+        var dataRoot = _paths.EnsureDataRootPhysical();
+        var backupsRoot = ResolveChild(dataRoot, "backups");
+        EnsurePhysicalDirectory(
+            backupsRoot,
+            create,
+            "Backup storage root");
+
+        if (!Directory.Exists(backupsRoot))
+            return ResolveChild(backupsRoot, instanceId);
+
+        _paths.EnsureDataRootPhysical();
+        EnsurePhysicalDirectory(
+            backupsRoot,
+            create: false,
+            "Backup storage root");
+
+        var instanceBackupRoot = ResolveChild(backupsRoot, instanceId);
+        EnsurePhysicalDirectory(
+            instanceBackupRoot,
+            create,
+            "Instance backup root");
+
+        if (Directory.Exists(instanceBackupRoot))
+        {
+            EnsurePhysicalDirectory(
+                backupsRoot,
+                create: false,
+                "Backup storage root");
+            _paths.EnsureDataRootPhysical();
+        }
+
+        return instanceBackupRoot;
+    }
+
+    private string EnsureRestoreSavesRootPhysical(string instanceId)
+    {
+        var instanceRoot = _paths.EnsureInstanceDirectoryPhysical(instanceId);
+        var gameRoot = ResolveChild(instanceRoot, "game");
+        EnsurePhysicalDirectory(
+            gameRoot,
+            create: true,
+            "Instance game directory");
+        _paths.EnsureInstanceDirectoryPhysical(instanceId);
+
+        var savesRoot = ResolveChild(gameRoot, "saves");
+        EnsurePhysicalDirectory(
+            savesRoot,
+            create: true,
+            "Instance saves directory");
+
+        EnsurePhysicalDirectory(
+            gameRoot,
+            create: false,
+            "Instance game directory");
+        _paths.EnsureInstanceDirectoryPhysical(instanceId);
+        return savesRoot;
+    }
+
+    private static void EnsurePhysicalDirectory(
+        string path,
+        bool create,
+        string label)
+    {
+        if (Directory.Exists(path))
+        {
+            RejectReparsePoint(path);
+            return;
+        }
+
+        if (File.Exists(path))
+            throw new InvalidDataException(
+                $"{label} is occupied by a file.");
+
+        if (!create)
+            return;
+
+        Directory.CreateDirectory(path);
+        if (!Directory.Exists(path))
+            throw new IOException(
+                $"{label} could not be created.");
+        RejectReparsePoint(path);
+    }
+
+    private static string ValidateBackupFilePhysical(
+        string backupRoot,
+        string path,
+        bool requireZipExtension = true)
+    {
+        var root = Path.GetFullPath(backupRoot);
+        var candidate = Path.GetFullPath(path);
+        EnsureContained(root, candidate);
+
+        if (!Directory.Exists(root))
+            throw new DirectoryNotFoundException(
+                $"Backup root is missing: {root}");
+        RejectReparsePoint(root);
+
+        var parent = Path.GetDirectoryName(candidate)
+            ?? throw new InvalidDataException(
+                "Backup file has no parent directory.");
+        if (!PathEquals(parent, root))
+            throw new InvalidDataException(
+                "Backup files must be direct children of the instance backup root.");
+
+        if (requireZipExtension
+            && !candidate.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                "Backup file must use the .zip extension.");
+
+        if (!File.Exists(candidate))
+            throw new FileNotFoundException(
+                "The selected backup file no longer exists.",
+                candidate);
+
+        var attributes = File.GetAttributes(candidate);
+        if ((attributes & FileAttributes.Directory) != 0
+            || (attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidDataException(
+                "Backup files must be physical regular files; symbolic links and reparse points are not allowed.");
+        }
+
+        return candidate;
+    }
+
+    private static bool PathEquals(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(right).TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
+
     private static string NormalizeInstanceName(string value)
     {
         var name = (value ?? string.Empty).Trim();
@@ -891,7 +1099,13 @@ public sealed class InstanceLifecycleService
     {
         try
         {
-            if (Directory.Exists(path))
+            if (!Directory.Exists(path))
+                return;
+
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                Directory.Delete(path);
+            else
                 Directory.Delete(path, recursive: true);
         }
         catch
