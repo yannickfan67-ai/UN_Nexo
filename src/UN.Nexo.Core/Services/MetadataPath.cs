@@ -37,8 +37,8 @@ internal static class MetadataPath
         var relative = value;
         if (!string.Equals(relative, relative.Trim(), StringComparison.Ordinal)
             || Path.IsPathRooted(relative)
-            || relative.StartsWith('/', StringComparison.Ordinal)
-            || relative.EndsWith('/', StringComparison.Ordinal)
+            || relative.StartsWith("/", StringComparison.Ordinal)
+            || relative.EndsWith("/", StringComparison.Ordinal)
             || relative.Contains('\\')
             || relative.Any(char.IsControl))
             throw InvalidRelative(fieldName);
