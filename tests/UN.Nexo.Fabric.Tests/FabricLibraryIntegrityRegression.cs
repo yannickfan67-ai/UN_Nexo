@@ -151,7 +151,7 @@ internal static class FabricLibraryIntegrityRegression
         var paths = new NexoPathService(root);
         paths.EnsureDirectories();
         var instance = new GameInstance(
-            "fabric-library-test",
+            Guid.NewGuid().ToString("N"),
             "Fabric library test",
             ChildVersionId,
             "fabric",
@@ -173,11 +173,11 @@ internal static class FabricLibraryIntegrityRegression
               "libraries":[
                 {
                   "name":"net.fabricmc:fabric-loader:0.16.9",
-                  "url":"https://maven.example.test/"
+                  "url":"https://maven.fabricmc.net/"
                 },
                 {
                   "name":"com.example:testlib:1.0",
-                  "url":"https://maven.example.test/"
+                  "url":"https://maven.fabricmc.net/"
                 }
               ]
             }
@@ -199,7 +199,7 @@ internal static class FabricLibraryIntegrityRegression
         var version = new MinecraftVersionInfo(
             BaseVersionId,
             "release",
-            "https://metadata.example.test/version.json",
+            "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
             string.Empty,
@@ -272,7 +272,7 @@ internal static class FabricLibraryIntegrityRegression
             var uri = request.RequestUri
                 ?? throw new InvalidOperationException("Missing request URI.");
 
-            if (uri.Host.Equals("metadata.example.test", StringComparison.OrdinalIgnoreCase))
+            if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
@@ -283,7 +283,7 @@ internal static class FabricLibraryIntegrityRegression
                 });
             }
 
-            if (!uri.Host.Equals("maven.example.test", StringComparison.OrdinalIgnoreCase))
+            if (!uri.Host.Equals("maven.fabricmc.net", StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
 
             if (uri.AbsolutePath.EndsWith(".sha1", StringComparison.Ordinal))
