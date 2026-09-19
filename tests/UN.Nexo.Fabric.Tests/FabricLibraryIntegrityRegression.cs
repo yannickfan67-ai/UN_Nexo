@@ -151,7 +151,7 @@ internal static class FabricLibraryIntegrityRegression
         var paths = new NexoPathService(root);
         paths.EnsureDirectories();
         var instance = new GameInstance(
-            "fabric-library-test",
+            Guid.NewGuid().ToString("N"),
             "Fabric library test",
             ChildVersionId,
             "fabric",
