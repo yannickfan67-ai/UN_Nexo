@@ -300,34 +300,31 @@ public sealed class ModrinthModProvider : IModDependencyProvider
     public async Task<ModProviderStagedInstall> StageAsync(
         ModProviderProject project,
         ModProviderVersion version,
+        string stagingDirectory,
         CancellationToken cancellationToken = default)
     {
         ValidateProjectVersion(project, version);
+        if (string.IsNullOrWhiteSpace(stagingDirectory))
+            throw new ArgumentException(
+                "A caller-owned staging directory is required.",
+                nameof(stagingDirectory));
+
         var file = version.SelectPrimaryFile();
         ValidateProviderFile(file);
 
-        var stagingRoot = Path.Combine(
-            Path.GetTempPath(),
-            "UN_Nexo",
-            "modrinth",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(stagingRoot);
-        var stagedPath = Path.Combine(stagingRoot, file.FileName);
+        var stagingRoot = Path.GetFullPath(stagingDirectory);
+        EnsurePhysicalStagingDirectory(stagingRoot);
+        var stagedPath = ResolveStagingPath(stagingRoot, file.FileName);
+        if (File.Exists(stagedPath) || Directory.Exists(stagedPath))
+            throw new IOException(
+                $"The caller-owned staging directory already contains '{file.FileName}'.");
 
-        try
-        {
-            await DownloadVerifiedAsync(file, stagedPath, cancellationToken);
-            return new ModProviderStagedInstall(
-                project,
-                version,
-                stagedPath,
-                stagingRoot);
-        }
-        catch
-        {
-            TryDeleteDirectory(stagingRoot);
-            throw;
-        }
+        await DownloadVerifiedAsync(file, stagedPath, cancellationToken);
+        EnsurePhysicalStagingDirectory(stagingRoot);
+        return new ModProviderStagedInstall(
+            project,
+            version,
+            stagedPath);
     }
 
     public async Task<ModProviderInstallResult> InstallAsync(
@@ -347,21 +344,24 @@ public sealed class ModrinthModProvider : IModDependencyProvider
                 || !string.Equals(existing.ProjectId, project.ProjectId, StringComparison.Ordinal)))
             throw new InvalidDataException("The installed Modrinth match does not belong to the selected project.");
 
-        var staged = await StageAsync(project, version, cancellationToken);
-        try
-        {
-            var installed = await modService.InstallProviderUpdateAsync(
-                instanceId,
-                staged.StagedPath,
-                existing?.LocalFileName,
-                existing?.IsEnabled ?? true,
-                cancellationToken);
-            return new ModProviderInstallResult(project, version, installed);
-        }
-        finally
-        {
-            TryDeleteDirectory(staged.CleanupDirectory);
-        }
+        using var stagingScope = ProviderStagingScope.Create();
+        var entryDirectory = stagingScope.CreateEntryDirectory();
+        var staged = await StageAsync(
+            project,
+            version,
+            entryDirectory,
+            cancellationToken);
+        var stagedPath = stagingScope.ValidateStagedFile(
+            entryDirectory,
+            staged.StagedPath);
+
+        var installed = await modService.InstallProviderUpdateAsync(
+            instanceId,
+            stagedPath,
+            existing?.LocalFileName,
+            existing?.IsEnabled ?? true,
+            cancellationToken);
+        return new ModProviderInstallResult(project, version, installed);
     }
 
     private static bool PathEquals(string left, string right)
@@ -735,16 +735,39 @@ public sealed class ModrinthModProvider : IModDependencyProvider
             throw new InvalidDataException("The selected Modrinth project and version do not match.");
     }
 
-    private static void TryDeleteDirectory(string path)
+    private static void EnsurePhysicalStagingDirectory(string path)
     {
-        try
+        if (!Directory.Exists(path))
+            throw new DirectoryNotFoundException(
+                "The caller-owned provider staging directory does not exist.");
+
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.Directory) == 0
+            || (attributes & FileAttributes.ReparsePoint) != 0)
         {
-            if (Directory.Exists(path))
-                Directory.Delete(path, recursive: true);
+            throw new InvalidDataException(
+                "The provider staging directory must be a physical non-reparse directory.");
         }
-        catch
-        {
-        }
+    }
+
+    private static string ResolveStagingPath(
+        string stagingDirectory,
+        string fileName)
+    {
+        var root = Path.GetFullPath(stagingDirectory);
+        var candidate = Path.GetFullPath(
+            Path.Combine(root, fileName));
+        var rootWithSeparator = Path.EndsInDirectorySeparator(root)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (!candidate.StartsWith(rootWithSeparator, comparison))
+            throw new InvalidDataException(
+                "The Modrinth staged file must remain inside the caller-owned staging directory.");
+        return candidate;
     }
 
     private static void ValidateProviderFile(ModProviderFile file)
