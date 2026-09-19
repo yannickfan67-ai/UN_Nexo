@@ -22,6 +22,8 @@ public sealed class FabricInstallService(
             : throw new ArgumentOutOfRangeException(
                 nameof(transferIdleTimeout),
                 "Fabric transfer idle timeout must be positive.");
+    private readonly InstanceOperationCoordinator _instanceOperations =
+        new(paths);
     public async Task PrepareAsync(
         GameInstance instance,
         MinecraftVersionInfo baseVersion,
@@ -30,6 +32,12 @@ public sealed class FabricInstallService(
     {
         if (!instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Fabric preparation requires a Fabric instance.");
+
+        using var operation =
+            await _instanceOperations.AcquireAsync(
+                instance.Id,
+                "prepare Fabric instance",
+                cancellationToken);
 
         var instanceRoot = paths.GetInstanceDirectory(instance.Id);
         var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
