@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#180053">
   <meta name="description" content="UN_Nexo — an independent Minecraft: Java Edition launcher for Windows and Linux.">
   <title>UN_Nexo — Minecraft launcher</title>
+  <link rel="icon" type="image/svg+xml" href="/logo-icon.svg">
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
@@ -13,13 +14,15 @@
   <header class="metro-topbar">
     <div class="topbar-inner">
       <a class="wordmark" href="/">
-        <span class="metro-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <img class="brand-icon" src="/logo-icon.svg" alt="">
         <span>UN_Nexo</span>
       </a>
       <nav>
         <a href="#start">Start</a>
         <a href="#preview">Preview</a>
         <a href="#features">Features</a>
+        <a href="#compatibility">Compatibility</a>
+        <a href="#roadmap">Roadmap</a>
         <a href="#download">Download</a>
         <a href="https://github.com/yannickfan67-ai/UN_Nexo" target="_blank" rel="noreferrer">GitHub</a>
       </nav>
@@ -143,6 +146,113 @@
       </div>
     </section>
 
+
+    <section class="metro-section compatibility-section" id="compatibility">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="section-label dark">COMPATIBILITY</p>
+          <h2>Modern Minecraft. Legacy Minecraft. One launcher.</h2>
+          <p>UN_Nexo keeps current releases and older Java Edition paths visible instead of treating legacy support as an afterthought.</p>
+        </div>
+        <div class="compat-grid">
+          <div class="compat-box blue"><strong>1.21.4</strong><span>Modern launch path verified</span></div>
+          <div class="compat-box purple"><strong>1.8.9</strong><span>Legacy launch path verified</span></div>
+          <div class="compat-box magenta"><strong>1.5.2</strong><span>Pre-1.6 assets exercised</span></div>
+          <div class="compat-box teal"><strong>Windows x64</strong><span>Self-contained desktop build</span></div>
+          <div class="compat-box orange"><strong>Linux x64</strong><span>DEB and RPM packages</span></div>
+          <div class="compat-box green"><strong>Java</strong><span>Version-aware runtime selection</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="metro-section why-section" id="why">
+      <div class="section-inner">
+        <div class="why-layout">
+          <div class="why-heading">
+            <p class="section-label">WHY UN_NEXO</p>
+            <h2>Less mystery.<br>More control.</h2>
+            <p>A launcher should tell you what it is doing, what it changed and what failed.</p>
+          </div>
+          <div class="why-tiles">
+            <article><span>01</span><h3>Separated core</h3><p>Launcher logic stays separate from the desktop UI so the project can evolve without turning into one monolith.</p></article>
+            <article><span>02</span><h3>Visible state</h3><p>Preparation, starting, running, failure and repair are explicit states instead of one endless loading indicator.</p></article>
+            <article><span>03</span><h3>Safer repair</h3><p>Verification targets launcher-managed files while worlds, mods, screenshots and ordinary configuration remain outside the repair write set.</p></article>
+            <article><span>04</span><h3>Open development</h3><p>Source, issues, release notes, limitations and diagnostic behavior are available in the public repository.</p></article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="metro-section roadmap-section" id="roadmap">
+      <div class="section-inner">
+        <div class="section-heading light-text">
+          <p class="section-label">ROADMAP</p>
+          <h2>What comes next.</h2>
+          <p>Current development directions from the public project roadmap.</p>
+        </div>
+        <div class="roadmap-list">
+          <div class="roadmap-item"><b>01</b><div><strong>Resumable downloads</strong><span>Range resume, retries/backoff and clearer cancel/retry UX.</span></div></div>
+          <div class="roadmap-item"><b>02</b><div><strong>Microsoft acceptance testing</strong><span>Complete live Minecraft Services authorization and real-account testing.</span></div></div>
+          <div class="roadmap-item"><b>03</b><div><strong>Per-instance runtime controls</strong><span>Memory and Java settings that can differ from one instance to another.</span></div></div>
+          <div class="roadmap-item"><b>04</b><div><strong>Forge / NeoForge</strong><span>Extend loader support beyond the current Fabric path.</span></div></div>
+          <div class="roadmap-item"><b>05</b><div><strong>More content management</strong><span>Resource packs, shaders and richer dependency handling.</span></div></div>
+          <div class="roadmap-item"><b>06</b><div><strong>Friend networking</strong><span>Room-style networking after protocol and licensing review.</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="metro-section faq-section" id="faq">
+      <div class="section-inner">
+        <div class="section-heading">
+          <p class="section-label dark">FAQ</p>
+          <h2>Common questions.</h2>
+        </div>
+        <div class="faq-grid">
+          <details open>
+            <summary>Is UN_Nexo an official Minecraft launcher?</summary>
+            <p>No. UN_Nexo is an independent project and is not approved by or associated with Mojang or Microsoft.</p>
+          </details>
+          <details>
+            <summary>Does it support Microsoft accounts?</summary>
+            <p>The public-client sign-in flow is implemented. Live Minecraft Services use still depends on Microsoft/Minecraft authorization and real-account acceptance testing.</p>
+          </details>
+          <details>
+            <summary>Can I use offline profiles?</summary>
+            <p>Yes. They are intended for local worlds, development and servers that explicitly allow offline-mode login.</p>
+          </details>
+          <details>
+            <summary>Does it support old Minecraft versions?</summary>
+            <p>Current testing includes modern 1.21.4, legacy 1.8.9 and a real 1.5.2 path with pre-1.6 resource handling.</p>
+          </details>
+          <details>
+            <summary>Where are logs and diagnostics?</summary>
+            <p>Each instance keeps launcher logs and launch traces. Failed launches can also expose a sanitized diagnostic export workflow.</p>
+          </details>
+          <details>
+            <summary>Where should bugs be reported?</summary>
+            <p>Use the public GitHub issue tracker so failures, logs and fixes can stay attached to the project history.</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="metro-section resources-section" id="resources">
+      <div class="section-inner">
+        <div class="section-heading light-text">
+          <p class="section-label">RESOURCES</p>
+          <h2>Project links.</h2>
+        </div>
+        <div class="resource-grid">
+          <a class="resource-tile blue" href="https://github.com/yannickfan67-ai/UN_Nexo" target="_blank" rel="noreferrer"><b>GitHub</b><span>Source code and project history</span><em>↗</em></a>
+          <a class="resource-tile purple" href="https://github.com/yannickfan67-ai/UN_Nexo/releases" target="_blank" rel="noreferrer"><b>Releases</b><span>Packages and release notes</span><em>↓</em></a>
+          <a class="resource-tile teal" href="https://github.com/yannickfan67-ai/UN_Nexo/issues" target="_blank" rel="noreferrer"><b>Issues</b><span>Bug reports and development tasks</span><em>!</em></a>
+          <a class="resource-tile magenta" href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/docs/microsoft-auth.md" target="_blank" rel="noreferrer"><b>Microsoft auth</b><span>Sign-in flow and storage model</span><em>?</em></a>
+          <a class="resource-tile orange" href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/docs/modrinth.md" target="_blank" rel="noreferrer"><b>Modrinth</b><span>Mod-management documentation</span><em>M</em></a>
+          <a class="resource-tile green" href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/PRIVACY.md" target="_blank" rel="noreferrer"><b>Privacy</b><span>Data and credential handling notes</span><em>✓</em></a>
+        </div>
+      </div>
+    </section>
+
     <section class="metro-section download-section" id="download">
       <div class="section-inner download-layout">
         <div>
@@ -180,11 +290,14 @@
   <footer class="metro-footer">
     <div class="section-inner footer-inner">
       <div class="wordmark">
-        <span class="metro-logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <img class="brand-icon" src="/logo-icon.svg" alt="">
         <span>UN_Nexo</span>
       </div>
       <div class="footer-links">
         <a href="https://github.com/yannickfan67-ai/UN_Nexo">GitHub</a>
+        <a href="#compatibility">Compatibility</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#faq">FAQ</a>
         <a href="https://github.com/yannickfan67-ai/UN_Nexo/releases">Releases</a>
         <a href="https://github.com/yannickfan67-ai/UN_Nexo/blob/main/PRIVACY.md">Privacy</a>
       </div>
