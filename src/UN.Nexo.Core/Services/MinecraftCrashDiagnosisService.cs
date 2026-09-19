@@ -17,7 +17,7 @@ public sealed class MinecraftCrashDiagnosisService
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex TokenAssignmentRegex = new(
-        @"(?im)(?<key>access[_-]?token|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:id)?)(?<sep>\s*[:=]\s*|\s+)(?<value>[^\s""']{8,})",
+        @"(?im)(?<key>access[_-]?token|refresh[_-]?token|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:[_-]?id)?)(?<sep>\s*[:=]\s*|\s+)(?<value>[^\s""'&#?]{8,})",
         RegexOptions.Compiled);
 
     private static readonly Regex AccessTokenArgumentRegex = new(
@@ -25,9 +25,16 @@ public sealed class MinecraftCrashDiagnosisService
         RegexOptions.Compiled);
 
     private static readonly Regex JsonCredentialRegex = new(
-        @"(?im)(?<prefix>[""'](?:access_token|refresh_token|identityToken|RpsTicket|Token|auth_access_token|authorization)[""']\s*:\s*[""'])(?<value>[^""'\r\n]{8,})(?<suffix>[""'])",
+        @"(?im)(?<prefix>[""'](?:access[_-]?token|refresh[_-]?token|identity[_-]?token|rps[_-]?ticket|token|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:[_-]?id)?)[""']\s*:\s*[""'])(?<value>[^""'\r\n]*)(?<suffix>[""'])",
         RegexOptions.Compiled);
 
+    private static readonly Regex QueryCredentialRegex = new(
+        @"(?im)(?<prefix>(?:^|[?&])(?:access[_-]?token|refresh[_-]?token|identity[_-]?token|rps[_-]?ticket|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:[_-]?id)?)=)(?<value>[^&#\s]*)",
+        RegexOptions.Compiled);
+
+    private static readonly Regex FormCredentialRegex = new(
+        @"(?im)(?<![A-Za-z0-9_-])(?<prefix>(?:access[_-]?token|refresh[_-]?token|identity[_-]?token|rps[_-]?ticket|auth[_-]?(?:access[_-]?)?token|authorization|client[_-]?token|session(?:[_-]?id)?)=)(?<value>[^&#\s]+)",
+        RegexOptions.Compiled);
 
     private static readonly Regex BearerRegex = new(
         @"(?im)(?<key>Bearer\s+)(?<value>[A-Za-z0-9._~+/-]{8,}=*)",
@@ -228,6 +235,10 @@ public sealed class MinecraftCrashDiagnosisService
         var result = text;
         result = JsonCredentialRegex.Replace(result, match =>
             match.Groups["prefix"].Value + "<REDACTED>" + match.Groups["suffix"].Value);
+        result = QueryCredentialRegex.Replace(result, match =>
+            match.Groups["prefix"].Value + "<REDACTED>");
+        result = FormCredentialRegex.Replace(result, match =>
+            match.Groups["prefix"].Value + "<REDACTED>");
         result = AccessTokenArgumentRegex.Replace(result, match => match.Groups["key"].Value + "<REDACTED>");
         result = BearerRegex.Replace(result, match => match.Groups["key"].Value + "<REDACTED>");
         result = TokenAssignmentRegex.Replace(result, match =>
