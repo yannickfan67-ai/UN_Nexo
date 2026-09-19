@@ -34,7 +34,7 @@ internal static class ManagedJavaConcurrencyRegression
             Assert(handler.MetadataRequests(8) == 1,
                 "Second same-major provisioning call must wait before metadata/network work.");
 
-            handler.ReleaseMajor8Metadata.TrySetResult();
+            handler.ReleaseMajor8Metadata.TrySetResult(true);
             var results = await Task.WhenAll(first, second);
 
             Assert(results[0].JavaPath == results[1].JavaPath,
@@ -140,7 +140,7 @@ internal static class ManagedJavaConcurrencyRegression
         private readonly ConcurrentDictionary<int, int> _archiveRequests = new();
         private readonly bool _blockMajor8Metadata;
         private readonly bool _waitForBothMajors;
-        private readonly TaskCompletionSource _bothMajorsSeen =
+        private readonly TaskCompletionSource<bool> _bothMajorsSeen =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ConcurrentRuntimeHandler(
@@ -158,11 +158,11 @@ internal static class ManagedJavaConcurrencyRegression
             }
         }
 
-        public TaskCompletionSource Major8MetadataEntered { get; } =
+        public TaskCompletionSource<bool> Major8MetadataEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource Major17MetadataEntered { get; } =
+        public TaskCompletionSource<bool> Major17MetadataEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource ReleaseMajor8Metadata { get; } =
+        public TaskCompletionSource<bool> ReleaseMajor8Metadata { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int MetadataRequests(int major)
@@ -220,13 +220,13 @@ internal static class ManagedJavaConcurrencyRegression
         private void SignalMetadataEntered(int major)
         {
             if (major == 8)
-                Major8MetadataEntered.TrySetResult();
+                Major8MetadataEntered.TrySetResult(true);
             else if (major == 17)
-                Major17MetadataEntered.TrySetResult();
+                Major17MetadataEntered.TrySetResult(true);
 
             if (Major8MetadataEntered.Task.IsCompleted
                 && Major17MetadataEntered.Task.IsCompleted)
-                _bothMajorsSeen.TrySetResult();
+                _bothMajorsSeen.TrySetResult(true);
         }
 
         private static int ParseMajorFromMetadataPath(string path)
