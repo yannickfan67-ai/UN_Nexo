@@ -1138,6 +1138,14 @@ internal static class Program
                 });
             }
 
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("client"))
+                });
+            }
+
             if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -1178,6 +1186,14 @@ internal static class Program
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+                });
+            }
+
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(Encoding.UTF8.GetBytes("client"))
                 });
             }
 
