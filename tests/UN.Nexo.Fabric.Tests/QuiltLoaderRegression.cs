@@ -217,6 +217,13 @@ internal static class QuiltLoaderRegression
                 profileId,
                 minecraftVersion,
                 loaderVersion);
+
+            await TestOversizedLibraryRejectedAsync(
+                QuiltLibraryMode.DeclaredOversize,
+                "declared oversized");
+            await TestOversizedLibraryRejectedAsync(
+                QuiltLibraryMode.ChunkedOversize,
+                "chunked oversized");
         }
         finally
         {
@@ -227,6 +234,136 @@ internal static class QuiltLoaderRegression
             catch
             {
             }
+        }
+    }
+
+    private static async Task TestOversizedLibraryRejectedAsync(
+        QuiltLibraryMode mode,
+        string label)
+    {
+        const string minecraftVersion = "1.21.4";
+        const string loaderVersion = "0.26.4";
+        const string profileId =
+            "quilt-loader-0.26.4-1.21.4";
+        const long maxBytes = 4096;
+
+        var loaderBytes =
+            Encoding.UTF8.GetBytes(
+                "quilt-loader");
+        var loaderSha1 =
+            Convert.ToHexString(
+                    SHA1.HashData(loaderBytes))
+                .ToLowerInvariant();
+
+        var handler =
+            new QuiltHandler(
+                profileId,
+                loaderVersion,
+                loaderBytes,
+                loaderSha1,
+                mode);
+        using var client =
+            new HttpClient(handler);
+
+        var root =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-quilt-size-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var paths =
+                new NexoPathService(root);
+            paths.EnsureDirectories();
+
+            var meta =
+                new QuiltMetaService(client);
+            var vanilla =
+                new MinecraftVanillaInstallService(
+                    client,
+                    paths,
+                    new DownloadSourceService());
+            var service =
+                new QuiltInstallService(
+                    client,
+                    paths,
+                    vanilla,
+                    meta,
+                    maxLibraryBytes:
+                        maxBytes);
+
+            var instance =
+                new GameInstance(
+                    Guid.NewGuid().ToString("N"),
+                    "Quilt size regression",
+                    profileId,
+                    "quilt",
+                    DateTimeOffset.UtcNow,
+                    minecraftVersion,
+                    loaderVersion);
+            var instanceRoot =
+                paths.GetInstanceDirectory(
+                    instance.Id);
+            Directory.CreateDirectory(
+                instanceRoot);
+
+            var baseVersion =
+                new MinecraftVersionInfo(
+                    minecraftVersion,
+                    "release",
+                    "https://piston-meta.mojang.com/version.json",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    string.Empty,
+                    0);
+
+            try
+            {
+                await service.PrepareAsync(
+                    instance,
+                    baseVersion);
+                throw new InvalidOperationException(
+                    $"{label} Quilt library unexpectedly prepared.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            var target =
+                Path.Combine(
+                    paths.GetInstanceGameDirectory(
+                        instance.Id),
+                    "libraries",
+                    "org",
+                    "quiltmc",
+                    "quilt-loader",
+                    loaderVersion,
+                    $"quilt-loader-{loaderVersion}.jar");
+
+            Assert(
+                !File.Exists(target),
+                $"{label} Quilt library must not publish the final artifact.");
+            Assert(
+                !File.Exists(target + ".part"),
+                $"{label} Quilt library must clean its trusted .part file.");
+            Assert(
+                !File.Exists(
+                    Path.Combine(
+                        instanceRoot,
+                        "install-state.json")),
+                $"{label} Quilt library must not publish prepared state.");
+            Assert(
+                handler.RequestedPaths.Any(path =>
+                    path.EndsWith(
+                        "/quilt-loader.jar",
+                        StringComparison.Ordinal)),
+                $"{label} Quilt regression did not reach the loader library request.");
+        }
+        finally
+        {
+            TryDeleteTree(root);
         }
     }
 
@@ -538,11 +675,20 @@ internal static class QuiltLoaderRegression
             throw new Exception(message);
     }
 
+    private enum QuiltLibraryMode
+    {
+        Valid,
+        DeclaredOversize,
+        ChunkedOversize
+    }
+
     private sealed class QuiltHandler(
         string profileId,
         string loaderVersion,
         byte[] loaderBytes,
-        string loaderSha1) : HttpMessageHandler
+        string loaderSha1,
+        QuiltLibraryMode libraryMode =
+            QuiltLibraryMode.Valid) : HttpMessageHandler
     {
         public List<string> RequestedPaths { get; } = [];
 
@@ -631,7 +777,19 @@ internal static class QuiltLoaderRegression
                     "maven.quiltmc.org",
                     StringComparison.OrdinalIgnoreCase))
             {
-                return Bytes(loaderBytes);
+                return libraryMode switch
+                {
+                    QuiltLibraryMode.Valid =>
+                        Bytes(loaderBytes),
+                    QuiltLibraryMode.DeclaredOversize =>
+                        DeclaredOversize(
+                            loaderBytes),
+                    QuiltLibraryMode.ChunkedOversize =>
+                        Stream(
+                            new FiniteUnseekableStream(
+                                8192)),
+                    _ => throw new ArgumentOutOfRangeException()
+                };
             }
 
             return Task.FromResult(
@@ -655,5 +813,85 @@ internal static class QuiltLoaderRegression
                 {
                     Content = new ByteArrayContent(bytes)
                 });
+
+        private static Task<HttpResponseMessage> DeclaredOversize(
+            byte[] bytes)
+        {
+            var content =
+                new ByteArrayContent(bytes);
+            content.Headers.ContentLength =
+                8192;
+            return Task.FromResult(
+                new HttpResponseMessage(
+                    HttpStatusCode.OK)
+                {
+                    Content = content
+                });
+        }
+
+        private static Task<HttpResponseMessage> Stream(
+            Stream stream)
+            => Task.FromResult(
+                new HttpResponseMessage(
+                    HttpStatusCode.OK)
+                {
+                    Content =
+                        new StreamContent(stream)
+                });
+    }
+
+    private sealed class FiniteUnseekableStream(
+        long length) : Stream
+    {
+        private long _remaining =
+            length;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length
+            => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(
+            byte[] buffer,
+            int offset,
+            int count)
+            => throw new NotSupportedException();
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_remaining <= 0)
+                return ValueTask.FromResult(0);
+
+            var count =
+                (int)Math.Min(
+                    _remaining,
+                    buffer.Length);
+            buffer.Span[..count]
+                .Fill(0x51);
+            _remaining -= count;
+            return ValueTask.FromResult(count);
+        }
+
+        public override void Flush() { }
+        public override long Seek(
+            long offset,
+            SeekOrigin origin)
+            => throw new NotSupportedException();
+        public override void SetLength(long value)
+            => throw new NotSupportedException();
+        public override void Write(
+            byte[] buffer,
+            int offset,
+            int count)
+            => throw new NotSupportedException();
     }
 }
