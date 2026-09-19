@@ -254,6 +254,7 @@ public sealed class MinecraftProcessService
         {
             Interlocked.Exchange(ref _running, 0);
         }
+    }
 
     internal static void PruneOwnedLogs(
         string logDirectory,
@@ -405,6 +406,5 @@ public sealed class MinecraftProcessService
                 _gate.Dispose();
             }
         }
-    }
     }
 }
