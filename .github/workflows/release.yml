@@ -187,6 +187,12 @@ jobs:
           - Instance-name uniqueness and launcher/runtime settings publication are also coordinated across processes.
           - Regression coverage exercises same-instance waiting, two-process server-favorite additions, cancellation while queued and recovery after killing a lock-holder process.
 
+          ### Diagnostic export hardening
+          - Diagnostic preview/export now requires explicit trusted log roots instead of treating any existing caller-provided path as eligible.
+          - Symlink/reparse-point source files and linked parent components are rejected, and source authorization is revalidated immediately before every log read.
+          - Windows and Linux regressions cover an allowed-root symlink targeting an outside secret plus replacement of a previously previewed regular log with a symlink before export.
+          - Existing bounded-tail limits, token/home-path sanitization and atomic ZIP replacement remain in place.
+
           ### Microsoft account status
           - The launcher continues to use UN_Nexo's own Microsoft public-client registration and the Microsoft -> Xbox Live -> XSTS -> Minecraft Services chain.
           - A Minecraft Services `403 Invalid app registration` now points directly to the official AppID review route: https://aka.ms/mce-reviewappid.
@@ -203,11 +209,11 @@ jobs:
           - Release CI still runs Core, Diagnostics, Server Status, Instance Lifecycle, Import, Fabric, Stability and Repair regressions before publication.
 
           ### Current limitations
-          - Microsoft account code is implemented, but live Minecraft Services use still depends on Minecraft approving the registered UN_Nexo Client ID. UN_Nexo will not borrow another launcher's Client ID.
-          - Forge support is still under development and is not included in this release.
-          - Dedicated Sodium/Iris compatibility presets are not included yet; compatible releases can be found and installed through Modrinth.
-          - Per-instance runtime overrides and friend-to-friend room-code/P2P networking are not implemented yet.
-          - Real Linux Mint/Cinnamon game-menu behavior remains an on-device acceptance check.
+          - Microsoft account code is implemented, but live Minecraft Services use still depends on Minecraft approving the registered UN_Nexo Client ID and real-account acceptance. UN_Nexo will not borrow another launcher's Client ID.
+          - Fabric preparation/repair is available; Forge and NeoForge installers are not included yet.
+          - HTTP Range resume, per-instance runtime overrides and friend-to-friend room-code/P2P networking are not included yet.
+          - Modrinth-compatible mod management is available; resource-pack/shader management is not included yet.
+          - Real Linux Mint/Cinnamon behavior remains an on-device acceptance check.
 
           This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
           EOF
