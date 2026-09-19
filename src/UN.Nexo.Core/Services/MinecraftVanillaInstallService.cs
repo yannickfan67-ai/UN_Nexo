@@ -421,6 +421,56 @@ public sealed class MinecraftVanillaInstallService
         return value.GetString();
     }
 
+    private static string? OptionalSha1(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+        => NormalizeSha1(
+            OptionalString(
+                element,
+                propertyName,
+                displayName),
+            displayName);
+
+    private static string? NormalizeSha1(
+        string? value,
+        string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        if (!IsSha1(value))
+            throw InvalidMetadata(
+                displayName,
+                "a 40-character hexadecimal SHA-1");
+        return value.ToLowerInvariant();
+    }
+
+    private static long? OptionalSize(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+            return null;
+        if (value.ValueKind != JsonValueKind.Number
+            || !value.TryGetInt64(out var size)
+            || size <= 0)
+            throw InvalidMetadata(
+                displayName,
+                "a positive integer");
+        return size;
+    }
+
+    private static void RequireBinaryIntegrity(
+        string? sha1,
+        long? size,
+        string displayName)
+    {
+        if (sha1 is null && size is null)
+            throw new InvalidDataException(
+                $"{displayName} must provide SHA-1 or a positive size before it can be treated as a required binary artifact.");
+    }
+
     private static InvalidDataException InvalidMetadata(
         string propertyName,
         string expected)
@@ -507,43 +557,198 @@ public sealed class MinecraftVanillaInstallService
     private static bool IsSha1(string? value)
         => value is { Length: 40 } && value.All(Uri.IsHexDigit);
 
-    private List<DownloadJob> CollectLibraryDownloads(JsonElement root, string librariesRoot, string nativesRoot)
+    private List<DownloadJob> CollectLibraryDownloads(
+        JsonElement root,
+        string librariesRoot,
+        string nativesRoot)
     {
         var jobs = new List<DownloadJob>();
         if (!root.TryGetProperty("libraries", out var libraries))
             return jobs;
+        if (libraries.ValueKind != JsonValueKind.Array)
+            throw InvalidMetadata("libraries", "an array");
 
+        var index = 0;
         foreach (var library in libraries.EnumerateArray())
         {
-            if (!MinecraftRules.Allows(library)
-                || !library.TryGetProperty("downloads", out var downloads))
-                continue;
+            if (library.ValueKind != JsonValueKind.Object)
+                throw InvalidMetadata(
+                    $"libraries[{index}]",
+                    "an object");
 
-            if (downloads.TryGetProperty("artifact", out var artifact))
-                AddDownloadJob(jobs, artifact, librariesRoot, null, []);
-
-            var classifier = MinecraftRules.NativeClassifier(library);
-            if (string.IsNullOrWhiteSpace(classifier)
-                || !downloads.TryGetProperty("classifiers", out var classifiers)
-                || !classifiers.TryGetProperty(classifier, out var nativeArtifact))
-                continue;
-
-            var excludes = new List<string> { "META-INF/" };
-            if (library.TryGetProperty("extract", out var extract)
-                && extract.TryGetProperty("exclude", out var excludeArray))
+            if (!MinecraftRules.Allows(library))
             {
-                foreach (var item in excludeArray.EnumerateArray())
+                index++;
+                continue;
+            }
+
+            var artifactAdded = false;
+            JsonElement downloads = default;
+            var hasDownloads = library.TryGetProperty(
+                "downloads",
+                out downloads);
+            if (hasDownloads)
+            {
+                if (downloads.ValueKind != JsonValueKind.Object)
+                    throw InvalidMetadata(
+                        $"libraries[{index}].downloads",
+                        "an object");
+
+                if (downloads.TryGetProperty(
+                        "artifact",
+                        out var artifact))
                 {
-                    var value = item.GetString();
-                    if (!string.IsNullOrWhiteSpace(value))
-                        excludes.Add(value);
+                    AddDownloadJob(
+                        jobs,
+                        artifact,
+                        librariesRoot,
+                        null,
+                        [],
+                        $"libraries[{index}].downloads.artifact");
+                    artifactAdded = true;
                 }
             }
 
-            AddDownloadJob(jobs, nativeArtifact, librariesRoot, nativesRoot, excludes);
+            if (!artifactAdded
+                && library.TryGetProperty(
+                    "name",
+                    out var nameElement))
+            {
+                if (nameElement.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(
+                        nameElement.GetString()))
+                    throw InvalidMetadata(
+                        $"libraries[{index}].name",
+                        "a non-empty Maven coordinate");
+
+                AddMavenFallbackJob(
+                    jobs,
+                    library,
+                    nameElement.GetString()!,
+                    librariesRoot,
+                    index);
+            }
+
+            var classifier = MinecraftRules.NativeClassifier(
+                library);
+            if (!string.IsNullOrWhiteSpace(classifier))
+            {
+                if (!hasDownloads
+                    || !downloads.TryGetProperty(
+                        "classifiers",
+                        out var classifiers)
+                    || classifiers.ValueKind
+                        != JsonValueKind.Object
+                    || !classifiers.TryGetProperty(
+                        classifier,
+                        out var nativeArtifact))
+                    throw new InvalidDataException(
+                        $"Library {index} requires native classifier '{classifier}' but does not declare a matching download.");
+
+                var excludes = new List<string>
+                {
+                    "META-INF/"
+                };
+                if (library.TryGetProperty(
+                        "extract",
+                        out var extract))
+                {
+                    if (extract.ValueKind
+                        != JsonValueKind.Object)
+                        throw InvalidMetadata(
+                            $"libraries[{index}].extract",
+                            "an object");
+                    if (extract.TryGetProperty(
+                            "exclude",
+                            out var excludeArray))
+                    {
+                        if (excludeArray.ValueKind
+                            != JsonValueKind.Array)
+                            throw InvalidMetadata(
+                                $"libraries[{index}].extract.exclude",
+                                "an array");
+                        foreach (var item
+                                 in excludeArray.EnumerateArray())
+                        {
+                            if (item.ValueKind
+                                != JsonValueKind.String)
+                                throw InvalidMetadata(
+                                    $"libraries[{index}].extract.exclude[]",
+                                    "a string");
+                            var value = item.GetString();
+                            if (!string.IsNullOrWhiteSpace(value))
+                                excludes.Add(value);
+                        }
+                    }
+                }
+
+                AddDownloadJob(
+                    jobs,
+                    nativeArtifact,
+                    librariesRoot,
+                    nativesRoot,
+                    excludes,
+                    $"libraries[{index}].downloads.classifiers.{classifier}");
+            }
+
+            index++;
         }
 
         return jobs;
+    }
+
+    private static void AddMavenFallbackJob(
+        ICollection<DownloadJob> jobs,
+        JsonElement library,
+        string coordinate,
+        string librariesRoot,
+        int index)
+    {
+        var relativePath =
+            MavenArtifactPath.FromCoordinate(coordinate);
+        var localPath = MetadataPath.ResolveRelativePath(
+            librariesRoot,
+            relativePath,
+            "Maven library path");
+
+        var repositoryText = library.TryGetProperty(
+            "url",
+            out var repositoryElement)
+            ? repositoryElement.ValueKind
+                == JsonValueKind.String
+                ? repositoryElement.GetString()
+                : throw InvalidMetadata(
+                    $"libraries[{index}].url",
+                    "a string")
+            : null;
+        var repository = TrustedDownloadPolicy.RequireTrustedUri(
+            string.IsNullOrWhiteSpace(repositoryText)
+                ? "https://libraries.minecraft.net/"
+                : repositoryText!,
+            $"libraries[{index}].url");
+
+        var baseText = repository.AbsoluteUri.EndsWith(
+            "/",
+            StringComparison.Ordinal)
+            ? repository.AbsoluteUri
+            : repository.AbsoluteUri + "/";
+        var artifactUri = new Uri(
+            new Uri(baseText, UriKind.Absolute),
+            relativePath.Replace(
+                Path.DirectorySeparatorChar,
+                '/'));
+        artifactUri = TrustedDownloadPolicy.RequireTrustedUri(
+            artifactUri.AbsoluteUri,
+            $"libraries[{index}] Maven artifact URL");
+
+        jobs.Add(new DownloadJob(
+            artifactUri.AbsoluteUri,
+            localPath,
+            Sha1: null,
+            Size: null,
+            ChecksumUrl: artifactUri.AbsoluteUri + ".sha1",
+            ExtractTo: null,
+            Excludes: []));
     }
 
     private static void AddDownloadJob(
@@ -551,23 +756,58 @@ public sealed class MinecraftVanillaInstallService
         JsonElement element,
         string librariesRoot,
         string? extractTo,
-        IReadOnlyList<string> excludes)
+        IReadOnlyList<string> excludes,
+        string displayName)
     {
-        if (!element.TryGetProperty("url", out var urlElement)
-            || !element.TryGetProperty("path", out var pathElement))
-            return;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata(
+                displayName,
+                "an object");
 
-        var url = urlElement.GetString();
-        var relativePath = pathElement.GetString();
-        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(relativePath))
-            return;
-
-        var sha1 = element.TryGetProperty("sha1", out var shaElement) ? shaElement.GetString() : null;
+        var url = RequireString(
+            element,
+            "url",
+            displayName + ".url");
+        var relativePath = RequireString(
+            element,
+            "path",
+            displayName + ".path");
+        var sha1 = OptionalSha1(
+            element,
+            "sha1",
+            displayName + ".sha1");
+        var size = OptionalSize(
+            element,
+            "size",
+            displayName + ".size");
         var localPath = MetadataPath.ResolveRelativePath(
             librariesRoot,
             relativePath,
             "library artifact path");
-        jobs.Add(new DownloadJob(url, localPath, sha1, extractTo, excludes));
+
+        string? checksumUrl = null;
+        if (sha1 is null && size is null)
+        {
+            var trusted = TrustedDownloadPolicy.RequireTrustedUri(
+                url,
+                displayName + ".url");
+            if (trusted.Host.Equals(
+                    "libraries.minecraft.net",
+                    StringComparison.OrdinalIgnoreCase)
+                || trusted.Host.Equals(
+                    "maven.fabricmc.net",
+                    StringComparison.OrdinalIgnoreCase))
+                checksumUrl = trusted.AbsoluteUri + ".sha1";
+        }
+
+        jobs.Add(new DownloadJob(
+            url,
+            localPath,
+            sha1,
+            size,
+            checksumUrl,
+            extractTo,
+            excludes));
     }
 
     internal static void ExtractNativeArchive(
