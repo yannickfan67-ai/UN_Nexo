@@ -93,13 +93,13 @@ internal static class LaunchIntegrityRegression
                 fixture.Account,
                 [fixture.Java]);
 
+            var repairedVirtual = await File.ReadAllBytesAsync(virtualPath);
+            var repairedResource = await File.ReadAllBytesAsync(resourcePath);
             Assert(
-                fixture.ObjectBytes.AsSpan().SequenceEqual(
-                    await File.ReadAllBytesAsync(virtualPath)),
+                fixture.ObjectBytes.SequenceEqual(repairedVirtual),
                 "Same-size corrupted virtual asset must be restored from the authoritative object.");
             Assert(
-                fixture.ObjectBytes.AsSpan().SequenceEqual(
-                    await File.ReadAllBytesAsync(resourcePath)),
+                fixture.ObjectBytes.SequenceEqual(repairedResource),
                 "Same-size corrupted resources asset must be restored from the authoritative object.");
 
             _ = await builder.BuildAsync(
@@ -107,13 +107,13 @@ internal static class LaunchIntegrityRegression
                 fixture.Account,
                 [fixture.Java]);
 
+            var stableVirtual = await File.ReadAllBytesAsync(virtualPath);
+            var stableResource = await File.ReadAllBytesAsync(resourcePath);
             Assert(
-                fixture.ObjectBytes.AsSpan().SequenceEqual(
-                    await File.ReadAllBytesAsync(virtualPath)),
+                fixture.ObjectBytes.SequenceEqual(stableVirtual),
                 "Already-correct virtual asset should remain correct.");
             Assert(
-                fixture.ObjectBytes.AsSpan().SequenceEqual(
-                    await File.ReadAllBytesAsync(resourcePath)),
+                fixture.ObjectBytes.SequenceEqual(stableResource),
                 "Already-correct resources asset should remain correct.");
         }
         finally
