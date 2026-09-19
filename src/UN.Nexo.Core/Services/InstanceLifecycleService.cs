@@ -17,11 +17,14 @@ public sealed class InstanceLifecycleService
     private const int MaxBackupFilePathLength = 4096;
     private const long FreeSpaceReserveBytes = 64L * 1024 * 1024;
     private readonly NexoPathService _paths;
+    private readonly InstanceOperationCoordinator _instanceOperations;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public InstanceLifecycleService(NexoPathService paths)
     {
         _paths = paths;
+        _instanceOperations =
+            new InstanceOperationCoordinator(paths);
     }
 
     public async Task<GameInstance> CloneAsync(
@@ -43,6 +46,11 @@ public sealed class InstanceLifecycleService
         if (!Directory.Exists(sourceRoot))
             throw new DirectoryNotFoundException($"Instance directory is missing: {sourceRoot}");
         RejectReparsePoint(sourceRoot);
+        using var operation =
+            await _instanceOperations.AcquireAsync(
+                source.Id,
+                "clone instance",
+                cancellationToken);
 
         var newId = Guid.NewGuid().ToString("N");
         var destinationRoot = _paths.GetInstanceDirectory(newId);
@@ -110,6 +118,11 @@ public sealed class InstanceLifecycleService
         if (!Directory.Exists(savesRoot))
             throw new InvalidOperationException("This instance has no saves directory yet.");
         RejectReparsePoint(savesRoot);
+        using var operation =
+            await _instanceOperations.AcquireAsync(
+                instance.Id,
+                "back up worlds",
+                cancellationToken);
 
         var worlds = Directory.EnumerateDirectories(savesRoot)
             .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
@@ -246,6 +259,12 @@ public sealed class InstanceLifecycleService
         var inspected = await ReadBackupAsync(backupPath, cancellationToken);
         if (!inspected.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
             throw new InvalidOperationException("The backup file was replaced and now belongs to a different instance.");
+        using var operation =
+            await _instanceOperations.AcquireAsync(
+                instance.Id,
+                "restore world",
+                cancellationToken);
+
         var world = inspected.Worlds.FirstOrDefault(
             item => item is not null && item.Name.Equals(worldName, StringComparison.Ordinal));
         if (world is null)
@@ -684,7 +703,10 @@ public sealed class InstanceLifecycleService
     private static bool ShouldCopyClonePath(string sourceRoot, string path, bool includeWorlds)
     {
         var relative = Path.GetRelativePath(sourceRoot, path);
-        if (relative.Equals("instance.json", StringComparison.OrdinalIgnoreCase))
+        if (relative.Equals("instance.json", StringComparison.OrdinalIgnoreCase)
+            || relative.Equals(
+                InstanceOperationCoordinator.LockFileName,
+                StringComparison.OrdinalIgnoreCase))
             return false;
         if (relative.Equals("restore-safety", StringComparison.OrdinalIgnoreCase)
             || relative.StartsWith($"restore-safety{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase)
