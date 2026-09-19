@@ -1143,7 +1143,7 @@ internal static class Program
             if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 const string metadata =
-                    "{\"id\":\"asset-index-validation\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
+                    "{\"id\":\"asset-index-validation\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(metadata, Encoding.UTF8, "application/json")
@@ -1192,7 +1192,7 @@ internal static class Program
             {
                 var encodedId = System.Text.Json.JsonSerializer.Serialize(assetId);
                 var metadata =
-                    "{\"id\":\"asset-id-test\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},\"assetIndex\":{\"id\":"
+                    "{\"id\":\"asset-id-test\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},\"assetIndex\":{\"id\":"
                     + encodedId
                     + ",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
