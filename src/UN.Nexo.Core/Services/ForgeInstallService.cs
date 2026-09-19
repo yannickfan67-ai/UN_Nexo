@@ -95,6 +95,7 @@ public sealed class ForgeInstallService
         if (string.IsNullOrWhiteSpace(instance.LoaderVersion))
             throw new InvalidOperationException(
                 "Forge version is missing from the instance metadata.");
+        var forgeVersion = instance.LoaderVersion.Trim();
 
         if (!string.IsNullOrWhiteSpace(instance.BaseVersionId)
             && !instance.BaseVersionId.Equals(
@@ -107,7 +108,7 @@ public sealed class ForgeInstallService
 
         var expectedLaunchId = ForgeMetaService.GetLaunchVersionId(
             baseVersion.Id,
-            instance.LoaderVersion);
+            forgeVersion);
         if (!instance.VersionId.Equals(
                 expectedLaunchId,
                 StringComparison.Ordinal))
@@ -228,13 +229,13 @@ public sealed class ForgeInstallService
                     "Forge installer",
                     0,
                     1,
-                    instance.LoaderVersion));
+                    forgeVersion));
 
             var installerPath =
                 await EnsureInstallerAsync(
                     instance,
                     baseVersion.Id,
-                    instance.LoaderVersion,
+                    forgeVersion,
                     cancellationToken);
 
             Report(
@@ -312,7 +313,7 @@ public sealed class ForgeInstallService
                 version = instance.VersionId,
                 baseVersion = baseVersion.Id,
                 loader = "forge",
-                loaderVersion = instance.LoaderVersion,
+                loaderVersion = forgeVersion,
                 launchVersion = instance.VersionId,
                 installedAt = DateTimeOffset.UtcNow,
                 source = "minecraftforge-official-installer",
@@ -338,7 +339,7 @@ public sealed class ForgeInstallService
                     1,
                     instance.VersionId,
                     Detail:
-                        $"Forge {instance.LoaderVersion} is ready"));
+                        $"Forge {forgeVersion} is ready"));
         }
         catch
         {
