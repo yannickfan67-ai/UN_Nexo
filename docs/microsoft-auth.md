@@ -63,3 +63,12 @@ For service-restricted regions, Nexo may offer a narrow continuity fallback only
 The launcher stores only the non-secret time of the last successful entitlement/profile verification. It does not persist the public IP address or country result. The geolocation response is used in memory only. A geolocation timeout, malformed response, redirect, unknown country, or failed request does not grant offline access.
 
 Generic offline profiles are not a substitute for this policy and are not eligible to launch under the restricted-region fallback.
+
+
+## Explicit offline test mode
+
+Packaged builds recognize the exact command-line switch `--test-offline` for launcher development and troubleshooting. The switch is never enabled by default.
+
+When the launcher is started with `--test-offline`, a locally configured Offline profile may launch without a Microsoft/Minecraft session so maintainers can quickly isolate Java, instance, loader, mod, graphics, and process-launch failures from authentication failures. The window title and launch status are visibly marked `TEST OFFLINE`.
+
+This mode does not represent the profile as Microsoft-authenticated, does not create entitlement metadata, does not grant a Minecraft Services token, and does not change the normal launch policy when the switch is absent. It is a diagnostic/test path and must not be presented as proof of Minecraft ownership.
