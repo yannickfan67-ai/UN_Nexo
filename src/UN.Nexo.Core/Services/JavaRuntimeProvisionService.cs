@@ -476,17 +476,196 @@ public sealed class JavaRuntimeProvisionService
             throw new InvalidDataException("Java runtime SHA-256 verification failed.");
     }
 
-    private static void ExtractArchive(string archivePath, string destination)
+    internal static void ExtractArchive(string archivePath, string destination)
     {
+        var root = Path.GetFullPath(destination);
+        Directory.CreateDirectory(root);
+        RejectReparsePoint(root);
+
         if (archivePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
         {
-            ZipFile.ExtractToDirectory(archivePath, destination, overwriteFiles: true);
+            using var archive = ZipFile.OpenRead(archivePath);
+            foreach (var entry in archive.Entries)
+            {
+                var target = ResolveArchiveEntry(root, entry.FullName);
+                if (IsZipSymlink(entry))
+                    throw new InvalidDataException(
+                        $"Managed Java ZIP contains a symbolic-link entry: {entry.FullName}");
+
+                if (entry.FullName.EndsWith("/", StringComparison.Ordinal)
+                    || string.IsNullOrEmpty(entry.Name))
+                {
+                    CreateDirectoryTreeSafe(root, target);
+                    continue;
+                }
+
+                CreateDirectoryTreeSafe(
+                    root,
+                    Path.GetDirectoryName(target)
+                    ?? throw new InvalidDataException("Managed Java ZIP entry has no parent directory."));
+                RejectExistingReparsePoint(target);
+                using var input = entry.Open();
+                using var output = new FileStream(
+                    target,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None);
+                input.CopyTo(output);
+            }
             return;
         }
 
         using var file = File.OpenRead(archivePath);
         using var gzip = new GZipStream(file, CompressionMode.Decompress);
-        TarFile.ExtractToDirectory(gzip, destination, overwriteFiles: true);
+        using var reader = new TarReader(gzip, leaveOpen: false);
+        TarEntry? tarEntry;
+        while ((tarEntry = reader.GetNextEntry()) is not null)
+        {
+            var target = ResolveArchiveEntry(root, tarEntry.Name);
+            switch (tarEntry.EntryType)
+            {
+                case TarEntryType.Directory:
+                    CreateDirectoryTreeSafe(root, target);
+                    break;
+
+                case TarEntryType.RegularFile:
+                case TarEntryType.V7RegularFile:
+                    CreateDirectoryTreeSafe(
+                        root,
+                        Path.GetDirectoryName(target)
+                        ?? throw new InvalidDataException("Managed Java TAR entry has no parent directory."));
+                    RejectExistingReparsePoint(target);
+                    using (var output = new FileStream(
+                               target,
+                               FileMode.CreateNew,
+                               FileAccess.Write,
+                               FileShare.None))
+                    {
+                        tarEntry.DataStream?.CopyTo(output);
+                    }
+                    break;
+
+                case TarEntryType.SymbolicLink:
+                    CreateSafeTarSymlink(root, target, tarEntry);
+                    break;
+
+                default:
+                    throw new InvalidDataException(
+                        $"Managed Java TAR contains unsupported entry type {tarEntry.EntryType}: {tarEntry.Name}");
+            }
+        }
+    }
+
+    private static string ResolveArchiveEntry(string root, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)
+            || name.Contains('\\')
+            || name.StartsWith("/", StringComparison.Ordinal)
+            || Path.IsPathRooted(name)
+            || name.Any(char.IsControl))
+            throw new InvalidDataException($"Unsafe managed Java archive entry: {name}");
+
+        var segments = name.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0 || segments.Any(segment => segment is "." or ".."))
+            throw new InvalidDataException($"Unsafe managed Java archive entry: {name}");
+
+        var target = Path.GetFullPath(
+            Path.Combine(root, string.Join(Path.DirectorySeparatorChar, segments)));
+        EnsureContained(root, target, $"Managed Java archive entry '{name}'");
+        return target;
+    }
+
+    private static void CreateDirectoryTreeSafe(string root, string directory)
+    {
+        EnsureContained(root, directory, "Managed Java extraction directory");
+        var relative = Path.GetRelativePath(root, directory);
+        if (relative == ".")
+            return;
+
+        var current = root;
+        foreach (var component in relative.Split(
+                     Path.DirectorySeparatorChar,
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, component);
+            if (File.Exists(current) && !Directory.Exists(current))
+                throw new InvalidDataException(
+                    $"Managed Java extraction path collides with a file: {current}");
+            if (Directory.Exists(current))
+            {
+                RejectReparsePoint(current);
+                continue;
+            }
+
+            Directory.CreateDirectory(current);
+            RejectReparsePoint(current);
+        }
+    }
+
+    private static void CreateSafeTarSymlink(string root, string linkPath, TarEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.LinkName)
+            || Path.IsPathRooted(entry.LinkName)
+            || entry.LinkName.Contains('\\')
+            || entry.LinkName.Any(char.IsControl))
+            throw new InvalidDataException(
+                $"Managed Java TAR contains an unsafe symbolic-link target: {entry.Name}");
+
+        var parent = Path.GetDirectoryName(linkPath)
+            ?? throw new InvalidDataException("Managed Java TAR symbolic link has no parent directory.");
+        CreateDirectoryTreeSafe(root, parent);
+        RejectExistingReparsePoint(linkPath);
+
+        var resolvedTarget = Path.GetFullPath(
+            Path.Combine(
+                parent,
+                entry.LinkName.Replace('/', Path.DirectorySeparatorChar)));
+        EnsureContained(
+            root,
+            resolvedTarget,
+            $"Managed Java TAR symbolic link '{entry.Name}'");
+
+        File.CreateSymbolicLink(linkPath, entry.LinkName);
+    }
+
+    private static void EnsureContained(string root, string candidate, string label)
+    {
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var fullCandidate = Path.GetFullPath(candidate);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (fullCandidate.Equals(fullRoot, comparison))
+            return;
+
+        var prefix = fullRoot + Path.DirectorySeparatorChar;
+        if (!fullCandidate.StartsWith(prefix, comparison))
+            throw new InvalidDataException($"{label} escapes the managed Java staging directory.");
+    }
+
+    private static void RejectExistingReparsePoint(string path)
+    {
+        if ((File.Exists(path) || Directory.Exists(path))
+            && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException(
+                $"Managed Java extraction refuses to overwrite a symbolic link/reparse point: {path}");
+        if (File.Exists(path) || Directory.Exists(path))
+            throw new InvalidDataException(
+                $"Managed Java archive contains a duplicate/colliding entry: {path}");
+    }
+
+    private static void RejectReparsePoint(string path)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException(
+                $"Managed Java extraction path contains a symbolic link/reparse point: {path}");
+    }
+
+    private static bool IsZipSymlink(ZipArchiveEntry entry)
+    {
+        var unixMode = (entry.ExternalAttributes >> 16) & 0xF000;
+        return unixMode == 0xA000;
     }
 
     private static string? FindJavaExecutable(string root)
