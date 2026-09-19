@@ -496,7 +496,9 @@ internal static class ModDependencyRegression
         }
     }
 
-    private sealed class SkipSymlinkRegressionException : Exception;
+    private sealed class SkipSymlinkRegressionException : Exception
+    {
+    }
 
     private static void Assert(bool condition, string message)
     {
