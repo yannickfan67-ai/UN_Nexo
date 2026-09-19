@@ -278,7 +278,7 @@ internal static class FabricLibraryIntegrityRegression
             {
                 const string metadata =
                     "{\"id\":\"1.21.4\",\"libraries\":[],"
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                     + "\"assetIndex\":{\"id\":\"fabric-library-assets\","
                     + "\"url\":\"https://launchermeta.mojang.com/fabric-library-assets.json\"}}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
