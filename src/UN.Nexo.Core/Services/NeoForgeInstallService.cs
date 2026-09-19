@@ -263,6 +263,16 @@ public sealed class NeoForgeInstallService
                 java.JavaPath,
                 installerPath,
                 gameRoot);
+
+            // The official installer writes directly into libraries/versions.
+            // Revalidate those mutable descendants immediately before yielding
+            // control to the external Java process.
+            _paths.EnsureInstanceDirectoryPhysical(
+                instance.Id);
+            InstallerGameTreeGuard.Validate(
+                gameRoot,
+                "NeoForge");
+
             var result = await _processRunner(
                 startInfo,
                 cancellationToken);
@@ -272,6 +282,14 @@ public sealed class NeoForgeInstallService
                 startInfo,
                 result,
                 cancellationToken);
+
+            // Treat installer output as untrusted filesystem state until the
+            // managed publication boundary has been checked again.
+            _paths.EnsureInstanceDirectoryPhysical(
+                instance.Id);
+            InstallerGameTreeGuard.Validate(
+                gameRoot,
+                "NeoForge");
 
             if (result.ExitCode != 0)
             {
