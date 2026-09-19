@@ -13,30 +13,22 @@ internal static class CurseForgeFingerprint
         if (!stream.CanRead)
             throw new ArgumentException("Fingerprint input must be readable.", nameof(stream));
 
-        // CurseForge's file fingerprint is MurmurHash2 over the file bytes after
-        // filtering ASCII whitespace bytes TAB/LF/CR/SPACE. The normalized bytes
-        // are streamed so a large JAR does not need to be buffered in memory.
-        uint normalizedLength = 0;
-        uint hash = 0;
-        var shift = 0;
-        var partial = 0u;
-        var buffer = new byte[128 * 1024];
-
-        // MurmurHash2's initial state depends on normalized length. We cannot know
-        // that before filtering, so retain normalized bytes in a bounded temp file
-        // instead of the managed heap, then hash them in a second streaming pass.
         var temporaryPath = Path.Combine(
             Path.GetTempPath(),
             "UN_Nexo",
             "curseforge-fingerprint-" + Guid.NewGuid().ToString("N") + ".tmp");
         Directory.CreateDirectory(Path.GetDirectoryName(temporaryPath)!);
 
+        uint normalizedLength = 0;
+        var inputBuffer = new byte[128 * 1024];
+        var normalizedBuffer = new byte[inputBuffer.Length];
+
         try
         {
             await using (var normalized = new FileStream(
                              temporaryPath,
                              FileMode.CreateNew,
-                             FileAccess.Write,
+                             FileAccess.ReadWrite,
                              FileShare.None,
                              128 * 1024,
                              FileOptions.Asynchronous
@@ -45,36 +37,42 @@ internal static class CurseForgeFingerprint
             {
                 while (true)
                 {
-                    var read = await stream.ReadAsync(buffer, cancellationToken);
+                    var read = await stream.ReadAsync(inputBuffer, cancellationToken);
                     if (read == 0)
                         break;
 
+                    var writeCount = 0;
                     for (var index = 0; index < read; index++)
                     {
-                        var value = buffer[index];
-                        if (IsWhitespace(value))
-                            continue;
-
-                        normalizedLength++;
-                        await normalized.WriteAsync(
-                            buffer.AsMemory(index, 1),
-                            cancellationToken);
+                        var value = inputBuffer[index];
+                        if (!IsWhitespace(value))
+                            normalizedBuffer[writeCount++] = value;
                     }
+
+                    if (writeCount == 0)
+                        continue;
+                    normalizedLength = checked(normalizedLength + (uint)writeCount);
+                    await normalized.WriteAsync(
+                        normalizedBuffer.AsMemory(0, writeCount),
+                        cancellationToken);
                 }
 
                 await normalized.FlushAsync(cancellationToken);
                 normalized.Position = 0;
-                hash = Seed ^ normalizedLength;
+
+                var hash = Seed ^ normalizedLength;
+                uint partial = 0;
+                var shift = 0;
 
                 while (true)
                 {
-                    var read = await normalized.ReadAsync(buffer, cancellationToken);
+                    var read = await normalized.ReadAsync(inputBuffer, cancellationToken);
                     if (read == 0)
                         break;
 
                     for (var index = 0; index < read; index++)
                     {
-                        partial |= (uint)buffer[index] << shift;
+                        partial |= (uint)inputBuffer[index] << shift;
                         shift += 8;
                         if (shift != 32)
                             continue;
@@ -86,14 +84,14 @@ internal static class CurseForgeFingerprint
                         shift = 0;
                     }
                 }
+
+                if (shift > 0)
+                    hash = unchecked((hash ^ partial) * Multiplex);
+
+                hash = unchecked((hash ^ (hash >> 13)) * Multiplex);
+                hash ^= hash >> 15;
+                return hash;
             }
-
-            if (shift > 0)
-                hash = unchecked((hash ^ partial) * Multiplex);
-
-            hash = unchecked((hash ^ (hash >> 13)) * Multiplex);
-            hash ^= hash >> 15;
-            return hash;
         }
         finally
         {
