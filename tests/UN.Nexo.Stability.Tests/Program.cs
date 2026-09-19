@@ -257,7 +257,7 @@ internal static class Program
 
                 const string metadata =
                     "{\"id\":\"stall-test\",\"type\":\"release\",\"libraries\":[],"
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/stall-client.jar\"}},"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/stall-client.jar\",\"size\":6}},"
                     + "\"assetIndex\":{\"id\":\"stall-assets\","
                     + "\"url\":\"https://launchermeta.mojang.com/stall-assets.json\"}}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
@@ -320,7 +320,7 @@ internal static class Program
             {
                 const string metadata =
                     "{\"id\":\"telemetry-test\",\"type\":\"release\",\"libraries\":[],"
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/telemetry-client.jar\"}},"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/telemetry-client.jar\",\"size\":24}},"
                     + "\"assetIndex\":{\"id\":\"telemetry-assets\","
                     + "\"url\":\"https://launchermeta.mojang.com/telemetry-assets.json\"}}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
