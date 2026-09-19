@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -540,7 +539,6 @@ internal static class Program
         if (!value.Contains(expected, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"{message}: '{expected}' not found in '{value}'.");
     }
-}
 
     private sealed class StubSrvResolver(
         Func<string, MinecraftSrvEndpoint?> resolve)
