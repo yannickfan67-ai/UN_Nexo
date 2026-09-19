@@ -40,8 +40,9 @@ internal static class InstallStateAtomicRegression
             {
             }
 
+            var afterCancellation = await File.ReadAllBytesAsync(path);
             Assert(
-                original.AsSpan().SequenceEqual(await File.ReadAllBytesAsync(path)),
+                original.AsSpan().SequenceEqual(afterCancellation),
                 "Cancellation before publication must preserve the previous destination bytes.");
             AssertNoTemps(root, path);
         }
