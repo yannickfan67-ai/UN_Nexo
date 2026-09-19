@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -13,11 +14,14 @@ public sealed class JavaRuntimeProvisionService
 {
     private const int MaxAdoptiumMetadataBytes = 1024 * 1024;
     private static readonly HttpClient SharedClient = CreateSharedClient();
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> ProvisionGates = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly HttpClient _httpClient;
     private readonly NexoPathService _paths;
     private readonly TimeSpan _transferIdleTimeout;
     private readonly Func<string, int, CancellationToken, Task<bool>> _runtimeValidator;
-    private readonly HashSet<string> _trustedThisSession = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _trustedThisSession = new(
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     public JavaRuntimeProvisionService(NexoPathService paths)
         : this(SharedClient, paths)
@@ -62,79 +66,94 @@ public sealed class JavaRuntimeProvisionService
         if (existing is not null)
             return existing;
 
-        progress?.Report($"Finding Java {major} runtime…");
-        var asset = await ResolveAssetAsync(major, os, cancellationToken);
-        var downloadRoot = Path.Combine(runtimesRoot, ".downloads");
-        Directory.CreateDirectory(downloadRoot);
-        var archiveExtension = asset.Link.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
-            ? ".zip"
-            : asset.Link.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
-                ? ".tar.gz"
-                : throw new InvalidDataException("Java runtime package has an unsupported archive type.");
-        var archivePath = Path.Combine(downloadRoot, $"temurin-{major}-{os}-x64{archiveExtension}");
-        var partPath = archivePath + ".part";
-
+        var gate = ProvisionGates.GetOrAdd(
+            Path.GetFullPath(targetRoot),
+            static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
         try
         {
-            await DownloadAsync(asset.Link, partPath, major, progress, cancellationToken);
-            await VerifySha256Async(partPath, asset.Sha256, cancellationToken);
-            File.Move(partPath, archivePath, overwrite: true);
+            existing = await TryLoadExistingAsync(targetRoot, major, cancellationToken);
+            if (existing is not null)
+                return existing;
 
-            progress?.Report($"Installing Java {major} runtime…");
-            var stagingRoot = Path.Combine(runtimesRoot, $".staging-{major}-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(stagingRoot);
+            progress?.Report($"Finding Java {major} runtime…");
+            var asset = await ResolveAssetAsync(major, os, cancellationToken);
+            var downloadRoot = Path.Combine(runtimesRoot, ".downloads");
+            Directory.CreateDirectory(downloadRoot);
+            var archiveExtension = asset.Link.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
+                ? ".zip"
+                : asset.Link.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
+                    ? ".tar.gz"
+                    : throw new InvalidDataException("Java runtime package has an unsupported archive type.");
+            var archivePath = Path.Combine(downloadRoot, $"temurin-{major}-{os}-x64{archiveExtension}");
+            var partPath = archivePath + ".part";
+
             try
             {
-                ExtractArchive(archivePath, stagingRoot);
-                var javaPath = FindJavaExecutable(stagingRoot)
-                    ?? throw new InvalidDataException("Downloaded Java runtime does not contain bin/java.");
-                var binDirectory = Path.GetDirectoryName(javaPath)
-                    ?? throw new InvalidDataException("Downloaded Java runtime has an invalid bin directory.");
-                var runtimeHome = Directory.GetParent(binDirectory)?.FullName
-                    ?? throw new InvalidDataException("Downloaded Java runtime has an invalid home directory.");
-                var relativeJavaPath = Path.GetRelativePath(runtimeHome, javaPath);
+                await DownloadAsync(asset.Link, partPath, major, progress, cancellationToken);
+                await VerifySha256Async(partPath, asset.Sha256, cancellationToken);
+                File.Move(partPath, archivePath, overwrite: true);
 
-                EnsureUnixExecutable(javaPath);
-                var stagedSpawnHelper = Path.Combine(runtimeHome, "lib", "jspawnhelper");
-                if (File.Exists(stagedSpawnHelper))
-                    EnsureUnixExecutable(stagedSpawnHelper);
+                progress?.Report($"Installing Java {major} runtime…");
+                var stagingRoot = Path.Combine(runtimesRoot, $".staging-{major}-{Guid.NewGuid():N}");
+                Directory.CreateDirectory(stagingRoot);
+                try
+                {
+                    ExtractArchive(archivePath, stagingRoot);
+                    var javaPath = FindJavaExecutable(stagingRoot)
+                        ?? throw new InvalidDataException("Downloaded Java runtime does not contain bin/java.");
+                    var binDirectory = Path.GetDirectoryName(javaPath)
+                        ?? throw new InvalidDataException("Downloaded Java runtime has an invalid bin directory.");
+                    var runtimeHome = Directory.GetParent(binDirectory)?.FullName
+                        ?? throw new InvalidDataException("Downloaded Java runtime has an invalid home directory.");
+                    var relativeJavaPath = Path.GetRelativePath(runtimeHome, javaPath);
 
-                var manifest = new ManagedRuntimeManifest(
-                    major,
-                    asset.Version,
-                    "Eclipse Temurin",
-                    asset.Link,
-                    asset.Sha256,
-                    DateTimeOffset.UtcNow);
-                await WriteRuntimeManifestAtomicAsync(
-                    runtimeHome,
-                    manifest,
-                    cancellationToken);
+                    EnsureUnixExecutable(javaPath);
+                    var stagedSpawnHelper = Path.Combine(runtimeHome, "lib", "jspawnhelper");
+                    if (File.Exists(stagedSpawnHelper))
+                        EnsureUnixExecutable(stagedSpawnHelper);
 
-                PublishRuntimeDirectory(runtimeHome, targetRoot, cancellationToken);
+                    var manifest = new ManagedRuntimeManifest(
+                        major,
+                        asset.Version,
+                        "Eclipse Temurin",
+                        asset.Link,
+                        asset.Sha256,
+                        DateTimeOffset.UtcNow);
+                    await WriteRuntimeManifestAtomicAsync(
+                        runtimeHome,
+                        manifest,
+                        cancellationToken);
 
-                var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
-                _trustedThisSession.Add(targetRoot);
-                progress?.Report($"Java {major} runtime ready.");
-                return new JavaInstallation(
-                    finalJavaPath,
-                    targetRoot,
-                    asset.Version,
-                    true,
-                    "Nexo managed · Eclipse Temurin");
+                    PublishRuntimeDirectory(runtimeHome, targetRoot, cancellationToken);
+
+                    var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
+                    _trustedThisSession.TryAdd(targetRoot, 0);
+                    progress?.Report($"Java {major} runtime ready.");
+                    return new JavaInstallation(
+                        finalJavaPath,
+                        targetRoot,
+                        asset.Version,
+                        true,
+                        "Nexo managed · Eclipse Temurin");
+                }
+                finally
+                {
+                    if (Directory.Exists(stagingRoot))
+                        Directory.Delete(stagingRoot, recursive: true);
+                }
             }
             finally
             {
-                if (Directory.Exists(stagingRoot))
-                    Directory.Delete(stagingRoot, recursive: true);
+                if (File.Exists(partPath))
+                    File.Delete(partPath);
+                if (File.Exists(archivePath))
+                    File.Delete(archivePath);
             }
         }
         finally
         {
-            if (File.Exists(partPath))
-                File.Delete(partPath);
-            if (File.Exists(archivePath))
-                File.Delete(archivePath);
+            gate.Release();
         }
     }
 
@@ -275,11 +294,11 @@ public sealed class JavaRuntimeProvisionService
             return null;
 
         EnsureUnixExecutable(javaPath);
-        if (!_trustedThisSession.Contains(targetRoot)
+        if (!_trustedThisSession.ContainsKey(targetRoot)
             && !await _runtimeValidator(javaPath, expectedMajor, cancellationToken))
             return null;
 
-        _trustedThisSession.Add(targetRoot);
+        _trustedThisSession.TryAdd(targetRoot, 0);
         return new JavaInstallation(
             javaPath,
             targetRoot,
