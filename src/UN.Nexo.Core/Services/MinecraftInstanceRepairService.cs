@@ -16,6 +16,7 @@ public sealed class MinecraftInstanceRepairService
     private readonly MinecraftRuntimeInspector _runtimeInspector;
     private readonly JavaRuntimeProvisionService _runtimeProvisioner;
     private readonly FabricInstallService? _fabricInstaller;
+    private readonly InstanceOperationCoordinator _operations;
 
     public MinecraftInstanceRepairService(
         NexoPathService paths,
@@ -33,6 +34,7 @@ public sealed class MinecraftInstanceRepairService
         _runtimeInspector = runtimeInspector;
         _runtimeProvisioner = runtimeProvisioner;
         _fabricInstaller = fabricInstaller;
+        _operations = new InstanceOperationCoordinator(paths);
     }
 
     public async Task<InstanceHealthReport> CheckAsync(
@@ -171,6 +173,11 @@ public sealed class MinecraftInstanceRepairService
         IProgress<string>? statusProgress = null,
         CancellationToken cancellationToken = default)
     {
+        await using var operationLease = await _operations.AcquireAsync(
+            instance.Id,
+            "repair-instance",
+            cancellationToken);
+
         statusProgress?.Report("Finding Minecraft metadata…");
         var catalog = await _manifest.GetCatalogAsync(cancellationToken);
 
@@ -183,7 +190,11 @@ public sealed class MinecraftInstanceRepairService
                     $"Minecraft {instance.VersionId} is not present in the official version catalog.");
 
             statusProgress?.Report("Repairing Vanilla game files…");
-            await _installer.InstallAsync(instance, version, installProgress, cancellationToken);
+            await _installer.InstallWithinOperationAsync(
+                instance,
+                version,
+                installProgress,
+                cancellationToken);
         }
         else if (instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase))
         {
@@ -206,7 +217,7 @@ public sealed class MinecraftInstanceRepairService
 
             statusProgress?.Report(
                 $"Repairing Fabric profile and Minecraft {baseVersionId} base files…");
-            await _fabricInstaller.PrepareAsync(
+            await _fabricInstaller.PrepareWithinOperationAsync(
                 instance,
                 baseVersion,
                 installProgress,
