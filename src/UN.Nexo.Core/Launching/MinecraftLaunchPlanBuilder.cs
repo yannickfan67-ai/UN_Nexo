@@ -770,6 +770,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
         foreach (var item in actual)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!expected.ContainsKey(item.Key))
                 throw new FileNotFoundException(
                     $"Stale extracted native file is not declared by the verified native archives: {item.Value}. Run Prepare instance files again.",
