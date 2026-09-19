@@ -6,7 +6,7 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.8.0-dev
+## Current milestone — v0.8.1-dev
 
 The current development line includes:
 
@@ -21,6 +21,9 @@ The current development line includes:
 - Mojang version catalog with release history and recent snapshots
 - Per-instance Vanilla preparation with client, libraries, natives and assets
 - Safe instance rename and two-step deletion, with backups preserved by default and optional explicit backup removal
+- Hardened instance deletion uses a tombstone publication boundary and never follows nested symlink/junction/reparse entries or linked backup roots
+- Loader rollback state, Fabric/Quilt profile paths, Fabric/Quilt Maven publication/downloads and mod enable/remove mutations enforce bounded physical managed-file boundaries
+- Forge/NeoForge installer stdout/stderr and Java `-version` probes use bounded concurrent capture instead of retaining unbounded child-process output
 - First-class Fabric, Quilt, Forge and NeoForge instance preparation/launch with automatic pre-launch preparation and inherited Java/profile handling
 - Quilt, Forge and NeoForge managers support compatible loader discovery plus create, prepare and repair flows using their official metadata/distribution paths
 - One-click instance integrity checking and repair for install state, metadata, client JAR, libraries, asset index/objects, extracted natives, required Java and Linux runtime dependencies
