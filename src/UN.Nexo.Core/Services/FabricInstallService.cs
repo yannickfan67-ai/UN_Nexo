@@ -397,13 +397,29 @@ public sealed class FabricInstallService(
                 cancellationToken);
         }
 
+        var destinationParent =
+            Path.GetDirectoryName(library.Path)
+            ?? throw new InvalidDataException(
+                "Fabric library destination has no parent directory.");
+        ManagedMavenPublication.EnsureDestinationParentPhysical(
+            paths,
+            instanceId,
+            destinationParent,
+            create: true,
+            "Fabric library directory");
+        ManagedMavenPublication.RejectReparsePointIfPresent(
+            library.Path,
+            "Fabric library destination");
+
         if (await IsValidAsync(library.Path, expectedSha1, cancellationToken))
             return;
 
-        paths.EnsureInstanceDirectoryPhysical(instanceId);
-        Directory.CreateDirectory(Path.GetDirectoryName(library.Path)!);
         var temp = library.Path + ".part";
-        TryDeleteFile(temp);
+        ManagedMavenPublication.TryDeleteTempFile(
+            paths,
+            instanceId,
+            temp,
+            "Fabric library directory");
         try
         {
             using var response = await TrustedHttpDownload.SendGetAsync(
@@ -413,6 +429,17 @@ public sealed class FabricInstallService(
                 cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+
+            ManagedMavenPublication.EnsureDestinationParentPhysical(
+                paths,
+                instanceId,
+                destinationParent,
+                create: true,
+                "Fabric library directory");
+            ManagedMavenPublication.RejectReparsePointIfPresent(
+                temp,
+                "Fabric library temporary file");
+
             await using (var output = new FileStream(
                 temp,
                 FileMode.CreateNew,
@@ -433,12 +460,24 @@ public sealed class FabricInstallService(
                 throw new InvalidDataException(
                     $"Downloaded Fabric library failed verification: {library.Url}");
 
-            paths.EnsureInstanceDirectoryPhysical(instanceId);
+            ManagedMavenPublication.EnsureDestinationParentPhysical(
+                paths,
+                instanceId,
+                destinationParent,
+                create: false,
+                "Fabric library directory");
+            ManagedMavenPublication.RejectReparsePointIfPresent(
+                library.Path,
+                "Fabric library destination");
             File.Move(temp, library.Path, overwrite: true);
         }
         catch
         {
-            TryDeleteFile(temp);
+            ManagedMavenPublication.TryDeleteTempFile(
+                paths,
+                instanceId,
+                temp,
+                "Fabric library directory");
             throw;
         }
     }
