@@ -20,6 +20,7 @@ internal static class Program
             ("Java major parsing", TestJavaMajorAsync),
             ("Java discovery process cleanup", JavaDiscoveryRegression.RunAsync),
             ("Managed Java runtime acquisition", TestManagedJavaRuntimeAsync),
+            ("Managed Java concurrent provisioning", ManagedJavaConcurrencyRegression.RunAsync),
             ("Managed Java metadata hardening", TestManagedJavaMetadataHardeningAsync),
             ("Managed Java atomic publication", ManagedRuntimePublicationRegression.RunAsync),
             ("Managed Java archive containment", ManagedRuntimeArchiveRegression.RunAsync),
