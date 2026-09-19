@@ -6,10 +6,17 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class DiagnosticBundleService
 {
-    private const int MaxSourceLogs = 8;
-    private const int ExportTailBytes = 512 * 1024;
-    private const int PreviewTailBytes = 64 * 1024;
-    private const int PreviewTextLimit = 12 * 1024;
+    public const int MaxSourceLogs = 8;
+    public const int ExportTailBytes = 512 * 1024;
+    public const int PreviewTailBytes = 64 * 1024;
+    public const int PreviewTextLimit = 12 * 1024;
+
+    public static string PreviewScopeNotice =>
+        "Preview is a sanitized excerpt, not the complete ZIP contents. "
+        + $"Preview reads at most {PreviewTailBytes / 1024} KiB from each source log "
+        + $"and displays at most {PreviewTextLimit / 1024} KiB total. "
+        + $"Export may include up to {MaxSourceLogs} logs and up to {ExportTailBytes / 1024} KiB from each. "
+        + "Export re-reads the selected logs, so content written after preview may also be included.";
 
     private readonly MinecraftCrashDiagnosisService _diagnosis;
 
@@ -120,6 +127,8 @@ public sealed class DiagnosticBundleService
                         .AppendLine($"Exit code: {(exitCode?.ToString() ?? "unknown")}")
                         .AppendLine($"Diagnosis code: {sanitizedDiagnosis.Code}")
                         .AppendLine($"Included log count: {logs.Count}")
+                        .AppendLine($"Export policy: at most {MaxSourceLogs} logs, {ExportTailBytes / 1024} KiB tail per log.")
+                        .AppendLine("Preview policy: preview is a smaller sanitized excerpt and export re-reads source logs.")
                         .AppendLine()
                         .AppendLine("Source logs (paths sanitized):");
                     foreach (var path in logs)

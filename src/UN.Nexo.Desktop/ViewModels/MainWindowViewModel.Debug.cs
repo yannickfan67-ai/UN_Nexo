@@ -259,7 +259,7 @@ public partial class MainWindowViewModel
         LaunchDiagnosticSuggestion = _crashDiagnosis.Sanitize(diagnosis.SuggestedAction, secrets);
         HasLaunchDiagnostic = true;
         LaunchDebugSummary = LaunchDiagnosticTitle;
-        DiagnosticExportStatus = "Preview is sanitized before display and export.";
+        DiagnosticExportStatus = DiagnosticBundleService.PreviewScopeNotice;
         _ = RefreshDiagnosticPreviewAsync(diagnosis, exitCode);
     }
 
@@ -275,7 +275,11 @@ public partial class MainWindowViewModel
             var sources = preview.SourceLogs.Count == 0
                 ? "No readable log file is currently available."
                 : string.Join(Environment.NewLine, preview.SourceLogs.Select(path => "• " + path));
-            DiagnosticPreviewText = $"Files considered for export:{Environment.NewLine}{sources}{Environment.NewLine}{Environment.NewLine}Sanitized preview:{Environment.NewLine}{preview.LogExcerpt}";
+            DiagnosticPreviewText =
+                $"{DiagnosticBundleService.PreviewScopeNotice}{Environment.NewLine}{Environment.NewLine}"
+                + $"Files considered for export:{Environment.NewLine}{sources}"
+                + $"{Environment.NewLine}{Environment.NewLine}Sanitized preview excerpt:{Environment.NewLine}"
+                + preview.LogExcerpt;
         }
         catch (Exception ex)
         {
