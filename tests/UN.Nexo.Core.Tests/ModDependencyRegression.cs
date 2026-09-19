@@ -9,6 +9,9 @@ internal static class ModDependencyRegression
     {
         await TestRecursivePlanAndVersionOnlyEdgeAsync();
         await TestCycleAndConflictRejectionAsync();
+        await TestInstalledIncompatibilityRejectionAsync();
+        await TestProviderCannotEscapeOwnedStagingAsync();
+        await TestLinkedProviderStagingIsNotRecursivelyDeletedAsync();
         await TestAtomicBatchRollbackAsync();
     }
 
@@ -124,6 +127,271 @@ internal static class ModDependencyRegression
             "incompatible");
     }
 
+    private static async Task TestInstalledIncompatibilityRejectionAsync()
+    {
+        var projectProvider = new FakeProvider();
+        var projectRoot = projectProvider.Add(
+            "A",
+            "A1",
+            [
+                new ModProviderDependency(
+                    "B",
+                    null,
+                    ModProviderDependencyType.Incompatible)
+            ]);
+        var projectPlan = await new ModDependencyPlanner(projectProvider).BuildAsync(
+            projectRoot.Project,
+            projectRoot.Version,
+            "1.21.4",
+            "fabric");
+        Assert(
+            projectPlan.Incompatibilities.Count == 1,
+            "The dependency plan must preserve incompatible edges for install-time checks.");
+
+        var installedB1 = new Dictionary<string, ModProviderInstalledMatch>
+        {
+            ["B"] = new(
+                projectProvider.ProviderId,
+                "B",
+                "B1",
+                "1.0.0",
+                "b.jar",
+                true)
+        };
+        await ExpectInvalidAsync(
+            () =>
+            {
+                ModDependencyInstaller.ValidateInstalledIncompatibilities(
+                    projectProvider.ProviderId,
+                    projectPlan,
+                    installedB1);
+                return Task.CompletedTask;
+            },
+            "B1");
+
+        var versionProvider = new FakeProvider();
+        var versionRoot = versionProvider.Add(
+            "A",
+            "A1",
+            [
+                new ModProviderDependency(
+                    null,
+                    "B1",
+                    ModProviderDependencyType.Incompatible)
+            ]);
+        var versionPlan = await new ModDependencyPlanner(versionProvider).BuildAsync(
+            versionRoot.Project,
+            versionRoot.Version,
+            "1.21.4",
+            "fabric");
+        await ExpectInvalidAsync(
+            () =>
+            {
+                ModDependencyInstaller.ValidateInstalledIncompatibilities(
+                    versionProvider.ProviderId,
+                    versionPlan,
+                    installedB1);
+                return Task.CompletedTask;
+            },
+            "B1");
+
+        var replacementProvider = new FakeProvider();
+        var b2 = replacementProvider.Add("B", "B2", []);
+        var replacementRoot = replacementProvider.Add(
+            "A",
+            "A1",
+            [
+                new ModProviderDependency(
+                    "B",
+                    b2.Version.VersionId,
+                    ModProviderDependencyType.Required),
+                new ModProviderDependency(
+                    null,
+                    "B1",
+                    ModProviderDependencyType.Incompatible)
+            ]);
+        var replacementPlan = await new ModDependencyPlanner(replacementProvider).BuildAsync(
+            replacementRoot.Project,
+            replacementRoot.Version,
+            "1.21.4",
+            "fabric");
+
+        ModDependencyInstaller.ValidateInstalledIncompatibilities(
+            replacementProvider.ProviderId,
+            replacementPlan,
+            new Dictionary<string, ModProviderInstalledMatch>
+            {
+                ["B"] = new(
+                    replacementProvider.ProviderId,
+                    "B",
+                    "B1",
+                    "1.0.0",
+                    "b.jar",
+                    true)
+            });
+    }
+
+    private static async Task TestProviderCannotEscapeOwnedStagingAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-provider-staging-tests",
+            Guid.NewGuid().ToString("N"));
+        var external = Path.Combine(root, "external");
+        var dataRoot = Path.Combine(root, "data");
+        Directory.CreateDirectory(external);
+        Directory.CreateDirectory(dataRoot);
+        var sentinel = Path.Combine(external, "sentinel.txt");
+        var stagedOutside = Path.Combine(external, "outside.jar");
+        await File.WriteAllTextAsync(sentinel, "keep");
+        await File.WriteAllBytesAsync(stagedOutside, [1, 2, 3]);
+
+        try
+        {
+            var provider = new FakeProvider
+            {
+                StageOverride = (project, version, _, _) =>
+                    Task.FromResult(new ModProviderStagedInstall(
+                        project,
+                        version,
+                        stagedOutside))
+            };
+            var rootMod = provider.Add("A", "A1", []);
+            var plan = await new ModDependencyPlanner(provider).BuildAsync(
+                rootMod.Project,
+                rootMod.Version,
+                "1.21.4",
+                "fabric");
+            var installer = new ModDependencyInstaller(
+                provider,
+                new InstanceModService(new NexoPathService(dataRoot)));
+
+            await ExpectInvalidAsync(
+                () => installer.InstallAsync(
+                    Guid.NewGuid().ToString("N"),
+                    plan,
+                    new Dictionary<string, ModProviderInstalledMatch>()),
+                "staging");
+
+            Assert(File.Exists(sentinel),
+                "Rejecting an out-of-root staged file must not delete the external directory.");
+            Assert(File.Exists(stagedOutside),
+                "Rejecting an out-of-root staged file must not delete the provider-supplied external file.");
+        }
+        finally
+        {
+            TryDeleteDirectory(root);
+        }
+    }
+
+    private static async Task TestLinkedProviderStagingIsNotRecursivelyDeletedAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-provider-link-tests",
+            Guid.NewGuid().ToString("N"));
+        var external = Path.Combine(root, "external");
+        var dataRoot = Path.Combine(root, "data");
+        Directory.CreateDirectory(external);
+        Directory.CreateDirectory(dataRoot);
+        var sentinel = Path.Combine(external, "sentinel.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+
+        string? linkedEntry = null;
+        string? operationRoot = null;
+        try
+        {
+            var provider = new FakeProvider
+            {
+                StageOverride = async (project, version, stagingDirectory, cancellationToken) =>
+                {
+                    linkedEntry = stagingDirectory;
+                    operationRoot = Path.GetDirectoryName(stagingDirectory);
+                    Directory.Delete(stagingDirectory);
+
+                    try
+                    {
+                        Directory.CreateSymbolicLink(stagingDirectory, external);
+                    }
+                    catch (Exception ex) when (
+                        ex is UnauthorizedAccessException
+                        or IOException
+                        or PlatformNotSupportedException
+                        or NotSupportedException)
+                    {
+                        Directory.CreateDirectory(stagingDirectory);
+                        throw new SkipSymlinkRegressionException();
+                    }
+
+                    var staged = Path.Combine(stagingDirectory, "linked.jar");
+                    await File.WriteAllBytesAsync(
+                        staged,
+                        [7, 8, 9],
+                        cancellationToken);
+                    return new ModProviderStagedInstall(
+                        project,
+                        version,
+                        staged);
+                }
+            };
+            var rootMod = provider.Add("A", "A1", []);
+            var plan = await new ModDependencyPlanner(provider).BuildAsync(
+                rootMod.Project,
+                rootMod.Version,
+                "1.21.4",
+                "fabric");
+            var installer = new ModDependencyInstaller(
+                provider,
+                new InstanceModService(new NexoPathService(dataRoot)));
+
+            try
+            {
+                await installer.InstallAsync(
+                    Guid.NewGuid().ToString("N"),
+                    plan,
+                    new Dictionary<string, ModProviderInstalledMatch>());
+                throw new Exception(
+                    "A linked provider staging directory unexpectedly passed validation.");
+            }
+            catch (SkipSymlinkRegressionException)
+            {
+                return;
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(File.Exists(sentinel),
+                "Cleanup must never recursively delete through a linked provider staging directory.");
+        }
+        finally
+        {
+            if (linkedEntry is not null)
+            {
+                try
+                {
+                    if (Directory.Exists(linkedEntry))
+                        Directory.Delete(linkedEntry);
+                }
+                catch
+                {
+                }
+            }
+            if (operationRoot is not null)
+            {
+                try
+                {
+                    if (Directory.Exists(operationRoot))
+                        Directory.Delete(operationRoot, recursive: true);
+                }
+                catch
+                {
+                }
+            }
+            TryDeleteDirectory(root);
+        }
+    }
+
     private static async Task TestAtomicBatchRollbackAsync()
     {
         var root = Path.Combine(
@@ -215,6 +483,20 @@ internal static class ModDependencyRegression
         throw new Exception(
             $"Expected InvalidDataException containing '{expectedText}'.");
     }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+
+    private sealed class SkipSymlinkRegressionException : Exception;
 
     private static void Assert(bool condition, string message)
     {
@@ -352,17 +634,29 @@ internal static class ModDependencyRegression
                     : null);
         }
 
+        public Func<
+            ModProviderProject,
+            ModProviderVersion,
+            string,
+            CancellationToken,
+            Task<ModProviderStagedInstall>>? StageOverride { get; init; }
+
         public async Task<ModProviderStagedInstall> StageAsync(
             ModProviderProject project,
             ModProviderVersion version,
+            string stagingDirectory,
             CancellationToken cancellationToken = default)
         {
-            var root = Path.Combine(
-                Path.GetTempPath(),
-                "un-nexo-fake-provider",
-                Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(root);
-            var path = Path.Combine(root, version.SelectPrimaryFile().FileName);
+            if (StageOverride is not null)
+                return await StageOverride(
+                    project,
+                    version,
+                    stagingDirectory,
+                    cancellationToken);
+
+            var path = Path.Combine(
+                stagingDirectory,
+                version.SelectPrimaryFile().FileName);
             await File.WriteAllBytesAsync(
                 path,
                 System.Text.Encoding.UTF8.GetBytes(version.VersionId),
@@ -370,8 +664,7 @@ internal static class ModDependencyRegression
             return new ModProviderStagedInstall(
                 project,
                 version,
-                path,
-                root);
+                path);
         }
 
         public Task<IReadOnlyDictionary<string, ModProviderInstalledMatch>> MatchInstalledAsync(
