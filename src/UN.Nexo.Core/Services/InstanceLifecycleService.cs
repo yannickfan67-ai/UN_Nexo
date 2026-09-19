@@ -107,6 +107,307 @@ public sealed class InstanceLifecycleService
         }
     }
 
+    public async Task<GameInstance> RenameAsync(
+        GameInstance instance,
+        string newName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await using var operationLease =
+            await _operations.AcquireAsync(
+                instance.Id,
+                "rename-instance",
+                cancellationToken);
+
+        var normalizedName =
+            NormalizeInstanceName(newName);
+        var instancesRoot =
+            _paths.EnsureInstancesRootPhysical();
+        var nameGatePath =
+            Path.Combine(
+                instancesRoot,
+                ".instance-name-gate");
+
+        await using var nameLease =
+            await PersistedStoreMutationLock.AcquireAsync(
+                nameGatePath,
+                cancellationToken);
+
+        var store =
+            new InstanceStoreService(_paths);
+        var existing =
+            await store.GetAllAsync(
+                cancellationToken);
+        var current =
+            existing.FirstOrDefault(item =>
+                item.Id.Equals(
+                    instance.Id,
+                    StringComparison.Ordinal))
+            ?? throw new DirectoryNotFoundException(
+                $"Instance '{instance.Id}' is not available.");
+
+        if (existing.Any(item =>
+                !item.Id.Equals(
+                    current.Id,
+                    StringComparison.Ordinal)
+                && item.Name.Equals(
+                    normalizedName,
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"An instance named '{normalizedName}' already exists.");
+        }
+
+        if (current.Name.Equals(
+                normalizedName,
+                StringComparison.Ordinal))
+        {
+            return current;
+        }
+
+        var instanceRoot =
+            _paths.EnsureInstanceDirectoryPhysical(
+                current.Id);
+        var metadataPath =
+            Path.Combine(
+                instanceRoot,
+                "instance.json");
+        RequireRegularFile(
+            metadataPath,
+            "Instance metadata");
+
+        var previousState =
+            await InstallStateSnapshot.ReadAsync(
+                instanceRoot,
+                cancellationToken);
+        byte[]? renamedState = null;
+        if (previousState is not null)
+        {
+            renamedState =
+                TryBuildRenamedInstallState(
+                    previousState,
+                    normalizedName);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        _paths.EnsureInstanceDirectoryPhysical(
+            current.Id);
+        RequireRegularFile(
+            metadataPath,
+            "Instance metadata");
+
+        var renamed =
+            current with
+            {
+                Name = normalizedName
+            };
+
+        var metadataPublished = false;
+        try
+        {
+            await AtomicJsonFile.WriteAsync(
+                metadataPath,
+                renamed,
+                _json,
+                cancellationToken);
+            metadataPublished = true;
+
+            if (renamedState is not null)
+            {
+                await InstallStateSnapshot.RestoreAsync(
+                    instanceRoot,
+                    renamedState);
+            }
+
+            return renamed;
+        }
+        catch
+        {
+            if (metadataPublished)
+            {
+                try
+                {
+                    _paths.EnsureInstanceDirectoryPhysical(
+                        current.Id);
+                    await AtomicJsonFile.WriteAsync(
+                        metadataPath,
+                        current,
+                        _json,
+                        CancellationToken.None);
+                    if (previousState is not null)
+                    {
+                        await InstallStateSnapshot.RestoreAsync(
+                            instanceRoot,
+                            previousState);
+                    }
+                }
+                catch
+                {
+                    // Preserve the original failure. A later refresh will
+                    // surface any remaining metadata inconsistency.
+                }
+            }
+
+            throw;
+        }
+    }
+
+    public async Task DeleteAsync(
+        GameInstance instance,
+        bool deleteBackups = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        await using var operationLease =
+            await _operations.AcquireAsync(
+                instance.Id,
+                "delete-instance",
+                cancellationToken);
+
+        var instancesRoot =
+            _paths.EnsureInstancesRootPhysical();
+        var instanceRoot =
+            _paths.EnsureInstanceDirectoryPhysical(
+                instance.Id);
+        var canonicalRoot =
+            _paths.GetInstanceDirectory(
+                instance.Id);
+
+        if (!PathEquals(
+                instanceRoot,
+                canonicalRoot))
+        {
+            throw new InvalidDataException(
+                "Instance directory changed before deletion.");
+        }
+
+        var instanceTombstone =
+            Path.Combine(
+                instancesRoot,
+                $".{instance.Id}.deleting-{Guid.NewGuid():N}");
+
+        if (Directory.Exists(instanceTombstone)
+            || File.Exists(instanceTombstone))
+        {
+            throw new IOException(
+                "Instance deletion tombstone already exists.");
+        }
+
+        string? backupRoot = null;
+        string? backupTombstone = null;
+        if (deleteBackups)
+        {
+            var candidate =
+                EnsureBackupRootPhysical(
+                    instance.Id,
+                    create: false);
+            if (Directory.Exists(candidate))
+            {
+                backupRoot = candidate;
+                var backupParent =
+                    Path.GetDirectoryName(candidate)
+                    ?? throw new InvalidDataException(
+                        "Instance backup root has no parent directory.");
+                EnsurePhysicalDirectory(
+                    backupParent,
+                    create: false,
+                    "Backup storage root");
+                backupTombstone =
+                    Path.Combine(
+                        backupParent,
+                        $".{instance.Id}.deleting-{Guid.NewGuid():N}");
+                if (Directory.Exists(backupTombstone)
+                    || File.Exists(backupTombstone))
+                {
+                    throw new IOException(
+                        "Backup deletion tombstone already exists.");
+                }
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var backupMoved = false;
+        try
+        {
+            if (backupRoot is not null
+                && backupTombstone is not null)
+            {
+                var backupParent =
+                    Path.GetDirectoryName(backupRoot)
+                    ?? throw new InvalidDataException(
+                        "Instance backup root has no parent directory.");
+                EnsurePhysicalDirectory(
+                    backupParent,
+                    create: false,
+                    "Backup storage root");
+                RejectReparsePoint(
+                    backupRoot);
+                Directory.Move(
+                    backupRoot,
+                    backupTombstone);
+                backupMoved = true;
+            }
+
+            _paths.EnsureInstancesRootPhysical();
+            _paths.EnsureInstanceDirectoryPhysical(
+                instance.Id);
+            Directory.Move(
+                instanceRoot,
+                instanceTombstone);
+        }
+        catch
+        {
+            if (backupMoved
+                && backupRoot is not null
+                && backupTombstone is not null)
+            {
+                try
+                {
+                    var backupParent =
+                        Path.GetDirectoryName(backupRoot)
+                        ?? throw new InvalidDataException(
+                            "Instance backup root has no parent directory.");
+                    EnsurePhysicalDirectory(
+                        backupParent,
+                        create: false,
+                        "Backup storage root");
+                    if (!Directory.Exists(backupRoot)
+                        && Directory.Exists(backupTombstone))
+                    {
+                        RejectReparsePoint(
+                            backupTombstone);
+                        Directory.Move(
+                            backupTombstone,
+                            backupRoot);
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            throw;
+        }
+
+        // Deletion is committed once the canonical instance directory has been
+        // moved aside. Do not honor cancellation after this point: finish
+        // cleanup without exposing a half-deleted canonical instance.
+        DeleteTreeWithoutFollowingReparsePoints(
+            instanceTombstone);
+
+        if (backupTombstone is not null
+            && Directory.Exists(backupTombstone))
+        {
+            DeleteTreeWithoutFollowingReparsePoints(
+                backupTombstone);
+        }
+    }
+
     public async Task<WorldBackupInfo> CreateWorldBackupAsync(
         GameInstance instance,
         string kind = "manual",
@@ -1072,6 +1373,103 @@ public sealed class InstanceLifecycleService
         {
             // Best-effort cleanup only. Unsafe or swapped paths are preserved.
         }
+    }
+
+    private byte[]? TryBuildRenamedInstallState(
+        byte[] previousState,
+        string newName)
+    {
+        JsonNode? parsed;
+        try
+        {
+            parsed =
+                JsonNode.Parse(
+                    previousState);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (parsed is not JsonObject node)
+            return null;
+
+        if (node.ContainsKey("Name"))
+            node["Name"] = newName;
+        if (node.ContainsKey("name"))
+            node["name"] = newName;
+        if (!node.ContainsKey("Name")
+            && !node.ContainsKey("name"))
+        {
+            node["name"] = newName;
+        }
+
+        return JsonSerializer.SerializeToUtf8Bytes(
+            node,
+            _json);
+    }
+
+    private static void RequireRegularFile(
+        string path,
+        string label)
+    {
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException(
+                $"{label} is missing.",
+                path);
+        }
+
+        var attributes =
+            File.GetAttributes(path);
+        if ((attributes & FileAttributes.Directory) != 0
+            || (attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidDataException(
+                $"{label} must be a physical regular file.");
+        }
+    }
+
+    private static void DeleteTreeWithoutFollowingReparsePoints(
+        string root)
+    {
+        if (!Directory.Exists(root))
+            return;
+
+        var rootAttributes =
+            File.GetAttributes(root);
+        if ((rootAttributes & FileAttributes.ReparsePoint) != 0)
+        {
+            Directory.Delete(root);
+            return;
+        }
+
+        foreach (var entry in
+                 Directory.EnumerateFileSystemEntries(root))
+        {
+            var attributes =
+                File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                if ((attributes & FileAttributes.Directory) != 0)
+                    Directory.Delete(entry);
+                else
+                    File.Delete(entry);
+                continue;
+            }
+
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                DeleteTreeWithoutFollowingReparsePoints(
+                    entry);
+            }
+            else
+            {
+                File.Delete(entry);
+            }
+        }
+
+        Directory.Delete(root);
     }
 
     private static string NormalizeInstanceName(string value)

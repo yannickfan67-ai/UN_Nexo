@@ -221,6 +221,20 @@
                     </StackPanel>
                     <Button Content="Prepare Vanilla files" Command="{Binding PrepareSelectedInstanceCommand}" IsEnabled="{Binding HasSelectedInstance}" Padding="16,10" HorizontalAlignment="Left" />
                   </StackPanel>
+
+                  <Border Background="#0E141C" CornerRadius="9" Padding="12">
+                    <StackPanel Spacing="9">
+                      <TextBlock Text="Instance management" FontWeight="SemiBold" />
+                      <TextBox Text="{Binding InstanceRenameName}" PlaceholderText="Instance name" IsEnabled="{Binding CanManageSelectedInstance}" />
+                      <StackPanel Orientation="Horizontal" Spacing="9">
+                        <Button Content="Rename" Command="{Binding RenameSelectedInstanceCommand}" IsEnabled="{Binding CanManageSelectedInstance}" Padding="14,9" />
+                        <Button Content="{Binding DeleteInstanceButtonText}" Command="{Binding DeleteSelectedInstanceCommand}" IsEnabled="{Binding CanManageSelectedInstance}" Padding="14,9" />
+                      </StackPanel>
+                      <CheckBox Content="Also delete backups" IsChecked="{Binding DeleteInstanceBackups}" IsEnabled="{Binding CanManageSelectedInstance}" />
+                      <TextBlock Text="Delete uses a two-step confirmation. Backups are preserved unless you explicitly select the option above." Classes="muted" FontSize="11" TextWrapping="Wrap" />
+                    </StackPanel>
+                  </Border>
+
                   <ProgressBar Minimum="0" Maximum="100" Value="{Binding InstallProgressValue}" Height="7" />
                   <TextBlock Text="{Binding InstallProgressText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <Border Background="#0E141C" CornerRadius="9" Padding="12">
