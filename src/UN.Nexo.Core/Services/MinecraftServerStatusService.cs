@@ -16,52 +16,212 @@ public sealed class MinecraftServerStatusService
     private static readonly Regex LegacyFormattingRegex = new("§.", RegexOptions.Compiled);
 
     private readonly TimeSpan _timeout;
+    private readonly TimeSpan _pingTimeout;
+    private readonly IMinecraftSrvResolver _srvResolver;
 
-    public MinecraftServerStatusService(TimeSpan? timeout = null)
+    public MinecraftServerStatusService(
+        TimeSpan? timeout = null,
+        IMinecraftSrvResolver? srvResolver = null,
+        TimeSpan? pingTimeout = null)
     {
         _timeout = timeout ?? TimeSpan.FromSeconds(4);
         if (_timeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout));
+
+        _pingTimeout = pingTimeout
+            ?? TimeSpan.FromMilliseconds(
+                Math.Clamp(
+                    _timeout.TotalMilliseconds / 4,
+                    100,
+                    1000));
+        if (_pingTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(pingTimeout));
+
+        _srvResolver = srvResolver ?? new MinecraftSrvResolver();
     }
 
-    public async Task<ServerStatusResult> QueryAsync(MinecraftServerTarget target, CancellationToken cancellationToken = default)
+    public async Task<ServerStatusResult> QueryAsync(
+        MinecraftServerTarget target,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(target);
         using var timeout = new CancellationTokenSource(_timeout);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            timeout.Token);
         var token = linked.Token;
+
         try
         {
-            using var client = new TcpClient(); client.NoDelay = true;
-            await client.ConnectAsync(target.Host, target.Port, token);
+            var connectHost = target.Host;
+            var connectPort = target.Port;
+
+            if (!target.HasExplicitPort)
+            {
+                try
+                {
+                    var resolved = await _srvResolver.ResolveAsync(
+                        target.Host,
+                        token);
+                    if (resolved is not null)
+                    {
+                        connectHost = resolved.Host;
+                        connectPort = resolved.Port;
+                    }
+                }
+                catch (OperationCanceledException) when (
+                    cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (
+                    ex is SocketException
+                    or IOException
+                    or InvalidDataException)
+                {
+                    // A broken/unavailable SRV lookup is optional. Fall back
+                    // to the original host and default port.
+                }
+            }
+
+            using var client = new TcpClient();
+            client.NoDelay = true;
+            await client.ConnectAsync(
+                connectHost,
+                connectPort,
+                token);
             await using var stream = client.GetStream();
-            await WriteHandshakeAsync(stream, target, token);
-            await stream.WriteAsync(new byte[] { 1, 0 }, token); await stream.FlushAsync(token);
-            var responsePayload = await ReadPacketAsync(stream, token);
-            var offset = 0; var packetId = ReadVarInt(responsePayload, ref offset);
-            if (packetId != 0) throw new InvalidDataException($"Unexpected status packet id {packetId}.");
-            var json = ReadString(responsePayload, ref offset);
-            var parsed = ParseStatus(json, target.Authority);
+
+            var handshakeTarget = target with { Port = connectPort };
+            await WriteHandshakeAsync(
+                stream,
+                handshakeTarget,
+                token);
+            await stream.WriteAsync(
+                new byte[] { 1, 0 },
+                token);
+            await stream.FlushAsync(token);
+
+            var responsePayload = await ReadPacketAsync(
+                stream,
+                token);
+            var offset = 0;
+            var packetId = ReadVarInt(
+                responsePayload,
+                ref offset);
+            if (packetId != 0)
+                throw new InvalidDataException(
+                    $"Unexpected status packet id {packetId}.");
+
+            var json = ReadString(
+                responsePayload,
+                ref offset);
+            var parsed = ParseStatus(
+                json,
+                target.Authority);
+
             long? latency = null;
+            using var pingTimeout =
+                new CancellationTokenSource(_pingTimeout);
+            using var pingLinked =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    pingTimeout.Token);
+
             try
             {
-                var pingPayload = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var packet = new byte[1 + sizeof(long)]; packet[0] = 1;
-                BinaryPrimitives.WriteInt64BigEndian(packet.AsSpan(1), pingPayload);
-                await WritePacketAsync(stream, packet, token); await stream.FlushAsync(token);
-                var stopwatch = Stopwatch.StartNew(); var pongPayload = await ReadPacketAsync(stream, token); stopwatch.Stop();
+                var pingPayload =
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var packet = new byte[1 + sizeof(long)];
+                packet[0] = 1;
+                BinaryPrimitives.WriteInt64BigEndian(
+                    packet.AsSpan(1),
+                    pingPayload);
+                await WritePacketAsync(
+                    stream,
+                    packet,
+                    pingLinked.Token);
+                await stream.FlushAsync(pingLinked.Token);
+
+                var stopwatch = Stopwatch.StartNew();
+                var pongPayload = await ReadPacketAsync(
+                    stream,
+                    pingLinked.Token);
+                stopwatch.Stop();
                 var pongOffset = 0;
-                if (ReadVarInt(pongPayload, ref pongOffset) == 1 && pongOffset + sizeof(long) <= pongPayload.Length)
-                { _ = BinaryPrimitives.ReadInt64BigEndian(pongPayload.AsSpan(pongOffset, sizeof(long))); latency = stopwatch.ElapsedMilliseconds; }
+                if (ReadVarInt(
+                        pongPayload,
+                        ref pongOffset) == 1
+                    && pongOffset + sizeof(long)
+                        <= pongPayload.Length)
+                {
+                    _ = BinaryPrimitives.ReadInt64BigEndian(
+                        pongPayload.AsSpan(
+                            pongOffset,
+                            sizeof(long)));
+                    latency = stopwatch.ElapsedMilliseconds;
+                }
             }
-            catch (Exception ex) when (ex is IOException or SocketException or InvalidDataException) { }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException) when (
+                pingTimeout.IsCancellationRequested)
+            {
+                // Optional latency measurement timed out after a valid status.
+            }
+            catch (Exception ex) when (
+                ex is IOException
+                or SocketException
+                or InvalidDataException)
+            {
+                // A valid status remains useful even when optional ping fails.
+            }
+
             return parsed with { LatencyMs = latency };
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
-        { return new ServerStatusResult(ServerStatusState.TimedOut, target.Authority, null, null, null, null, null, string.Empty, $"No status response within {_timeout.TotalSeconds:0.#} seconds."); }
-        catch (Exception ex) when (ex is SocketException or IOException or InvalidDataException or JsonException)
-        { return new ServerStatusResult(ServerStatusState.Offline, target.Authority, null, null, null, null, null, string.Empty, ex.Message); }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (
+            timeout.IsCancellationRequested)
+        {
+            return new ServerStatusResult(
+                ServerStatusState.TimedOut,
+                target.Authority,
+                null,
+                null,
+                null,
+                null,
+                null,
+                string.Empty,
+                $"No status response within {_timeout.TotalSeconds:0.#} seconds.");
+        }
+        catch (Exception ex) when (
+            ex is SocketException
+            or IOException
+            or InvalidDataException
+            or JsonException)
+        {
+            return new ServerStatusResult(
+                ServerStatusState.Offline,
+                target.Authority,
+                null,
+                null,
+                null,
+                null,
+                null,
+                string.Empty,
+                ex.Message);
+        }
     }
 
     private static async Task WriteHandshakeAsync(NetworkStream stream, MinecraftServerTarget target, CancellationToken cancellationToken)
