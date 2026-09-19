@@ -17,11 +17,13 @@ public sealed class InstanceLifecycleService
     private const int MaxBackupFilePathLength = 4096;
     private const long FreeSpaceReserveBytes = 64L * 1024 * 1024;
     private readonly NexoPathService _paths;
+    private readonly InstanceOperationCoordinator _operations;
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public InstanceLifecycleService(NexoPathService paths)
     {
         _paths = paths;
+        _operations = new InstanceOperationCoordinator(paths);
     }
 
     public async Task<GameInstance> CloneAsync(
@@ -32,6 +34,10 @@ public sealed class InstanceLifecycleService
     {
         ArgumentNullException.ThrowIfNull(source);
         cancellationToken.ThrowIfCancellationRequested();
+        await using var operationLease = await _operations.AcquireAsync(
+            source.Id,
+            "clone-instance",
+            cancellationToken);
         _paths.EnsureDirectories();
 
         var normalizedName = NormalizeInstanceName(newName);
@@ -103,6 +109,10 @@ public sealed class InstanceLifecycleService
     {
         ArgumentNullException.ThrowIfNull(instance);
         cancellationToken.ThrowIfCancellationRequested();
+        await using var operationLease = await _operations.AcquireAsync(
+            instance.Id,
+            "backup-worlds",
+            cancellationToken);
         _paths.EnsureDirectories();
 
         var normalizedKind = NormalizeBackupKind(kind);
@@ -234,6 +244,10 @@ public sealed class InstanceLifecycleService
     {
         ArgumentNullException.ThrowIfNull(instance);
         ArgumentNullException.ThrowIfNull(backup);
+        await using var operationLease = await _operations.AcquireAsync(
+            instance.Id,
+            "restore-world",
+            cancellationToken);
         if (!backup.InstanceId.Equals(instance.Id, StringComparison.Ordinal))
             throw new InvalidOperationException("This backup belongs to a different instance.");
 

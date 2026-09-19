@@ -17,8 +17,9 @@ public sealed class MinecraftVanillaInstallService
     private readonly NexoPathService _paths;
     private readonly DownloadSourceService _downloadSources;
     private readonly TimeSpan _transferIdleTimeout;
+    private readonly InstanceOperationCoordinator _operations;
     private readonly object _activityGate = new();
-    private CancellationTokenSource? _activeInstallCancellation;
+    private readonly Dictionary<Guid, ActiveInstall> _activeInstalls = [];
 
     public event Action<InstallProgress>? ProgressChanged;
     public event Action<bool>? InstallActivityChanged;
@@ -32,6 +33,7 @@ public sealed class MinecraftVanillaInstallService
         _httpClient = httpClient;
         _paths = paths;
         _downloadSources = downloadSources;
+        _operations = new InstanceOperationCoordinator(paths);
         _transferIdleTimeout = transferIdleTimeout ?? TimeSpan.FromSeconds(30);
         if (_transferIdleTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(transferIdleTimeout), "Transfer idle timeout must be positive.");
@@ -42,51 +44,131 @@ public sealed class MinecraftVanillaInstallService
         get
         {
             lock (_activityGate)
-                return _activeInstallCancellation is not null;
+                return _activeInstalls.Count > 0;
         }
     }
 
     public bool CancelCurrentInstall()
     {
+        CancellationTokenSource? cancellation;
         lock (_activityGate)
         {
-            if (_activeInstallCancellation is null)
+            if (_activeInstalls.Count != 1)
                 return false;
-            _activeInstallCancellation.Cancel();
-            return true;
+
+            cancellation = _activeInstalls.Values
+                .Single()
+                .Cancellation;
         }
+
+        cancellation.Cancel();
+        return true;
     }
 
-    public async Task InstallAsync(
+    public bool CancelInstall(string instanceId)
+    {
+        CancellationTokenSource[] cancellations;
+        lock (_activityGate)
+        {
+            cancellations = _activeInstalls.Values
+                .Where(active =>
+                    active.InstanceId.Equals(
+                        instanceId,
+                        StringComparison.Ordinal))
+                .Select(active => active.Cancellation)
+                .ToArray();
+        }
+
+        foreach (var cancellation in cancellations)
+            cancellation.Cancel();
+
+        return cancellations.Length > 0;
+    }
+
+    public Task InstallAsync(
         GameInstance instance,
         MinecraftVersionInfo version,
         IProgress<InstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
+        => InstallTrackedAsync(
+            instance,
+            version,
+            progress,
+            cancellationToken,
+            acquireOperationLease: true);
+
+    internal Task InstallWithinOperationAsync(
+        GameInstance instance,
+        MinecraftVersionInfo version,
+        IProgress<InstallProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+        => InstallTrackedAsync(
+            instance,
+            version,
+            progress,
+            cancellationToken,
+            acquireOperationLease: false);
+
+    private async Task InstallTrackedAsync(
+        GameInstance instance,
+        MinecraftVersionInfo version,
+        IProgress<InstallProgress>? progress,
+        CancellationToken cancellationToken,
+        bool acquireOperationLease)
     {
-        CancellationTokenSource activityCancellation;
+        ArgumentNullException.ThrowIfNull(instance);
+        ArgumentNullException.ThrowIfNull(version);
+
+        var operationId = Guid.NewGuid();
+        var activityCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken);
+        var publishStarted = false;
         lock (_activityGate)
         {
-            if (_activeInstallCancellation is not null)
-                throw new InvalidOperationException("Another Minecraft file preparation task is already running.");
-
-            activityCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            _activeInstallCancellation = activityCancellation;
+            publishStarted = _activeInstalls.Count == 0;
+            _activeInstalls.Add(
+                operationId,
+                new ActiveInstall(
+                    instance.Id,
+                    activityCancellation));
         }
 
-        PublishActivity(true);
+        if (publishStarted)
+            PublishActivity(true);
+
+        IAsyncDisposable? lease = null;
         try
         {
-            await InstallCoreAsync(instance, version, progress, activityCancellation.Token);
+            if (acquireOperationLease)
+            {
+                lease = await _operations.AcquireAsync(
+                    instance.Id,
+                    "prepare-vanilla",
+                    activityCancellation.Token);
+            }
+
+            await InstallCoreAsync(
+                instance,
+                version,
+                progress,
+                activityCancellation.Token);
         }
         finally
         {
+            if (lease is not null)
+                await lease.DisposeAsync();
+
+            var publishStopped = false;
             lock (_activityGate)
             {
-                if (ReferenceEquals(_activeInstallCancellation, activityCancellation))
-                    _activeInstallCancellation = null;
+                _activeInstalls.Remove(operationId);
+                publishStopped = _activeInstalls.Count == 0;
             }
+
             activityCancellation.Dispose();
-            PublishActivity(false);
+            if (publishStopped)
+                PublishActivity(false);
         }
     }
 
@@ -1702,6 +1784,10 @@ public sealed class MinecraftVanillaInstallService
     private sealed record NativeExtractionJob(
         string ArchivePath,
         IReadOnlyList<string> Excludes);
+
+    private sealed record ActiveInstall(
+        string InstanceId,
+        CancellationTokenSource Cancellation);
 
     private sealed record DownloadJob(
         string Url,

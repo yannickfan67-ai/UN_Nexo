@@ -15,6 +15,7 @@ internal static class Program
             ("Vanilla user cancellation", TestVanillaUserCancellationDoesNotFallbackAsync),
             ("Vanilla download telemetry", TestVanillaDownloadTelemetryAsync),
             ("Installer-owned cancellation", TestInstallerOwnedCancellationAsync),
+            ("Instance operation coordination", InstanceOperationCoordinatorRegression.RunAsync),
             ("Damaged managed Java cache", TestDamagedManagedRuntimeIsRejectedAsync),
             ("Managed Java body idle timeout", TestManagedJavaBodyIdleTimeoutAsync)
         };
