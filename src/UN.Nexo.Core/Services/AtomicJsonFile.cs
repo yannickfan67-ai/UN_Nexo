@@ -17,6 +17,9 @@ internal static class AtomicJsonFile
             ?? throw new InvalidOperationException("JSON destination has no parent directory.");
         Directory.CreateDirectory(directory);
 
+        using var publishLease = await PathKeyedLock.AcquireAsync(
+            fullPath,
+            cancellationToken);
         var tempPath = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
@@ -37,7 +40,10 @@ internal static class AtomicJsonFile
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            File.Move(tempPath, fullPath, overwrite: true);
+            await PublishWithRetryAsync(
+                tempPath,
+                fullPath,
+                cancellationToken);
         }
         finally
         {
@@ -51,5 +57,28 @@ internal static class AtomicJsonFile
                 // Best-effort cleanup. Never remove or truncate the destination.
             }
         }
+    private static async Task PublishWithRetryAsync(
+        string tempPath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 100;
+        for (var attempt = 1; ; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                File.Move(tempPath, destinationPath, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (
+                attempt < maxAttempts
+                && ex is IOException or UnauthorizedAccessException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+            }
+        }
+    }
+
     }
 }
