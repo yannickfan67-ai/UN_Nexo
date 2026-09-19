@@ -55,6 +55,7 @@ internal static class Program
             ("Vanilla required artifact preparation", VanillaRequiredArtifactRegression.RunAsync),
             ("Atomic install-state publication", InstallStateAtomicRegression.RunAsync),
             ("Loader install-state snapshot hardening", InstallStateSnapshotRegression.RunAsync),
+            ("Inherited loader profile path hardening", InheritedLoaderProfileStoreRegression.RunAsync),
             ("Native extraction containment", NativeExtractionRegression.RunAsync),
             ("Extracted native launch integrity", NativeLaunchIntegrityRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),

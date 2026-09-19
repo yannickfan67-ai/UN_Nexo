@@ -20,6 +20,7 @@ internal static class FabricLibraryIntegrityRegression
         await TestTruncatedMavenJarIsRejectedAsync();
         await TestStalledMavenJarTimesOutAsync();
         await TestLinkedInstallStateRejectedAsync();
+        await TestLinkedVersionsDirectoryRejectedAsync();
     }
 
     private static async Task TestCorruptCachedMavenJarIsReplacedAsync()
@@ -227,6 +228,113 @@ internal static class FabricLibraryIntegrityRegression
         }
     }
 
+    private static async Task TestLinkedVersionsDirectoryRejectedAsync()
+    {
+        var root = NewRoot();
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-fabric-profile-external-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+
+        var linkedVersions = string.Empty;
+        try
+        {
+            var jar = CreateJarBytes("valid-library");
+            var handler =
+                new FabricLibraryHandler(
+                    jar,
+                    LibraryMode.Valid);
+            using var client =
+                new HttpClient(handler);
+            var paths =
+                new NexoPathService(root);
+            paths.EnsureDirectories();
+
+            var instance =
+                new GameInstance(
+                    Guid.NewGuid().ToString("N"),
+                    "Fabric linked versions",
+                    ChildVersionId,
+                    "fabric",
+                    DateTimeOffset.UtcNow,
+                    BaseVersionId,
+                    LoaderVersion);
+            var instanceRoot =
+                paths.GetInstanceDirectory(instance.Id);
+            Directory.CreateDirectory(instanceRoot);
+            var gameRoot =
+                paths.GetInstanceGameDirectory(instance.Id);
+            Directory.CreateDirectory(gameRoot);
+            linkedVersions =
+                Path.Combine(
+                    gameRoot,
+                    "versions");
+
+            if (!TryCreateDirectoryLink(
+                    linkedVersions,
+                    externalRoot))
+            {
+                Console.WriteLine(
+                    "SKIP Fabric linked versions regression: platform denied symlink creation");
+                return;
+            }
+
+            var vanilla =
+                new MinecraftVanillaInstallService(
+                    client,
+                    paths,
+                    new DownloadSourceService(),
+                    TimeSpan.FromSeconds(1));
+            var service =
+                new FabricInstallService(
+                    client,
+                    paths,
+                    vanilla,
+                    new FabricMetaService(client),
+                    TimeSpan.FromSeconds(1));
+            var baseVersion =
+                new MinecraftVersionInfo(
+                    BaseVersionId,
+                    "release",
+                    "https://piston-meta.mojang.com/version.json",
+                    DateTimeOffset.UtcNow,
+                    DateTimeOffset.UtcNow,
+                    string.Empty,
+                    0);
+
+            try
+            {
+                await service.PrepareAsync(
+                    instance,
+                    baseVersion);
+                throw new Exception(
+                    "Fabric unexpectedly accepted a linked versions directory.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Equal(
+                false,
+                Directory.EnumerateFileSystemEntries(
+                    externalRoot)
+                    .Any(),
+                "Fabric profile preparation must not write through a linked versions directory.");
+            Equal(
+                0,
+                handler.TestLibraryJarRequests,
+                "Fabric must reject linked versions before loader library mutation.");
+        }
+        finally
+        {
+            TryDeleteDirectoryLink(linkedVersions);
+            TryDelete(root);
+            TryDelete(externalRoot);
+        }
+    }
+
     private static async Task<Fixture> CreateFixtureAsync(
         string root,
         FabricLibraryHandler handler,
@@ -322,6 +430,42 @@ internal static class FabricLibraryIntegrityRegression
             or NotSupportedException)
         {
             return false;
+        }
+    }
+
+    private static bool TryCreateDirectoryLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(
+                linkPath,
+                targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectoryLink(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path);
+        }
+        catch
+        {
         }
     }
 
