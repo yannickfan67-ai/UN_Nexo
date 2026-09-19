@@ -39,10 +39,18 @@ public sealed class ModDependencyPlanner
 
         foreach (var edge in incompatibleEdges)
         {
-            if (selected.ContainsKey(edge.Dependency.ProjectId))
+            var conflict = edge.Dependency.ProjectId is { } projectId
+                ? selected.ContainsKey(projectId)
+                : edge.Dependency.VersionId is { } versionId
+                  && selected.Values.Any(item =>
+                      string.Equals(
+                          item.Version.VersionId,
+                          versionId,
+                          StringComparison.Ordinal));
+            if (conflict)
             {
                 throw new InvalidDataException(
-                    $"Dependency conflict: '{edge.Source}' is incompatible with '{edge.Dependency.ProjectId}'.");
+                    $"Dependency conflict: '{edge.Source}' declares an installed-plan project/version as incompatible.");
             }
         }
 
@@ -90,31 +98,9 @@ public sealed class ModDependencyPlanner
                     {
                         case ModProviderDependencyType.Required:
                         {
-                            if (visiting.Contains(dependency.ProjectId))
-                            {
+                            if (dependency.ProjectId is null && dependency.VersionId is null)
                                 throw new InvalidDataException(
-                                    $"Dependency cycle detected: '{project.ProjectId}' -> '{dependency.ProjectId}'.");
-                            }
-
-                            if (selected.TryGetValue(dependency.ProjectId, out var selectedDependency))
-                            {
-                                if (dependency.VersionId is not null
-                                    && !string.Equals(
-                                        selectedDependency.Version.VersionId,
-                                        dependency.VersionId,
-                                        StringComparison.Ordinal))
-                                {
-                                    throw new InvalidDataException(
-                                        $"Dependency conflict: '{project.ProjectId}' requires '{dependency.ProjectId}' version '{dependency.VersionId}', but '{selectedDependency.Version.VersionId}' is already selected.");
-                                }
-                                break;
-                            }
-
-                            var dependencyProject = await _provider.GetProjectAsync(
-                                dependency.ProjectId,
-                                cancellationToken)
-                                ?? throw new InvalidDataException(
-                                    $"Required dependency project '{dependency.ProjectId}' could not be resolved.");
+                                    $"Required dependency from '{project.ProjectId}' has neither project nor version id.");
 
                             var dependencyVersion = await _provider.GetCompatibleVersionAsync(
                                 dependency.ProjectId,
@@ -123,7 +109,44 @@ public sealed class ModDependencyPlanner
                                 normalizedLoader,
                                 cancellationToken)
                                 ?? throw new InvalidDataException(
-                                    $"Required dependency '{dependencyProject.Title}' has no compatible version for Minecraft {version} / {normalizedLoader}.");
+                                    $"Required dependency from '{project.Title}' has no compatible version for Minecraft {version} / {normalizedLoader}.");
+
+                            var dependencyProjectId = dependencyVersion.ProjectId;
+                            if (dependency.ProjectId is not null
+                                && !string.Equals(
+                                    dependency.ProjectId,
+                                    dependencyProjectId,
+                                    StringComparison.Ordinal))
+                            {
+                                throw new InvalidDataException(
+                                    $"Required dependency version '{dependencyVersion.VersionId}' belongs to unexpected project '{dependencyProjectId}'.");
+                            }
+
+                            if (visiting.Contains(dependencyProjectId))
+                            {
+                                throw new InvalidDataException(
+                                    $"Dependency cycle detected: '{project.ProjectId}' -> '{dependencyProjectId}'.");
+                            }
+
+                            if (selected.TryGetValue(dependencyProjectId, out var selectedDependency))
+                            {
+                                if (dependency.VersionId is not null
+                                    && !string.Equals(
+                                        selectedDependency.Version.VersionId,
+                                        dependency.VersionId,
+                                        StringComparison.Ordinal))
+                                {
+                                    throw new InvalidDataException(
+                                        $"Dependency conflict: '{project.ProjectId}' requires '{dependencyProjectId}' version '{dependency.VersionId}', but '{selectedDependency.Version.VersionId}' is already selected.");
+                                }
+                                break;
+                            }
+
+                            var dependencyProject = await _provider.GetProjectAsync(
+                                dependencyProjectId,
+                                cancellationToken)
+                                ?? throw new InvalidDataException(
+                                    $"Required dependency project '{dependencyProjectId}' could not be resolved.");
 
                             await VisitAsync(
                                 dependencyProject,
@@ -141,7 +164,7 @@ public sealed class ModDependencyPlanner
                             break;
                         default:
                             throw new InvalidDataException(
-                                $"Unknown dependency type for project '{dependency.ProjectId}'.");
+                                "Unknown provider dependency type.");
                     }
                 }
 
