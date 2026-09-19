@@ -110,6 +110,30 @@ internal static class Program
 
                 var diagnosis = service.Analyze(1, await File.ReadAllTextAsync(minecraftLog));
                 var bundles = new DiagnosticBundleService(service);
+                Contains(
+                    DiagnosticBundleService.PreviewScopeNotice,
+                    "sanitized excerpt",
+                    "preview scope should state that it is an excerpt");
+                Contains(
+                    DiagnosticBundleService.PreviewScopeNotice,
+                    "64 KiB",
+                    "preview scope should state the per-log preview limit");
+                Contains(
+                    DiagnosticBundleService.PreviewScopeNotice,
+                    "12 KiB",
+                    "preview scope should state the display limit");
+                Contains(
+                    DiagnosticBundleService.PreviewScopeNotice,
+                    "8 logs",
+                    "preview scope should state the export log count limit");
+                Contains(
+                    DiagnosticBundleService.PreviewScopeNotice,
+                    "512 KiB",
+                    "preview scope should state the per-log export limit");
+                Contains(
+                    DiagnosticBundleService.PreviewScopeNotice,
+                    "re-reads",
+                    "preview scope should warn that export re-reads logs");
                 var preview = await bundles.BuildPreviewAsync(diagnosis, 1, [minecraftLog], [token]);
                 DoesNotContain(preview.Summary, token, "preview summary explicit secret");
                 DoesNotContain(preview.LogExcerpt, token, "preview log explicit secret");
@@ -149,6 +173,10 @@ internal static class Program
                 if (!string.IsNullOrWhiteSpace(home))
                     DoesNotContainInsensitive(packageText, home, "archive home path");
                 Contains(packageText, "<REDACTED>", "archive token redaction marker");
+                Contains(packageText, "Export policy: at most 8 logs, 512 KiB tail per log.",
+                    "archive manifest should disclose export limits");
+                Contains(packageText, "Preview policy: preview is a smaller sanitized excerpt",
+                    "archive manifest should distinguish preview from export");
                 if (!string.IsNullOrWhiteSpace(home))
                     Contains(packageText, "<HOME>", "archive home marker");
 
