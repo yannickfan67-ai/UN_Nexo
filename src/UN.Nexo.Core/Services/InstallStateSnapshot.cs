@@ -127,10 +127,22 @@ internal static class InstallStateSnapshot
         try
         {
             RejectReparseFileIfPresent(temp);
-            await File.WriteAllBytesAsync(
-                temp,
-                bytes,
-                CancellationToken.None);
+            await using (var output =
+                         new FileStream(
+                             temp,
+                             FileMode.CreateNew,
+                             FileAccess.Write,
+                             FileShare.None,
+                             64 * 1024,
+                             FileOptions.Asynchronous
+                             | FileOptions.WriteThrough))
+            {
+                await output.WriteAsync(
+                    bytes,
+                    CancellationToken.None);
+                await output.FlushAsync(
+                    CancellationToken.None);
+            }
 
             RequirePhysicalInstanceRoot(root);
             RejectReparseFileIfPresent(path);
