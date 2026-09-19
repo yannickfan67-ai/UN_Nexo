@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Core.Launching;
@@ -14,6 +16,14 @@ public static class LaunchDiagnostics
 
 public sealed class MinecraftProcessService
 {
+    internal const long MaxOwnedLogBytes = 8L * 1024 * 1024;
+    internal const int MaxOwnedLogCount = 20;
+    internal const long MaxOwnedLogDirectoryBytes = 64L * 1024 * 1024;
+
+    private static readonly Regex OwnedLogNameRegex = new(
+        @"^\d{8}-\d{6}-[0-9a-f]{32}\.log$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     private readonly LauncherRuntimeSettingsService _runtimeSettings;
     private int _running;
 
@@ -45,30 +55,19 @@ public sealed class MinecraftProcessService
             };
 
             Directory.CreateDirectory(effectivePlan.LogDirectory);
+            PruneOwnedLogs(
+                effectivePlan.LogDirectory,
+                MaxOwnedLogCount - 1,
+                MaxOwnedLogDirectoryBytes - MaxOwnedLogBytes);
+
             var logPath = Path.Combine(
                 effectivePlan.LogDirectory,
                 $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.log");
 
-            await using var log = new StreamWriter(
-                new FileStream(logPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
-            {
-                AutoFlush = true
-            };
+            await using var log = new BoundedLaunchLogWriter(logPath, MaxOwnedLogBytes);
 
-            using var logLock = new SemaphoreSlim(1, 1);
-
-            async Task WriteLogAsync(string message)
-            {
-                await logLock.WaitAsync(CancellationToken.None);
-                try
-                {
-                    await log.WriteLineAsync(message);
-                }
-                finally
-                {
-                    logLock.Release();
-                }
-            }
+            Task WriteLogAsync(string message)
+                => log.WriteLineAsync(message);
 
             void Report(string message) => output?.Report(message);
 
@@ -255,5 +254,157 @@ public sealed class MinecraftProcessService
         {
             Interlocked.Exchange(ref _running, 0);
         }
+
+    internal static void PruneOwnedLogs(
+        string logDirectory,
+        int maxCount = MaxOwnedLogCount,
+        long maxBytes = MaxOwnedLogDirectoryBytes)
+    {
+        if (maxCount < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxCount));
+        if (maxBytes < 0)
+            throw new ArgumentOutOfRangeException(nameof(maxBytes));
+        if (!Directory.Exists(logDirectory))
+            return;
+
+        FileInfo[] owned;
+        try
+        {
+            owned = new DirectoryInfo(logDirectory)
+                .EnumerateFiles("*.log", SearchOption.TopDirectoryOnly)
+                .Where(file => OwnedLogNameRegex.IsMatch(file.Name))
+                .OrderBy(file => file.LastWriteTimeUtc)
+                .ThenBy(file => file.Name, StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch (Exception ex) when (
+            ex is IOException
+            or UnauthorizedAccessException
+            or DirectoryNotFoundException)
+        {
+            return;
+        }
+
+        long total = 0;
+        foreach (var file in owned)
+        {
+            try
+            {
+                total = checked(total + Math.Max(0, file.Length));
+            }
+            catch (IOException)
+            {
+            }
+            catch (OverflowException)
+            {
+                total = long.MaxValue;
+            }
+        }
+
+        var remaining = owned.Length;
+        foreach (var file in owned)
+        {
+            if (remaining <= maxCount && total <= maxBytes)
+                break;
+
+            long length;
+            try
+            {
+                length = Math.Max(0, file.Length);
+                file.Delete();
+            }
+            catch (Exception ex) when (
+                ex is IOException
+                or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            remaining--;
+            total = Math.Max(0, total - length);
+        }
+    }
+
+    private sealed class BoundedLaunchLogWriter : IAsyncDisposable
+    {
+        private const string TruncationMarker =
+            "[launcher] Log persistence limit reached; further process output is still being drained but is not written to this file.";
+
+        private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
+        private static readonly byte[] NewLineBytes = Utf8.GetBytes(Environment.NewLine);
+        private static readonly byte[] MarkerBytes =
+            Utf8.GetBytes(TruncationMarker + Environment.NewLine);
+
+        private readonly FileStream _stream;
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        private readonly long _maxBytes;
+        private long _written;
+        private bool _truncated;
+
+        public BoundedLaunchLogWriter(string path, long maxBytes)
+        {
+            if (maxBytes < MarkerBytes.Length)
+                throw new ArgumentOutOfRangeException(nameof(maxBytes));
+
+            _maxBytes = maxBytes;
+            _stream = new FileStream(
+                path,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.Read,
+                64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+        }
+
+        public async Task WriteLineAsync(string message)
+        {
+            await _gate.WaitAsync(CancellationToken.None);
+            try
+            {
+                if (_truncated)
+                    return;
+
+                var payloadBytes = Utf8.GetByteCount(message);
+                var required = checked((long)payloadBytes + NewLineBytes.Length);
+                if (_written + required + MarkerBytes.Length <= _maxBytes)
+                {
+                    var payload = Utf8.GetBytes(message);
+                    await _stream.WriteAsync(payload);
+                    await _stream.WriteAsync(NewLineBytes);
+                    _written += required;
+                    await _stream.FlushAsync();
+                    return;
+                }
+
+                if (_written + MarkerBytes.Length <= _maxBytes)
+                {
+                    await _stream.WriteAsync(MarkerBytes);
+                    _written += MarkerBytes.Length;
+                    await _stream.FlushAsync();
+                }
+
+                _truncated = true;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _gate.WaitAsync(CancellationToken.None);
+            try
+            {
+                await _stream.FlushAsync();
+                await _stream.DisposeAsync();
+            }
+            finally
+            {
+                _gate.Release();
+                _gate.Dispose();
+            }
+        }
+    }
     }
 }
