@@ -56,7 +56,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
             var paths = new NexoPathService(root);
             paths.EnsureDirectories();
             var instance = new GameInstance(
-                "fabric-prepare-invalid",
+                Guid.NewGuid().ToString("N"),
                 "Fabric prepare invalid",
                 profileId,
                 "fabric",
@@ -118,7 +118,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
         var paths = new NexoPathService(validRoot);
         paths.EnsureDirectories();
         var instance = new GameInstance(
-            "fabric-prepare-valid",
+            Guid.NewGuid().ToString("N"),
             "Fabric prepare valid",
             profileId,
             "fabric",
@@ -185,7 +185,7 @@ static async Task RunInheritedLaunchRegressionAsync(string root)
     var paths = new NexoPathService(root);
     paths.EnsureDirectories();
     var instance = new GameInstance(
-        "fabric-instance",
+        Guid.NewGuid().ToString("N"),
         "Fabric test",
         "fabric-loader-0.16.9-1.21.4",
         "fabric",
