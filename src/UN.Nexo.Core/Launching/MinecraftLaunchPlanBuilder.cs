@@ -18,11 +18,28 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         CancellationToken cancellationToken = default)
         => BuildAsync(instance, account, installations, credentials: null, cancellationToken);
 
-    public async Task<MinecraftLaunchPlan> BuildAsync(
+    public Task<MinecraftLaunchPlan> BuildAsync(
         GameInstance instance,
         LauncherAccount account,
         IEnumerable<JavaInstallation> installations,
         MinecraftLaunchCredentials? credentials,
+        CancellationToken cancellationToken = default)
+        => BuildForArchitectureAsync(
+            instance,
+            account,
+            installations,
+            credentials,
+            RuntimeInformation.OSArchitecture,
+            featureContext: null,
+            cancellationToken);
+
+    internal async Task<MinecraftLaunchPlan> BuildForArchitectureAsync(
+        GameInstance instance,
+        LauncherAccount account,
+        IEnumerable<JavaInstallation> installations,
+        MinecraftLaunchCredentials? credentials,
+        Architecture architecture,
+        IReadOnlyDictionary<string, bool>? featureContext = null,
         CancellationToken cancellationToken = default)
     {
         if (!instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
@@ -80,8 +97,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             throw new InvalidDataException($"Unsupported launcher account type '{account.Type}'.");
         }
 
-        if (RuntimeInformation.OSArchitecture != Architecture.X64)
-            throw new PlatformNotSupportedException("Minecraft launch currently requires x64.");
+        if (architecture is not (Architecture.X64 or Architecture.Arm64))
+            throw new PlatformNotSupportedException(
+                $"Minecraft launch supports x64 and ARM64, but this environment reports {architecture}.");
 
         var instanceRoot = Within(paths.GetInstancesRoot(), instance.Id);
         var gameRoot = Within(instanceRoot, "game");
@@ -103,6 +121,11 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             .FirstOrDefault(item => JavaMajor(item.Version) == requiredJava);
         if (java is null)
         {
+            if (architecture != Architecture.X64)
+                throw new PlatformNotSupportedException(
+                    $"No compatible 64-bit Java {requiredJava} installation was found for {MinecraftRules.ArchitectureNameFor(architecture)}. "
+                    + "Automatic Java acquisition currently supports x64 only; install a matching ARM64 Java runtime manually.");
+
             java = await new JavaRuntimeProvisionService(paths)
                 .EnsureJavaAsync(requiredJava, cancellationToken: cancellationToken);
         }
@@ -117,7 +140,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             foreach (var library in libraries.EnumerateArray())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!MinecraftRules.Allows(library))
+                if (!MinecraftRules.Allows(library, architecture))
                     continue;
 
                 var artifactAdded = false;
@@ -266,7 +289,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         if (root.TryGetProperty("arguments", out var modernArguments)
             && modernArguments.TryGetProperty("jvm", out var jvmArguments))
         {
-            arguments.AddRange(ReadArguments(jvmArguments).Select(Expand));
+            arguments.AddRange(
+                ReadArguments(jvmArguments, architecture, featureContext)
+                    .Select(Expand));
         }
         else
         {
@@ -294,7 +319,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             ?? throw new InvalidDataException("Missing main class."));
         if (root.TryGetProperty("arguments", out modernArguments)
             && modernArguments.TryGetProperty("game", out var gameArguments))
-            arguments.AddRange(ReadArguments(gameArguments).Select(Expand));
+            arguments.AddRange(
+                ReadArguments(gameArguments, architecture, featureContext)
+                    .Select(Expand));
         else if (root.TryGetProperty("minecraftArguments", out var legacyArguments))
             arguments.AddRange(SplitLegacy(legacyArguments.GetString() ?? string.Empty).Select(Expand));
 
@@ -552,7 +579,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             File.Copy(source, target, overwrite: true);
     }
 
-    private static IEnumerable<string> ReadArguments(JsonElement list)
+    private static IEnumerable<string> ReadArguments(
+        JsonElement list,
+        Architecture architecture,
+        IReadOnlyDictionary<string, bool>? featureContext)
     {
         if (list.ValueKind != JsonValueKind.Array)
             throw InvalidMetadata("launch arguments", "an array");
@@ -567,7 +597,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
             if (item.ValueKind != JsonValueKind.Object)
                 throw InvalidMetadata("launch argument item", "a string or object");
-            if (!MinecraftRules.Allows(item))
+            if (!MinecraftRules.Allows(item, architecture, featureContext))
                 continue;
             if (!item.TryGetProperty("value", out var value))
                 throw InvalidMetadata("launch argument value", "a string or array of strings");
