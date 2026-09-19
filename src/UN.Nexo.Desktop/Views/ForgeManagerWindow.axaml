@@ -1,0 +1,107 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="UN.Nexo.Desktop.Views.ForgeManagerWindow"
+        Title="Nexo Forge Manager"
+        Width="900" Height="690"
+        MinWidth="760" MinHeight="590"
+        WindowStartupLocation="CenterOwner"
+        Background="#0B0F14">
+  <Window.Styles>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="#121923" />
+      <Setter Property="BorderBrush" Value="#202B38" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="#8E9AAA" />
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="#6D5DFB" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Padding" Value="16,10" />
+      <Setter Property="CornerRadius" Value="9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="24" RowDefinitions="Auto,16,*,16,Auto">
+    <StackPanel>
+      <TextBlock Text="Forge instances" FontSize="30" FontWeight="SemiBold" />
+      <TextBlock Text="Choose a Minecraft version, let Nexo query compatible Forge Loader releases, then create and prepare an isolated instance." Classes="muted" Margin="0,5,0,0" TextWrapping="Wrap" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2">
+      <StackPanel Spacing="16">
+        <Border Classes="card">
+          <StackPanel Spacing="11">
+            <TextBlock Text="Create Forge instance" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Loader versions come from Forge Meta. The stable loader is preferred when available." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="1.1*,1.1*" ColumnSpacing="12" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
+              <StackPanel>
+                <TextBlock Text="Minecraft" Classes="muted" FontSize="11" />
+                <ComboBox x:Name="MinecraftVersionBox" SelectionChanged="OnMinecraftVersionChanged" MaxDropDownHeight="320">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding DisplayLabel}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </StackPanel>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="Forge Loader" Classes="muted" FontSize="11" />
+                <ComboBox x:Name="LoaderVersionBox" SelectionChanged="OnLoaderVersionChanged" MaxDropDownHeight="320">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                      <TextBlock Text="{Binding DisplayName}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </StackPanel>
+              <StackPanel Grid.Row="1" Grid.ColumnSpan="2">
+                <TextBlock Text="Instance name" Classes="muted" FontSize="11" />
+                <TextBox x:Name="InstanceNameBox" PlaceholderText="Forge Minecraft" />
+              </StackPanel>
+              <Grid Grid.Row="2" Grid.ColumnSpan="2" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="8">
+                <Button x:Name="CreateButton" Classes="primary" Content="Create &amp; prepare" Click="OnCreateClicked" IsEnabled="False" />
+                <Button x:Name="CancelButton" Grid.Column="1" Content="Cancel" Click="OnCancelClicked" IsEnabled="False" />
+                <TextBlock x:Name="LoaderStatus" Grid.Column="2" Text="Loading Minecraft catalog…" Classes="muted" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" />
+              </Grid>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card">
+          <Grid ColumnDefinitions="1.05*,*" ColumnSpacing="16">
+            <StackPanel Spacing="10">
+              <TextBlock Text="Existing Forge instances" FontSize="20" FontWeight="SemiBold" />
+              <TextBlock Text="Imported Forge profiles appear here too. Preparing one verifies/downloads its Vanilla base and Forge libraries without touching other instances." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <ListBox x:Name="ExistingForgeList" MinHeight="210" SelectionChanged="OnExistingSelectionChanged" Background="Transparent" BorderThickness="0">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Margin="6,6">
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding VersionId}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Spacing="10">
+              <TextBlock Text="Selected Forge profile" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock x:Name="ExistingDetail" Text="Select an existing Forge instance." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <Button x:Name="PrepareExistingButton" Content="Prepare / repair Forge files" Click="OnPrepareExistingClicked" IsEnabled="False" HorizontalAlignment="Left" Padding="14,9" />
+              <ProgressBar x:Name="ProgressBar" Minimum="0" Maximum="100" Height="7" />
+              <TextBlock x:Name="ProgressText" Text="Idle." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="4" Background="#101720" CornerRadius="10" Padding="12">
+      <TextBlock x:Name="OperationStatus" Text="Ready." Classes="muted" FontSize="12" TextWrapping="Wrap" />
+    </Border>
+  </Grid>
+</Window>
