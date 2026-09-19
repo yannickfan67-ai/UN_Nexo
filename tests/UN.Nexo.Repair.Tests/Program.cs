@@ -437,6 +437,7 @@ internal static class Program
 
             var handler = new FabricRepairHandler(
                 baseVersionId,
+                javaMajor,
                 clientBytes,
                 baseLibraryBytes,
                 fabricLibraryBytes,
@@ -559,6 +560,7 @@ internal static class Program
 
     private sealed class FabricRepairHandler(
         string baseVersionId,
+        int javaMajor,
         byte[] clientBytes,
         byte[] baseLibraryBytes,
         byte[] fabricLibraryBytes,
@@ -621,6 +623,7 @@ internal static class Program
 
             return "{\"id\":\"" + baseVersionId + "\","
                    + "\"type\":\"release\","
+                   + "\"javaVersion\":{\"majorVersion\":" + javaMajor + "},"
                    + "\"downloads\":{\"client\":{"
                    + "\"url\":\"https://piston-data.mojang.com/client.jar\","
                    + "\"sha1\":\"" + clientSha + "\"}},"
