@@ -17,6 +17,7 @@ internal static class TrustedDownloadPolicy
         "maven.quiltmc.org",
         "files.minecraftforge.net",
         "maven.minecraftforge.net",
+        "maven.neoforged.net",
         "bmclapi2.bangbang93.com"
     };
 
