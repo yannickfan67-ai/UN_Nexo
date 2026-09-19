@@ -258,7 +258,7 @@ internal static class VanillaPathContainmentRegression
                 var json = mode == PathFixtureMode.EmptyVersion
                     ? "{\"id\":\"1.21.4\",\"libraries\":[]}"
                     : "{\"id\":\"1.21.4\","
-                      + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                      + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
                       + "\"assetIndex\":{\"id\":\"path-assets\",\"url\":\"https://launchermeta.mojang.com/path-assets.json\"},"
                       + "\"libraries\":[{\"name\":\"com.example:lib:1.0\","
                       + "\"downloads\":{\"artifact\":{\"path\":"
