@@ -78,7 +78,11 @@ public sealed class InstanceLifecycleService
                 source.BaseVersionId,
                 source.LoaderVersion);
 
-            await WriteJsonAtomicAsync(Path.Combine(stagingRoot, "instance.json"), clone, cancellationToken);
+            await AtomicJsonFile.WriteAsync(
+                Path.Combine(stagingRoot, "instance.json"),
+                clone,
+                _json,
+                cancellationToken);
             await RewriteInstallStateAsync(stagingRoot, clone, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -747,48 +751,44 @@ public sealed class InstanceLifecycleService
         if (!File.Exists(path))
             return;
 
+        JsonObject node;
         try
         {
             var json = await File.ReadAllTextAsync(path, cancellationToken);
-            var node = JsonNode.Parse(json)?.AsObject();
-            if (node is null)
+            var parsed = JsonNode.Parse(json);
+            if (parsed is not JsonObject objectNode)
+            {
+                TryDeleteFile(path);
                 return;
+            }
 
-            if (node.ContainsKey("Id"))
-                node["Id"] = clone.Id;
-            if (node.ContainsKey("id"))
-                node["id"] = clone.Id;
-            if (!node.ContainsKey("Id") && !node.ContainsKey("id"))
-                node["id"] = clone.Id;
-
-            if (node.ContainsKey("Name"))
-                node["Name"] = clone.Name;
-            if (node.ContainsKey("name"))
-                node["name"] = clone.Name;
-            if (!node.ContainsKey("Name") && !node.ContainsKey("name"))
-                node["name"] = clone.Name;
-
-            await File.WriteAllTextAsync(path, node.ToJsonString(_json), cancellationToken);
+            node = objectNode;
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            // A stale state file should not make an otherwise valid clone fail.
+            TryDeleteFile(path);
+            return;
         }
-    }
 
-    private async Task WriteJsonAtomicAsync<T>(string path, T value, CancellationToken cancellationToken)
-    {
-        var temp = path + ".tmp";
-        try
-        {
-            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(value, _json), cancellationToken);
-            File.Move(temp, path, overwrite: true);
-        }
-        catch
-        {
-            TryDeleteFile(temp);
-            throw;
-        }
+        if (node.ContainsKey("Id"))
+            node["Id"] = clone.Id;
+        if (node.ContainsKey("id"))
+            node["id"] = clone.Id;
+        if (!node.ContainsKey("Id") && !node.ContainsKey("id"))
+            node["id"] = clone.Id;
+
+        if (node.ContainsKey("Name"))
+            node["Name"] = clone.Name;
+        if (node.ContainsKey("name"))
+            node["name"] = clone.Name;
+        if (!node.ContainsKey("Name") && !node.ContainsKey("name"))
+            node["name"] = clone.Name;
+
+        await AtomicJsonFile.WriteAsync(
+            path,
+            node,
+            _json,
+            cancellationToken);
     }
 
     private string GetBackupRoot(string instanceId)

@@ -115,7 +115,11 @@ public sealed class FabricInstallService(
                     source = "fabric-meta",
                     state = "prepared"
                 };
-                await WriteJsonAtomicAsync(statePath, state, cancellationToken);
+                await AtomicJsonFile.WriteAsync(
+                    statePath,
+                    state,
+                    new JsonSerializerOptions { WriteIndented = true },
+                    cancellationToken);
                 Report(progress, new InstallProgress(
                     "Ready",
                     1,
@@ -487,49 +491,15 @@ public sealed class FabricInstallService(
         }
     }
 
-    private static async Task WriteProfileAtomicAsync(
+    private static Task WriteProfileAtomicAsync(
         string path,
         JsonElement profile,
         CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + ".tmp";
-        try
-        {
-            await File.WriteAllTextAsync(
-                temp,
-                JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true }),
-                cancellationToken);
-            File.Move(temp, path, overwrite: true);
-        }
-        catch
-        {
-            TryDeleteFile(temp);
-            throw;
-        }
-    }
-
-    private static async Task WriteJsonAtomicAsync<T>(
-        string path,
-        T value,
-        CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temp = path + ".tmp";
-        try
-        {
-            await File.WriteAllTextAsync(
-                temp,
-                JsonSerializer.Serialize(value, new JsonSerializerOptions { WriteIndented = true }),
-                cancellationToken);
-            File.Move(temp, path, overwrite: true);
-        }
-        catch
-        {
-            TryDeleteFile(temp);
-            throw;
-        }
-    }
+        => AtomicJsonFile.WriteAsync(
+            path,
+            profile,
+            new JsonSerializerOptions { WriteIndented = true },
+            cancellationToken);
 
     private static void Report(IProgress<InstallProgress>? progress, InstallProgress value)
         => progress?.Report(value);
