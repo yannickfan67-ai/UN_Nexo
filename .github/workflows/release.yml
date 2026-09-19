@@ -180,6 +180,13 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           ## UN_Nexo ${VERSION}
 
+          ### Modrinth update integrity
+          - Modrinth installs/updates now hold one instance operation lease for the complete filesystem mutation instead of releasing it between install/remove/disable steps.
+          - Disabled mods are published directly to the new `.jar.disabled` final name, eliminating the temporary enabled window during updates.
+          - Filename-changing updates publish the new final file and remove the old file before releasing the instance lease; cancellation while waiting for old-file removal rolls the new file back and preserves the previous mod.
+          - Installed-mod listing and Modrinth SHA-1 matching reject top-level symlink/reparse-point JARs, with a second physical-file validation immediately after open so outside targets are not fingerprinted or submitted to `version_files`.
+          - Windows/Linux regressions verify competing Play-style instance acquisition cannot interleave with an update, cancellation rollback, and linked-JAR fingerprint suppression.
+
           ### Lock-sidecar integrity
           - Cross-process lock ownership is now represented only by the exclusive OS file handle; lock sidecars are contentless and are no longer truncated or rewritten with metadata.
           - Persisted-store and per-instance coordination share one lock implementation and reject symlink/reparse-point sidecars before and immediately after open.
