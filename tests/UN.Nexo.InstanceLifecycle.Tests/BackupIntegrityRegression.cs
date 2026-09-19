@@ -20,6 +20,9 @@ internal static class BackupIntegrityRegression
         await TestSchema2ManifestAsync(backup);
         await TestSameSizeTamperAsync(lifecycle, paths, source, backup);
         await TestManifestValidationAsync(lifecycle, paths, source, backup);
+        await TestLinkedBackupFileRejectedAsync(lifecycle, paths, source, backup);
+        await TestLinkedBackupRootRejectedAsync(lifecycle, paths, source, backup);
+        await TestLinkedSavesRootRejectedAsync(lifecycle, paths, source, backup);
         await TestLegacySchema1RestoreAsync(lifecycle, paths, source, backup);
     }
 
@@ -231,6 +234,202 @@ internal static class BackupIntegrityRegression
         }
     }
 
+    private static async Task TestLinkedBackupFileRejectedAsync(
+        InstanceLifecycleService lifecycle,
+        NexoPathService paths,
+        GameInstance source,
+        WorldBackupInfo goodBackup)
+    {
+        var backupRoot = Path.GetDirectoryName(goodBackup.FilePath)
+            ?? throw new InvalidOperationException("Backup fixture has no parent directory.");
+        var externalRoot = Path.Combine(
+            Path.GetTempPath(),
+            "UN_Nexo-linked-backup-file-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var externalBackup = Path.Combine(externalRoot, "external.zip");
+        File.Copy(goodBackup.FilePath, externalBackup);
+
+        try
+        {
+            var linkedPath = Path.Combine(backupRoot, "linked-external.zip");
+            if (TryCreateFileLink(linkedPath, externalBackup))
+            {
+                try
+                {
+                    var listed = await lifecycle.GetBackupsAsync(source);
+                    Require(
+                        listed.All(item => !PathEquals(item.FilePath, linkedPath)),
+                        "Linked backup ZIP must not be listed as a trusted backup.");
+
+                    try
+                    {
+                        await lifecycle.RestoreWorldAsync(
+                            source,
+                            goodBackup with { FilePath = linkedPath },
+                            "World A");
+                        throw new InvalidOperationException(
+                            "Linked backup ZIP unexpectedly restored.");
+                    }
+                    catch (InvalidDataException)
+                    {
+                    }
+
+                    Require(File.Exists(externalBackup),
+                        "Rejecting a linked backup ZIP must not modify its external target.");
+                }
+                finally
+                {
+                    TryDeleteFileLink(linkedPath);
+                }
+            }
+
+            var swapPath = Path.Combine(backupRoot, "list-then-link.zip");
+            File.Copy(goodBackup.FilePath, swapPath, overwrite: true);
+            var beforeSwap = await lifecycle.GetBackupsAsync(source);
+            var listedPhysical = beforeSwap.FirstOrDefault(
+                item => PathEquals(item.FilePath, swapPath));
+
+            if (listedPhysical is not null)
+            {
+                File.Delete(swapPath);
+                if (TryCreateFileLink(swapPath, externalBackup))
+                {
+                    try
+                    {
+                        await lifecycle.RestoreWorldAsync(
+                            source,
+                            listedPhysical,
+                            "World A");
+                        throw new InvalidOperationException(
+                            "A backup replaced by a link after listing unexpectedly restored.");
+                    }
+                    catch (InvalidDataException)
+                    {
+                    }
+                    finally
+                    {
+                        TryDeleteFileLink(swapPath);
+                    }
+                }
+                else
+                {
+                    File.Copy(goodBackup.FilePath, swapPath, overwrite: true);
+                }
+            }
+
+            if (File.Exists(swapPath))
+                File.Delete(swapPath);
+        }
+        finally
+        {
+            TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static async Task TestLinkedBackupRootRejectedAsync(
+        InstanceLifecycleService lifecycle,
+        NexoPathService paths,
+        GameInstance source,
+        WorldBackupInfo goodBackup)
+    {
+        var backupRoot = Path.GetDirectoryName(goodBackup.FilePath)
+            ?? throw new InvalidOperationException("Backup fixture has no parent directory.");
+        var savedRoot = backupRoot + ".physical-" + Guid.NewGuid().ToString("N");
+        var externalRoot = Path.Combine(
+            Path.GetTempPath(),
+            "UN_Nexo-linked-backup-root-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel = Path.Combine(externalRoot, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+
+        Directory.Move(backupRoot, savedRoot);
+        var linked = false;
+        try
+        {
+            linked = TryCreateDirectoryLink(backupRoot, externalRoot);
+            if (!linked)
+                return;
+
+            try
+            {
+                await lifecycle.CreateWorldBackupAsync(source, "manual");
+                throw new InvalidOperationException(
+                    "Linked backup root unexpectedly accepted a new backup.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Require(File.Exists(sentinel),
+                "Rejecting a linked backup root must not modify its external target.");
+            Require(
+                !Directory.EnumerateFiles(externalRoot, "*.zip").Any(),
+                "A linked backup root must not receive a Nexo backup.");
+        }
+        finally
+        {
+            if (linked)
+                TryDeleteDirectoryLink(backupRoot);
+            if (Directory.Exists(savedRoot) && !Directory.Exists(backupRoot))
+                Directory.Move(savedRoot, backupRoot);
+            TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static async Task TestLinkedSavesRootRejectedAsync(
+        InstanceLifecycleService lifecycle,
+        NexoPathService paths,
+        GameInstance source,
+        WorldBackupInfo goodBackup)
+    {
+        var savesRoot = Path.Combine(
+            paths.GetInstanceGameDirectory(source.Id),
+            "saves");
+        var savedRoot = savesRoot + ".physical-" + Guid.NewGuid().ToString("N");
+        var externalRoot = Path.Combine(
+            Path.GetTempPath(),
+            "UN_Nexo-linked-saves-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+        var sentinel = Path.Combine(externalRoot, "keep.txt");
+        await File.WriteAllTextAsync(sentinel, "keep");
+
+        Directory.Move(savesRoot, savedRoot);
+        var linked = false;
+        try
+        {
+            linked = TryCreateDirectoryLink(savesRoot, externalRoot);
+            if (!linked)
+                return;
+
+            try
+            {
+                await lifecycle.RestoreWorldAsync(
+                    source,
+                    goodBackup,
+                    "World A");
+                throw new InvalidOperationException(
+                    "Linked saves directory unexpectedly accepted a restore.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Require(File.Exists(sentinel),
+                "Rejecting linked saves must not modify the external target.");
+            Require(
+                !Directory.Exists(Path.Combine(externalRoot, "World A")),
+                "Restore must not publish a world through linked saves.");
+        }
+        finally
+        {
+            if (linked)
+                TryDeleteDirectoryLink(savesRoot);
+            if (Directory.Exists(savedRoot) && !Directory.Exists(savesRoot))
+                Directory.Move(savedRoot, savesRoot);
+            TryDeleteTree(externalRoot);
+        }
+    }
+
     private static async Task TestLegacySchema1RestoreAsync(
         InstanceLifecycleService lifecycle,
         NexoPathService paths,
@@ -313,6 +512,88 @@ internal static class BackupIntegrityRegression
             || !Directory.EnumerateFileSystemEntries(staging).Any(),
             "Rejected restore must not leave restore staging content.");
     }
+
+    private static bool TryCreateDirectoryLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryCreateFileLink(
+        string linkPath,
+        string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (Exception ex) when (
+            ex is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteDirectoryLink(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteFileLink(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDeleteTree(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool PathEquals(string left, string right)
+        => string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
 
     private static string Escape(string value)
         => JsonSerializer.Serialize(value)[1..^1];
