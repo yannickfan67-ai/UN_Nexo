@@ -510,15 +510,16 @@ internal static class ModrinthProviderRegression
                 var hash = LastVersionFileHashes.FirstOrDefault()
                            ?? throw new InvalidOperationException("Missing hash.");
                 return Json(
-                    $"""
-                    {
-                      "{{hash}}": {
-                        "id": "OLDVER01",
-                        "project_id": "AABBCCDD",
-                        "version_number": "0.5.0"
-                      }
-                    }
-                    """);
+                    JsonSerializer.Serialize(
+                        new Dictionary<string, object>
+                        {
+                            [hash] = new
+                            {
+                                id = "OLDVER01",
+                                project_id = "AABBCCDD",
+                                version_number = "0.5.0"
+                            }
+                        }));
             }
 
             if (uri.AbsolutePath.Contains("/v2/project/AABBCCDD/version", StringComparison.Ordinal))
