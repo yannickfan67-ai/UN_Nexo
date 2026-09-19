@@ -364,6 +364,9 @@ public sealed partial class ModManagerWindow : Window
                 var dependencyText = dependencies.Length == 0
                     ? "No required dependencies."
                     : $"Required dependencies ({dependencies.Length}): {string.Join(", ", dependencies)}.";
+                var optionalText = plan.OptionalDependencies.Count == 0
+                    ? string.Empty
+                    : $" Optional dependencies advertised: {plan.OptionalDependencies.Count}; they are not auto-installed.";
 
                 var versionText = item.Installed is null
                     ? $"Latest compatible version: {version.VersionNumber}."
@@ -372,7 +375,7 @@ public sealed partial class ModManagerWindow : Window
                         : $"Update available: {item.Installed.VersionNumber} → {version.VersionNumber}.";
 
                 SelectedModrinthDetail.Text =
-                    $"{versionText} {dependencyText} The complete plan is downloaded first and published together.";
+                    $"{versionText} {dependencyText}{optionalText} The complete required plan is downloaded first and published together.";
             }
         }
         catch (Exception ex)
