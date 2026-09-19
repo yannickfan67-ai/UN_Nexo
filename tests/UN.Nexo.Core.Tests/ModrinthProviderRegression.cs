@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Core.Tests;
@@ -110,6 +111,66 @@ internal static class ModrinthProviderRegression
             Assert(match.VersionId == "OLDVER01", "Installed Modrinth version metadata was not returned.");
             Assert(!match.IsCurrent(latest), "Older installed Modrinth version should report an update.");
 
+            var linkedInstanceId = Guid.NewGuid().ToString("N");
+            var linkedModsDirectory = mods.GetModsDirectory(linkedInstanceId);
+            Directory.CreateDirectory(linkedModsDirectory);
+            var outsideDirectory = Path.Combine(root, "outside-linked-mod");
+            Directory.CreateDirectory(outsideDirectory);
+            var outsidePath = Path.Combine(outsideDirectory, "outside.bin");
+            var outsideBytes = Encoding.UTF8.GetBytes(
+                "outside-modrinth-fingerprint-must-not-be-sent");
+            await File.WriteAllBytesAsync(outsidePath, outsideBytes);
+            var linkedPath = Path.Combine(linkedModsDirectory, "external.jar");
+            var linkedSupported = true;
+            try
+            {
+                File.CreateSymbolicLink(linkedPath, outsidePath);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or PlatformNotSupportedException
+                or IOException)
+            {
+                linkedSupported = false;
+                Console.WriteLine(
+                    "SKIP Modrinth linked-JAR fixture: "
+                    + ex.GetType().Name);
+            }
+
+            if (linkedSupported)
+            {
+                Assert(
+                    mods.List(linkedInstanceId).All(item =>
+                        !string.Equals(
+                            item.FileName,
+                            "external.jar",
+                            StringComparison.Ordinal)),
+                    "Instance mod listing must exclude linked JAR entries.");
+
+                var versionFileRequestsBefore = handler.VersionFileRequests;
+                var outsideHash = Convert.ToHexString(
+                        SHA1.HashData(outsideBytes))
+                    .ToLowerInvariant();
+                var linkedMatches = await provider.MatchInstalledAsync(
+                    linkedModsDirectory,
+                    [
+                        new InstalledMod(
+                            "external.jar",
+                            true,
+                            outsideBytes.LongLength,
+                            DateTimeOffset.UtcNow)
+                    ]);
+
+                Assert(linkedMatches.Count == 0,
+                    "Linked installed JAR must not produce a Modrinth match.");
+                Assert(handler.VersionFileRequests == versionFileRequestsBefore,
+                    "A linked-only installed set must not trigger version_files.");
+                Assert(!handler.LastVersionFileHashes.Contains(
+                        outsideHash,
+                        StringComparer.OrdinalIgnoreCase),
+                    "The linked target SHA-1 must never be sent to Modrinth.");
+            }
+
             mods.SetEnabled(instanceId, "sodium.jar", enabled: false);
             var disabledMatches = await provider.MatchInstalledAsync(
                 mods.GetModsDirectory(instanceId),
@@ -125,6 +186,152 @@ internal static class ModrinthProviderRegression
                 mods);
             Assert(!updated.InstalledMod.IsEnabled,
                 "Explicit Modrinth update should preserve the prior disabled state.");
+
+            var renamedVersion = new ModProviderVersion(
+                "modrinth",
+                projects[0].ProjectId,
+                "RENAME01",
+                "Renamed current",
+                "0.7.0",
+                DateTimeOffset.UtcNow,
+                [
+                    new ModProviderFile(
+                        "sodium-next.jar",
+                        "https://cdn.modrinth.com/data/AABBCCDD/versions/RENAME01/sodium-next.jar",
+                        Convert.ToHexString(SHA1.HashData(payload)).ToLowerInvariant(),
+                        payload.LongLength,
+                        true)
+                ]);
+
+            var atomicInstanceId = Guid.NewGuid().ToString("N");
+            var legacySource = Path.Combine(root, "legacy-sodium.jar");
+            await File.WriteAllBytesAsync(legacySource, Encoding.UTF8.GetBytes("legacy"));
+            var legacyInstalled = await mods.InstallAsync(
+                atomicInstanceId,
+                legacySource);
+            var legacyDisabled = await mods.SetEnabledAsync(
+                atomicInstanceId,
+                legacyInstalled.FileName,
+                enabled: false);
+            var atomicExisting = new ModProviderInstalledMatch(
+                "modrinth",
+                projects[0].ProjectId,
+                "OLDVER01",
+                "0.5.0",
+                legacyDisabled.FileName,
+                false);
+
+            var atomicModsDirectory = mods.GetModsDirectory(atomicInstanceId);
+            var oldMutationKey = Path.Combine(
+                atomicModsDirectory,
+                "legacy-sodium.jar");
+            var newDisabledPath = Path.Combine(
+                atomicModsDirectory,
+                "sodium-next.jar.disabled");
+            var newEnabledPath = Path.Combine(
+                atomicModsDirectory,
+                "sodium-next.jar");
+            var oldDisabledPath = Path.Combine(
+                atomicModsDirectory,
+                legacyDisabled.FileName);
+
+            using var oldPathLease = await PathKeyedLock.AcquireAsync(
+                oldMutationKey);
+            using var atomicTimeout =
+                new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var atomicUpdate = provider.InstallAsync(
+                atomicInstanceId,
+                projects[0],
+                renamedVersion,
+                atomicExisting,
+                mods,
+                atomicTimeout.Token);
+
+            await WaitForFileAsync(
+                newDisabledPath,
+                atomicTimeout.Token);
+            Assert(!File.Exists(newEnabledPath),
+                "Updating a disabled mod must publish the new version directly as disabled.");
+
+            var competingCoordinator =
+                new InstanceOperationCoordinator(paths);
+            var competingLeaseTask = competingCoordinator
+                .AcquireAsync(
+                    atomicInstanceId,
+                    "play-test",
+                    atomicTimeout.Token)
+                .AsTask();
+            await Task.Delay(150, atomicTimeout.Token);
+            Assert(!competingLeaseTask.IsCompleted,
+                "Play-style instance acquisition must wait until the complete Modrinth update finishes.");
+
+            oldPathLease.Dispose();
+            var atomicResult = await atomicUpdate;
+            await using (var competingLease =
+                         await competingLeaseTask.WaitAsync(
+                             atomicTimeout.Token))
+            {
+                Assert(!File.Exists(oldDisabledPath),
+                    "Filename-changing update must remove the previous JAR before releasing the instance lease.");
+                Assert(File.Exists(newDisabledPath),
+                    "Filename-changing update must retain the new disabled JAR.");
+                Assert(!atomicResult.InstalledMod.IsEnabled,
+                    "Atomic filename-changing update must preserve disabled state.");
+            }
+
+            var cancelInstanceId = Guid.NewGuid().ToString("N");
+            var cancelInstalled = await mods.InstallAsync(
+                cancelInstanceId,
+                legacySource);
+            var cancelDisabled = await mods.SetEnabledAsync(
+                cancelInstanceId,
+                cancelInstalled.FileName,
+                enabled: false);
+            var cancelExisting = atomicExisting with
+            {
+                LocalFileName = cancelDisabled.FileName
+            };
+            var cancelModsDirectory = mods.GetModsDirectory(cancelInstanceId);
+            var cancelOldKey = Path.Combine(
+                cancelModsDirectory,
+                "legacy-sodium.jar");
+            var cancelOldPath = Path.Combine(
+                cancelModsDirectory,
+                cancelDisabled.FileName);
+            var cancelNewPath = Path.Combine(
+                cancelModsDirectory,
+                "sodium-next.jar.disabled");
+
+            using var cancelOldLease = await PathKeyedLock.AcquireAsync(
+                cancelOldKey);
+            using var updateCancellation =
+                new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var cancelledUpdate = provider.InstallAsync(
+                cancelInstanceId,
+                projects[0],
+                renamedVersion,
+                cancelExisting,
+                mods,
+                updateCancellation.Token);
+            await WaitForFileAsync(
+                cancelNewPath,
+                updateCancellation.Token);
+            updateCancellation.Cancel();
+
+            try
+            {
+                await cancelledUpdate;
+                throw new Exception(
+                    "Cancelled Modrinth update unexpectedly completed.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            Assert(File.Exists(cancelOldPath),
+                "Cancelled provider update must leave the previous disabled mod recoverable.");
+            Assert(!File.Exists(cancelNewPath),
+                "Cancelled provider update must roll back the newly published file.");
 
             handler.BadDownload = true;
             try
@@ -178,6 +385,17 @@ internal static class ModrinthProviderRegression
         }
     }
 
+    private static async Task WaitForFileAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        while (!File.Exists(path))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(25, cancellationToken);
+        }
+    }
+
     private static void Assert(bool condition, string message)
     {
         if (!condition)
@@ -196,6 +414,8 @@ internal static class ModrinthProviderRegression
         public bool RedirectLoop { get; set; }
         public int RedirectedDownloadRequests { get; private set; }
         public int UntrustedDownloadRequests { get; private set; }
+        public int VersionFileRequests { get; private set; }
+        public IReadOnlyList<string> LastVersionFileHashes { get; private set; } = [];
         public string LastUserAgent { get; private set; } = string.Empty;
         public string LastSearchQuery { get; private set; } = string.Empty;
 
@@ -277,13 +497,20 @@ internal static class ModrinthProviderRegression
 
             if (uri.AbsolutePath.EndsWith("/v2/version_files", StringComparison.Ordinal))
             {
+                VersionFileRequests++;
                 var body = await (request.Content?.ReadAsStringAsync(cancellationToken)
                                   ?? Task.FromResult("{}"));
                 using var requestJson = JsonDocument.Parse(body);
-                var hash = requestJson.RootElement.GetProperty("hashes")[0].GetString()
+                LastVersionFileHashes = requestJson.RootElement
+                    .GetProperty("hashes")
+                    .EnumerateArray()
+                    .Select(item => item.GetString() ?? string.Empty)
+                    .Where(item => item.Length > 0)
+                    .ToArray();
+                var hash = LastVersionFileHashes.FirstOrDefault()
                            ?? throw new InvalidOperationException("Missing hash.");
                 return Json(
-                    $$"""
+                    $"""
                     {
                       "{{hash}}": {
                         "id": "OLDVER01",
