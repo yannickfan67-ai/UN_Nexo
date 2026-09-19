@@ -15,6 +15,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly InstanceStoreService _instances;
     private readonly MinecraftVanillaInstallService _installer;
     private readonly FabricInstallService _fabricInstaller;
+    private readonly QuiltInstallService _quiltInstaller;
     private readonly AccountStoreService _accounts;
     private readonly MicrosoftMinecraftAuthService _microsoftAuth;
     private readonly RestrictedRegionService _restrictedRegions;
@@ -124,6 +125,7 @@ public partial class MainWindowViewModel : ObservableObject
         InstanceStoreService instances,
         MinecraftVanillaInstallService installer,
         FabricInstallService fabricInstaller,
+        QuiltInstallService quiltInstaller,
         AccountStoreService accounts,
         MicrosoftMinecraftAuthService microsoftAuth,
         RestrictedRegionService restrictedRegions,
@@ -141,6 +143,7 @@ public partial class MainWindowViewModel : ObservableObject
         _instances = instances;
         _installer = installer;
         _fabricInstaller = fabricInstaller;
+        _quiltInstaller = quiltInstaller;
         _accounts = accounts;
         _microsoftAuth = microsoftAuth;
         _restrictedRegions = restrictedRegions;
@@ -197,7 +200,14 @@ public partial class MainWindowViewModel : ObservableObject
 
         var prepared = File.Exists(Path.Combine(_paths.GetInstanceDirectory(value.Id), "install-state.json"));
         InstallProgressValue = prepared ? 100 : 0;
-        InstallProgressText = prepared ? "Vanilla files prepared" : "Not installed";
+        InstallProgressText = prepared
+            ? value.Loader.ToLowerInvariant() switch
+            {
+                "fabric" => "Fabric files prepared",
+                "quilt" => "Quilt files prepared",
+                _ => "Vanilla files prepared"
+            }
+            : "Not installed";
     }
 
     partial void OnSelectedAccountChanged(LauncherAccount? value)
@@ -376,9 +386,12 @@ public partial class MainWindowViewModel : ObservableObject
             if (IsSelectedInstance(targetInstance))
             {
                 InstallProgressValue = 100;
-                InstallProgressText = targetInstance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase)
-                    ? $"Fabric files prepared · {targetSource}"
-                    : $"Vanilla files prepared · {targetSource}";
+                InstallProgressText = targetInstance.Loader.ToLowerInvariant() switch
+                {
+                    "fabric" => $"Fabric files prepared · {targetSource}",
+                    "quilt" => $"Quilt files prepared · {targetSource}",
+                    _ => $"Vanilla files prepared · {targetSource}"
+                };
             }
             LauncherStatus = $"{targetInstance.Name} is prepared";
         }
@@ -434,11 +447,12 @@ public partial class MainWindowViewModel : ObservableObject
                 if (IsSelectedInstance(instance))
                 {
                     InstallProgressValue = 100;
-                    InstallProgressText = instance.Loader.Equals(
-                        "fabric",
-                        StringComparison.OrdinalIgnoreCase)
-                        ? $"Fabric files prepared · {_downloadSources.DisplayName}"
-                        : $"Vanilla files prepared · {_downloadSources.DisplayName}";
+                    InstallProgressText = instance.Loader.ToLowerInvariant() switch
+                    {
+                        "fabric" => $"Fabric files prepared · {_downloadSources.DisplayName}",
+                        "quilt" => $"Quilt files prepared · {_downloadSources.DisplayName}",
+                        _ => $"Vanilla files prepared · {_downloadSources.DisplayName}"
+                    };
                 }
             }
             finally
@@ -515,6 +529,28 @@ public partial class MainWindowViewModel : ObservableObject
                 baseVersionId,
                 cancellationToken);
             await _fabricInstaller.PrepareAsync(
+                instance,
+                baseVersion,
+                progress,
+                cancellationToken);
+            return;
+        }
+
+        if (instance.Loader.Equals("quilt", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseVersionId = !string.IsNullOrWhiteSpace(instance.BaseVersionId)
+                ? instance.BaseVersionId
+                : await _quiltInstaller.GetBaseVersionIdAsync(
+                    instance,
+                    cancellationToken);
+            if (string.IsNullOrWhiteSpace(baseVersionId))
+                throw new InvalidDataException(
+                    "Quilt instance does not declare its base Minecraft version.");
+
+            var baseVersion = await ResolveCatalogVersionAsync(
+                baseVersionId,
+                cancellationToken);
+            await _quiltInstaller.PrepareAsync(
                 instance,
                 baseVersion,
                 progress,
