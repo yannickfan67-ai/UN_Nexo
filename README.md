@@ -6,7 +6,7 @@ The launcher core is kept separate from the desktop UI so installation, accounts
 
 > UN_Nexo is not an official Minecraft product and is not approved by or associated with Mojang or Microsoft.
 
-## Current milestone — v0.7.5-dev
+## Current milestone — v0.7.7-dev
 
 The current development line includes:
 
