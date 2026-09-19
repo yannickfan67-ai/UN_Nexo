@@ -16,7 +16,13 @@ public sealed class ModrinthBrowserItem
     public ModProviderInstalledMatch? Installed { get; }
     public string Title => Project.Title;
     public string Description => Project.Description;
-    public string SourceLabel => "Modrinth";
+    public string SourceLabel
+        => Project.ProviderId.ToLowerInvariant() switch
+        {
+            "modrinth" => "Modrinth",
+            "curseforge" => "CurseForge",
+            _ => Project.ProviderId
+        };
     public string Subtitle
         => $"by {Project.Author} · {FormatDownloads(Project.Downloads)} downloads";
     public string InstallState
