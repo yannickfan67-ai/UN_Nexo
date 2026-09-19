@@ -57,6 +57,8 @@ internal static class AtomicJsonFile
                 // Best-effort cleanup. Never remove or truncate the destination.
             }
         }
+    }
+
     private static async Task PublishWithRetryAsync(
         string tempPath,
         string destinationPath,
@@ -78,7 +80,5 @@ internal static class AtomicJsonFile
                 await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
             }
         }
-    }
-
     }
 }
