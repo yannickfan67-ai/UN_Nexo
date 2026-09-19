@@ -187,7 +187,7 @@ public sealed partial class ModManagerWindow : Window
         }
     }
 
-    private void OnToggleClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnToggleClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_busy || SelectedInstance is not { } instance || SelectedMod is not { } mod)
             return;
@@ -200,17 +200,23 @@ public sealed partial class ModManagerWindow : Window
 
         try
         {
-            _mods.SetEnabled(instance.Id, mod.FileName, !mod.IsEnabled);
+            _busy = true;
+            RefreshMods();
+            await _mods.SetEnabledAsync(instance.Id, mod.FileName, !mod.IsEnabled);
             OperationStatus.Text = $"{(mod.IsEnabled ? "Disabled" : "Enabled")} '{mod.DisplayName}'.";
         }
         catch (Exception ex)
         {
             OperationStatus.Text = $"Could not change mod state: {ex.Message}";
         }
-        RefreshMods();
+        finally
+        {
+            _busy = false;
+            RefreshMods();
+        }
     }
 
-    private void OnRemoveClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void OnRemoveClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (_busy || SelectedInstance is not { } instance || SelectedMod is not { } mod)
             return;
@@ -223,14 +229,20 @@ public sealed partial class ModManagerWindow : Window
 
         try
         {
-            _mods.Remove(instance.Id, mod.FileName);
+            _busy = true;
+            RefreshMods();
+            await _mods.RemoveAsync(instance.Id, mod.FileName);
             OperationStatus.Text = $"Removed '{mod.DisplayName}' from '{instance.Name}'.";
         }
         catch (Exception ex)
         {
             OperationStatus.Text = $"Could not remove mod: {ex.Message}";
         }
-        RefreshMods();
+        finally
+        {
+            _busy = false;
+            RefreshMods();
+        }
     }
 
     private async void OnModrinthSearchClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
