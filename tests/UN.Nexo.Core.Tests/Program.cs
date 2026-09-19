@@ -36,6 +36,7 @@ internal static class Program
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
             ("Launch metadata shape validation", LaunchMetadataRegression.RunAsync),
             ("Version metadata resolver typing", VersionMetadataResolverRegression.RunAsync),
+            ("Rule features and ARM64 compatibility", RuleArchitectureRegression.RunAsync),
             ("Server address parsing", TestServerAddressParsingAsync),
             ("Server decorator inherited metadata", TestServerDecoratorInheritedMetadataAsync),
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
