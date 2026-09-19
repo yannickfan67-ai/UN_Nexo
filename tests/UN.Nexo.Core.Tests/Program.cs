@@ -28,6 +28,7 @@ internal static class Program
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
             ("Persisted account and server store validation", PersistedStoreRegression.RunAsync),
+            ("Instance name uniqueness", InstanceNameUniquenessRegression.RunAsync),
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
             ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
             ("Vanilla metadata path containment", VanillaPathContainmentRegression.RunAsync),
