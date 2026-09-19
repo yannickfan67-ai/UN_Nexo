@@ -18,6 +18,8 @@ public sealed partial class MainWindow : Window
     private readonly FabricInstallService _fabricInstaller;
     private readonly QuiltMetaService _quiltMeta;
     private readonly QuiltInstallService _quiltInstaller;
+    private readonly ForgeMetaService _forgeMeta;
+    private readonly ForgeInstallService _forgeInstaller;
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
@@ -26,6 +28,7 @@ public sealed partial class MainWindow : Window
     private GameImportWindow? _importWindow;
     private FabricManagerWindow? _fabricWindow;
     private QuiltManagerWindow? _quiltWindow;
+    private ForgeManagerWindow? _forgeWindow;
     private ModManagerWindow? _modWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
@@ -97,6 +100,11 @@ public sealed partial class MainWindow : Window
             _paths,
             _installer,
             _quiltMeta);
+        _forgeMeta = new ForgeMetaService(manifestHttpClient);
+        _forgeInstaller = new ForgeInstallService(
+            downloadHttpClient,
+            _paths,
+            _installer);
         var accountStore = new AccountStoreService(_paths);
         var microsoftAuth = new MicrosoftMinecraftAuthService(
             authHttpClient,
@@ -110,6 +118,7 @@ public sealed partial class MainWindow : Window
             _installer,
             _fabricInstaller,
             _quiltInstaller,
+            _forgeInstaller,
             accountStore,
             microsoftAuth,
             new RestrictedRegionService(regionHttpClient),
@@ -196,15 +205,26 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(Math.Min(fabricIndex + 1, nav.Children.Count), quilt);
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Forge")))
+        {
+            var forge = new Button { Content = "Forge" };
+            forge.Classes.Add("nav");
+            forge.Click += (_, _) => OpenForge();
+            var quiltIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Quilt")).index;
+            nav.Children.Insert(Math.Min(quiltIndex + 1, nav.Children.Count), forge);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Mods")))
         {
             var mods = new Button { Content = "Mods" };
             mods.Classes.Add("nav");
             mods.Click += (_, _) => OpenMods();
-            var quiltIndex = nav.Children
+            var forgeIndex = nav.Children
                 .Select((child, index) => (child, index))
-                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Quilt")).index;
-            nav.Children.Insert(Math.Min(quiltIndex + 1, nav.Children.Count), mods);
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Forge")).index;
+            nav.Children.Insert(Math.Min(forgeIndex + 1, nav.Children.Count), mods);
         }
 
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Import")))
@@ -323,6 +343,25 @@ public sealed partial class MainWindow : Window
             _installer);
         _quiltWindow.Closed += (_, _) => _quiltWindow = null;
         _quiltWindow.Show(this);
+    }
+
+    private void OpenForge()
+    {
+        if (_forgeWindow is not null)
+        {
+            _forgeWindow.Activate();
+            return;
+        }
+
+        _forgeWindow = new ForgeManagerWindow(
+            _viewModel,
+            _manifest,
+            _instances,
+            _forgeMeta,
+            _forgeInstaller,
+            _installer);
+        _forgeWindow.Closed += (_, _) => _forgeWindow = null;
+        _forgeWindow.Show(this);
     }
 
     private void OpenMods()

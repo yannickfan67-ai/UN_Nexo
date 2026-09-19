@@ -16,6 +16,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly MinecraftVanillaInstallService _installer;
     private readonly FabricInstallService _fabricInstaller;
     private readonly QuiltInstallService _quiltInstaller;
+    private readonly ForgeInstallService _forgeInstaller;
     private readonly AccountStoreService _accounts;
     private readonly MicrosoftMinecraftAuthService _microsoftAuth;
     private readonly RestrictedRegionService _restrictedRegions;
@@ -126,6 +127,7 @@ public partial class MainWindowViewModel : ObservableObject
         MinecraftVanillaInstallService installer,
         FabricInstallService fabricInstaller,
         QuiltInstallService quiltInstaller,
+        ForgeInstallService forgeInstaller,
         AccountStoreService accounts,
         MicrosoftMinecraftAuthService microsoftAuth,
         RestrictedRegionService restrictedRegions,
@@ -144,6 +146,7 @@ public partial class MainWindowViewModel : ObservableObject
         _installer = installer;
         _fabricInstaller = fabricInstaller;
         _quiltInstaller = quiltInstaller;
+        _forgeInstaller = forgeInstaller;
         _accounts = accounts;
         _microsoftAuth = microsoftAuth;
         _restrictedRegions = restrictedRegions;
@@ -205,6 +208,7 @@ public partial class MainWindowViewModel : ObservableObject
             {
                 "fabric" => "Fabric files prepared",
                 "quilt" => "Quilt files prepared",
+                "forge" => "Forge files prepared",
                 _ => "Vanilla files prepared"
             }
             : "Not installed";
@@ -390,6 +394,7 @@ public partial class MainWindowViewModel : ObservableObject
                 {
                     "fabric" => $"Fabric files prepared · {targetSource}",
                     "quilt" => $"Quilt files prepared · {targetSource}",
+                    "forge" => $"Forge files prepared · {targetSource}",
                     _ => $"Vanilla files prepared · {targetSource}"
                 };
             }
@@ -451,6 +456,7 @@ public partial class MainWindowViewModel : ObservableObject
                     {
                         "fabric" => $"Fabric files prepared · {_downloadSources.DisplayName}",
                         "quilt" => $"Quilt files prepared · {_downloadSources.DisplayName}",
+                        "forge" => $"Forge files prepared · {_downloadSources.DisplayName}",
                         _ => $"Vanilla files prepared · {_downloadSources.DisplayName}"
                     };
                 }
@@ -551,6 +557,28 @@ public partial class MainWindowViewModel : ObservableObject
                 baseVersionId,
                 cancellationToken);
             await _quiltInstaller.PrepareAsync(
+                instance,
+                baseVersion,
+                progress,
+                cancellationToken);
+            return;
+        }
+
+        if (instance.Loader.Equals("forge", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseVersionId = !string.IsNullOrWhiteSpace(instance.BaseVersionId)
+                ? instance.BaseVersionId
+                : await _forgeInstaller.GetBaseVersionIdAsync(
+                    instance,
+                    cancellationToken);
+            if (string.IsNullOrWhiteSpace(baseVersionId))
+                throw new InvalidDataException(
+                    "Forge instance does not declare its base Minecraft version.");
+
+            var baseVersion = await ResolveCatalogVersionAsync(
+                baseVersionId,
+                cancellationToken);
+            await _forgeInstaller.PrepareAsync(
                 instance,
                 baseVersion,
                 progress,
