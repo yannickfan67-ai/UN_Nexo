@@ -29,7 +29,7 @@
   <Grid Margin="24" RowDefinitions="Auto,16,Auto,16,*,16,Auto">
     <StackPanel>
       <TextBlock Text="Instance mods" FontSize="30" FontWeight="SemiBold" />
-      <TextBlock Text="Manage local JARs or browse compatible public Modrinth projects for the selected instance." Classes="muted" Margin="0,5,0,0" TextWrapping="Wrap" />
+      <TextBlock Text="Manage local JARs or browse compatible mods from supported providers for the selected instance." Classes="muted" Margin="0,5,0,0" TextWrapping="Wrap" />
     </StackPanel>
 
     <Border Grid.Row="2" Classes="card">
@@ -90,14 +90,19 @@
         </Border>
       </TabItem>
 
-      <TabItem Header="Modrinth">
+      <TabItem Header="Browse">
         <Border Classes="card" Margin="0,10,0,0">
           <Grid RowDefinitions="Auto,12,*,12,Auto">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-              <TextBox x:Name="ModrinthSearchBox"
-                       PlaceholderText="Search Modrinth (for example: Sodium)"
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+              <ComboBox x:Name="ProviderBox"
+                        Width="150"
+                        MinHeight="40"
+                        SelectionChanged="OnProviderSelectionChanged" />
+              <TextBox Grid.Column="1"
+                       x:Name="ModrinthSearchBox"
+                       PlaceholderText="Search mods (for example: Sodium)"
                        MinHeight="40" />
-              <Button Grid.Column="1"
+              <Button Grid.Column="2"
                       x:Name="ModrinthSearchButton"
                       Classes="primary"
                       Content="Search"
@@ -153,6 +158,7 @@
                         IsEnabled="False"
                         Padding="14,9" />
                 <TextBlock Grid.Column="2"
+                           x:Name="ProviderPolicyLabel"
                            Text="Public Modrinth API · no private API key"
                            Classes="muted"
                            FontSize="11"
