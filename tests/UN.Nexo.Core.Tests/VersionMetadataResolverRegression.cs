@@ -1,0 +1,238 @@
+using System.Text.Json;
+using UN.Nexo.Core.Services;
+
+namespace UN.Nexo.Core.Tests;
+
+internal static class VersionMetadataResolverRegression
+{
+    internal static async Task RunAsync()
+    {
+        await TestValidStringIdAsync();
+        await TestWrongTypedIdsAsync();
+        await TestWrongTypedInheritanceAsync();
+        await TestWrongTypedLibraryNameAsync();
+        await TestNormalInheritanceAsync();
+    }
+
+    private static async Task TestValidStringIdAsync()
+    {
+        var root = NewRoot("valid-id");
+        try
+        {
+            await WriteVersionAsync(root, "test", """
+                {"id":"test","libraries":[]}
+                """);
+            using var resolved = await new MinecraftVersionMetadataResolver()
+                .ResolveAsync(root, "test");
+            Assert(
+                resolved.Document.RootElement.GetProperty("id").GetString() == "test",
+                "Valid string id should resolve normally.");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static async Task TestWrongTypedIdsAsync()
+    {
+        var fixtures = new[]
+        {
+            ("numeric", """{"id":123,"libraries":[]}"""),
+            ("null", """{"id":null,"libraries":[]}"""),
+            ("object", """{"id":{},"libraries":[]}"""),
+            ("array", """{"id":[],"libraries":[]}"""),
+            ("boolean", """{"id":true,"libraries":[]}""")
+        };
+
+        foreach (var fixture in fixtures)
+        {
+            var root = NewRoot("bad-id-" + fixture.Item1);
+            try
+            {
+                await WriteVersionAsync(root, "test", fixture.Item2);
+                await ExpectInvalidDataAsync(
+                    () => new MinecraftVersionMetadataResolver().ResolveAsync(root, "test"),
+                    "id",
+                    $"Wrong-typed id fixture '{fixture.Item1}'");
+            }
+            finally
+            {
+                TryDelete(root);
+            }
+        }
+    }
+
+    private static async Task TestWrongTypedInheritanceAsync()
+    {
+        var values = new[]
+        {
+            "123",
+            "{}",
+            "[]",
+            "true"
+        };
+
+        foreach (var value in values)
+        {
+            var root = NewRoot("bad-inherits");
+            try
+            {
+                await WriteVersionAsync(root, "test",
+                    "{\"id\":\"test\",\"inheritsFrom\":" + value + ",\"libraries\":[]}");
+                await ExpectInvalidDataAsync(
+                    () => new MinecraftVersionMetadataResolver().ResolveAsync(root, "test"),
+                    "inheritsFrom",
+                    "Wrong-typed inheritsFrom");
+            }
+            finally
+            {
+                TryDelete(root);
+            }
+        }
+    }
+
+    private static async Task TestWrongTypedLibraryNameAsync()
+    {
+        var root = NewRoot("bad-library-name");
+        try
+        {
+            await WriteVersionAsync(root, "base", """
+                {
+                  "id":"base",
+                  "libraries":[
+                    {"name":"com.example:base:1.0"}
+                  ]
+                }
+                """);
+            await WriteVersionAsync(root, "child", """
+                {
+                  "id":"child",
+                  "inheritsFrom":"base",
+                  "libraries":[
+                    {"name":123}
+                  ]
+                }
+                """);
+
+            await ExpectInvalidDataAsync(
+                () => new MinecraftVersionMetadataResolver().ResolveAsync(root, "child"),
+                "name",
+                "Wrong-typed library name");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static async Task TestNormalInheritanceAsync()
+    {
+        var root = NewRoot("normal-inheritance");
+        try
+        {
+            await WriteVersionAsync(root, "base", """
+                {
+                  "id":"base",
+                  "mainClass":"base.Main",
+                  "downloads":{"client":{}},
+                  "libraries":[
+                    {"name":"com.example:shared:1.0"},
+                    {"name":"com.example:base-only:1.0"}
+                  ],
+                  "arguments":{"game":["--base"]}
+                }
+                """);
+            await WriteVersionAsync(root, "child", """
+                {
+                  "id":"child",
+                  "inheritsFrom":"base",
+                  "mainClass":"child.Main",
+                  "libraries":[
+                    {"name":"com.example:shared:2.0"},
+                    {"name":"com.example:child-only:1.0"}
+                  ],
+                  "arguments":{"game":["--child"]}
+                }
+                """);
+
+            using var resolved = await new MinecraftVersionMetadataResolver()
+                .ResolveAsync(root, "child");
+            var metadata = resolved.Document.RootElement;
+            Assert(
+                metadata.GetProperty("mainClass").GetString() == "child.Main",
+                "Child scalar metadata should override parent metadata.");
+            Assert(
+                resolved.ClientVersionId == "base",
+                "Inherited profile without a client download should use the parent client version.");
+            Assert(
+                metadata.GetProperty("arguments").GetProperty("game").GetArrayLength() == 2,
+                "Parent and child game arguments should remain merged.");
+            Assert(
+                metadata.GetProperty("libraries").GetArrayLength() == 4,
+                "Normal inheritance should preserve current exact-name library merge semantics.");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static async Task WriteVersionAsync(
+        string gameRoot,
+        string id,
+        string json)
+    {
+        var directory = Path.Combine(gameRoot, "versions", id);
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(
+            Path.Combine(directory, id + ".json"),
+            json);
+    }
+
+    private static async Task ExpectInvalidDataAsync(
+        Func<Task<ResolvedMinecraftVersion>> action,
+        string expectedField,
+        string label)
+    {
+        try
+        {
+            using var _ = await action();
+            throw new Exception(label + " should be rejected.");
+        }
+        catch (InvalidDataException ex)
+        {
+            Assert(
+                ex.Message.Contains(expectedField, StringComparison.OrdinalIgnoreCase),
+                label + " should identify the malformed field.");
+        }
+    }
+
+    private static string NewRoot(string suffix)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-resolver-tests",
+            suffix + "-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition)
+            throw new Exception(message);
+    }
+}
