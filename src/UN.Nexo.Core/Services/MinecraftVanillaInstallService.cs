@@ -215,7 +215,11 @@ public sealed class MinecraftVanillaInstallService
             state = "prepared"
         };
         var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
-        await File.WriteAllTextAsync(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
+        await AtomicJsonFile.WriteAsync(
+            statePath,
+            state,
+            new JsonSerializerOptions { WriteIndented = true },
+            cancellationToken);
 
         Report(progress, new InstallProgress("Ready", 1, 1, versionId, Detail: "All required Vanilla files are ready"));
     }
