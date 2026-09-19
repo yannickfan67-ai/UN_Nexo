@@ -28,6 +28,7 @@ public partial class MainWindowViewModel : ObservableObject
     private CancellationTokenSource? _gameCancellation;
     private readonly Queue<string> _gameLogLines = new();
     private bool _settingsLoadFailed;
+    private readonly bool _testOfflineMode;
 
 
     [ObservableProperty] private bool isBusy;
@@ -65,9 +66,12 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string gameStatus = "Select an instance and a profile.";
     [ObservableProperty] private string gameLog = string.Empty;
 
+    public bool IsTestOfflineMode => _testOfflineMode;
+
     public bool CanPlay => !IsBusy && !IsInstallBusy && !IsAccountAuthBusy && !IsGameRunning
         && SelectedInstance is not null
-        && SelectedAccount is { IsMicrosoft: true };
+        && SelectedAccount is not null
+        && (SelectedAccount.IsMicrosoft || (_testOfflineMode && SelectedAccount.IsOffline));
 
     private void UpdatePlayAvailability()
     {
@@ -95,6 +99,8 @@ public partial class MainWindowViewModel : ObservableObject
             GameStatus = SelectedAccount.EntitlementVerifiedAt is null
                 ? "Ready · Microsoft sign-in is required before this profile can play."
                 : "Ready · Microsoft credentials will refresh securely when you press Play.";
+        else if (_testOfflineMode && SelectedAccount.IsOffline)
+            GameStatus = "TEST OFFLINE MODE · Ready for an explicit offline-profile test launch.";
         else
             GameStatus = "Offline profiles cannot launch directly · use a verified Microsoft profile.";
     }
@@ -122,7 +128,8 @@ public partial class MainWindowViewModel : ObservableObject
         MicrosoftMinecraftAuthService microsoftAuth,
         RestrictedRegionService restrictedRegions,
         LauncherSettingsService settings,
-        DownloadSourceService downloadSources)
+        DownloadSourceService downloadSources,
+        bool testOfflineMode = false)
     {
         _launchBuilder = new MinecraftLaunchPlanBuilder(paths);
         _runtimeInspector = new MinecraftRuntimeInspector(paths);
@@ -139,6 +146,7 @@ public partial class MainWindowViewModel : ObservableObject
         _restrictedRegions = restrictedRegions;
         _settings = settings;
         _downloadSources = downloadSources;
+        _testOfflineMode = testOfflineMode;
         JavaInstallations.CollectionChanged += (_, _) => UpdatePlayAvailability();
     }
 
@@ -570,10 +578,15 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            if (account.IsOffline)
+            if (account.IsOffline && !_testOfflineMode)
             {
                 throw new MicrosoftAuthenticationRequiredException(
                     "Generic offline profiles are not launchable. Sign in with a Microsoft account. In CN/RU, a previously entitlement-verified Microsoft profile may use restricted-region offline fallback when the online service is temporarily unreachable.");
+            }
+            if (account.IsOffline)
+            {
+                AppendGameLog(
+                    "TEST OFFLINE MODE is active because UN_Nexo was started with --test-offline. This launch has no Microsoft/Minecraft authenticated session.");
             }
 
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
@@ -628,7 +641,9 @@ public partial class MainWindowViewModel : ObservableObject
                 cancellation.Token);
             GameStatus = usedRestrictedOfflineFallback
                 ? $"Running {instance.Name} · verified restricted-region offline fallback · {account.DisplayName}"
-                : $"Running {instance.Name} · Microsoft profile {launchAccount.DisplayName}";
+                : launchAccount.IsMicrosoft
+                    ? $"Running {instance.Name} · Microsoft profile {launchAccount.DisplayName}"
+                    : $"Running {instance.Name} · TEST OFFLINE MODE · {launchAccount.DisplayName}";
             LauncherStatus = GameStatus;
             var result = await _gameProcess.RunAsync(
                 plan, new Progress<string>(AppendGameLog), cancellation.Token);
