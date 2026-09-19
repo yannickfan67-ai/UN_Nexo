@@ -146,9 +146,12 @@ public sealed class MinecraftVersionMetadataResolver
         void Add(JsonNode? value, bool replace)
         {
             var clone = value?.DeepClone();
-            var key = clone is JsonObject obj
+            var name = clone is JsonObject obj
                 ? OptionalStringProperty(obj, "name", "library entry")
                 : null;
+            var key = string.IsNullOrWhiteSpace(name)
+                ? null
+                : MavenArtifactPath.InheritanceIdentity(name);
             if (!string.IsNullOrWhiteSpace(key) && indexes.TryGetValue(key, out var index))
             {
                 if (replace)
