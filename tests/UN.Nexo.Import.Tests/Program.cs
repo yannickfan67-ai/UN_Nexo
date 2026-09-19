@@ -57,6 +57,8 @@ internal static class Program
             await TestDuplicateNameAsync(importer, store, preview, vanilla, source);
             await TestCancelledImportLeavesNoInstanceAsync(importer, store, preview, vanilla, source);
             await TestUnsafeVersionPathMetadataAsync(root, paths);
+            await TestWrongTypedVersionMetadataAsync(root, paths);
+            await TestManagedDataSourceOverlapAsync(root, paths);
             await TestSymlinkedVersionMetadataAsync(root, paths);
 
             Require(await File.ReadAllTextAsync(Path.Combine(source, "options.txt")) == "fov:90", "Source settings changed during import.");
@@ -287,6 +289,146 @@ internal static class Program
 
         Require(await File.ReadAllTextAsync(sentinel) == "do-not-import",
             "Rejected traversal import must not copy or mutate the outside sentinel.");
+    }
+
+    private static async Task TestWrongTypedVersionMetadataAsync(
+        string root,
+        NexoPathService paths)
+    {
+        var source = Path.Combine(root, "wrong-typed-version-source", ".minecraft");
+        var versionsRoot = Path.Combine(source, "versions");
+        Directory.CreateDirectory(versionsRoot);
+
+        await WriteSimpleProfileAsync(
+            versionsRoot,
+            "healthy-typed-sibling",
+            "healthy-typed-sibling",
+            null);
+
+        var fixtures = new (string Folder, string Json, string Field)[]
+        {
+            (
+                "bad-id-number",
+                """{"id":123,"mainClass":"example.Main","libraries":[]}""",
+                "id"
+            ),
+            (
+                "bad-id-object",
+                """{"id":{},"mainClass":"example.Main","libraries":[]}""",
+                "id"
+            ),
+            (
+                "bad-id-array",
+                """{"id":[],"mainClass":"example.Main","libraries":[]}""",
+                "id"
+            ),
+            (
+                "bad-inherits-object",
+                """{"id":"bad-inherits-object","inheritsFrom":{},"mainClass":"example.Main","libraries":[]}""",
+                "inheritsFrom"
+            ),
+            (
+                "bad-main-class-number",
+                """{"id":"bad-main-class-number","mainClass":42,"libraries":[]}""",
+                "mainClass"
+            ),
+            (
+                "bad-library-name-array",
+                """{"id":"bad-library-name-array","mainClass":"example.Main","libraries":[{"name":[]}]}""",
+                "name"
+            )
+        };
+
+        foreach (var fixture in fixtures)
+        {
+            var directory = Path.Combine(versionsRoot, fixture.Folder);
+            Directory.CreateDirectory(directory);
+            await File.WriteAllTextAsync(
+                Path.Combine(directory, fixture.Folder + ".json"),
+                fixture.Json);
+        }
+
+        var preview = await new GameDirectoryImportService(paths)
+            .ScanAsync(source);
+
+        Require(
+            preview.Versions.Any(item =>
+                item.VersionId == "healthy-typed-sibling"),
+            "Healthy sibling metadata must survive wrong-typed candidates.");
+        Require(
+            preview.Versions.Count == 1,
+            "Wrong-typed candidate metadata must be skipped instead of returned.");
+
+        foreach (var fixture in fixtures)
+        {
+            Require(
+                preview.Warnings.Any(warning =>
+                    warning.Contains(fixture.Folder, StringComparison.OrdinalIgnoreCase)
+                    && warning.Contains(fixture.Field, StringComparison.OrdinalIgnoreCase)),
+                $"Wrong-typed {fixture.Field} should produce a candidate-specific warning.");
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        try
+        {
+            _ = await new GameDirectoryImportService(paths)
+                .ScanAsync(source, cancellation.Token);
+            throw new InvalidOperationException(
+                "Cancelled import scan unexpectedly completed.");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task TestManagedDataSourceOverlapAsync(
+        string root,
+        NexoPathService paths)
+    {
+        var importer = new GameDirectoryImportService(paths);
+        var dataRoot = paths.GetDataRoot();
+        Directory.CreateDirectory(dataRoot);
+
+        var descendant = Path.Combine(
+            dataRoot,
+            "scratch",
+            ".minecraft");
+        Directory.CreateDirectory(Path.Combine(descendant, "versions"));
+
+        var ancestor = Path.GetDirectoryName(dataRoot)
+            ?? throw new InvalidOperationException(
+                "Test data root unexpectedly has no parent.");
+
+        foreach (var fixture in new[]
+        {
+            ("same", dataRoot),
+            ("ancestor", ancestor),
+            ("descendant", descendant)
+        })
+        {
+            try
+            {
+                _ = await importer.ScanAsync(fixture.Item2);
+                throw new InvalidOperationException(
+                    $"Managed-data overlap fixture '{fixture.Item1}' unexpectedly scanned.");
+            }
+            catch (InvalidOperationException ex) when (
+                ex.Message.Contains(
+                    "managed data",
+                    StringComparison.OrdinalIgnoreCase)
+                || ex.Message.Contains(
+                    "overlap",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+            }
+        }
+
+        var stagingRoot = Path.Combine(dataRoot, ".staging", "imports");
+        Require(
+            !Directory.Exists(stagingRoot)
+            || !Directory.EnumerateFileSystemEntries(stagingRoot).Any(),
+            "Rejected managed-data sources must fail before import staging is created.");
     }
 
     private static async Task TestSymlinkedVersionMetadataAsync(

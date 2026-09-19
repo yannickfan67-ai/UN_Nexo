@@ -79,21 +79,17 @@ public sealed class GameDirectoryImportService
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
                 var root = document.RootElement;
-                if (!root.TryGetProperty("id", out var idElement)
-                    || idElement.ValueKind != JsonValueKind.String)
+                if (!root.TryGetProperty("id", out _))
                     continue;
                 var id = MetadataPath.RequireSingleComponent(
-                    idElement.GetString(),
+                    RequireString(root, "id", "version metadata"),
                     "version id");
 
                 string baseVersion;
                 if (root.TryGetProperty("inheritsFrom", out var inherits))
                 {
-                    if (inherits.ValueKind != JsonValueKind.String)
-                        throw new InvalidDataException(
-                            "inheritsFrom must be one safe Minecraft version ID.");
                     baseVersion = MetadataPath.RequireSingleComponent(
-                        inherits.GetString(),
+                        RequireString(root, "inheritsFrom", "version metadata"),
                         "inheritsFrom");
                 }
                 else
@@ -342,8 +338,10 @@ public sealed class GameDirectoryImportService
     private void RejectDangerousSource(string source)
     {
         var dataRoot = Path.GetFullPath(_paths.GetDataRoot());
-        if (IsSameOrAncestor(source, dataRoot))
-            throw new InvalidOperationException("The selected source contains Nexo's data directory. Choose the actual .minecraft/game folder instead.");
+        if (IsSameOrAncestor(source, dataRoot)
+            || IsSameOrAncestor(dataRoot, source))
+            throw new InvalidOperationException(
+                "The selected source overlaps Nexo's managed data directory. Choose an external .minecraft/game folder instead.");
     }
 
     private static bool IsSameOrAncestor(string possibleAncestor, string child)
@@ -430,22 +428,32 @@ public sealed class GameDirectoryImportService
         JsonElement root,
         string baseVersion)
     {
-        var mainClass = root.TryGetProperty("mainClass", out var main)
-            ? main.GetString() ?? string.Empty
+        var mainClass = root.TryGetProperty("mainClass", out _)
+            ? RequireString(root, "mainClass", "version metadata")
             : string.Empty;
         var libraryNames = new List<string>();
-        if (root.TryGetProperty("libraries", out var libraries)
-            && libraries.ValueKind == JsonValueKind.Array)
+        if (root.TryGetProperty("libraries", out var libraries))
         {
+            if (libraries.ValueKind != JsonValueKind.Array)
+                throw InvalidMetadata("libraries", "an array");
+
+            var index = 0;
             foreach (var library in libraries.EnumerateArray())
             {
-                if (library.ValueKind != JsonValueKind.Object
-                    || !library.TryGetProperty("name", out var name)
-                    || name.ValueKind != JsonValueKind.String)
-                    continue;
-                var value = name.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
-                    libraryNames.Add(value);
+                if (library.ValueKind != JsonValueKind.Object)
+                    throw InvalidMetadata($"libraries[{index}]", "an object");
+
+                if (library.TryGetProperty("name", out _))
+                {
+                    var value = RequireString(
+                        library,
+                        "name",
+                        $"libraries[{index}]");
+                    if (!string.IsNullOrWhiteSpace(value))
+                        libraryNames.Add(value);
+                }
+
+                index++;
             }
         }
 
@@ -506,6 +514,26 @@ public sealed class GameDirectoryImportService
 
         return ("vanilla", "Vanilla Minecraft version.", null);
     }
+
+    private static string RequireString(
+        JsonElement element,
+        string propertyName,
+        string context)
+    {
+        if (!element.TryGetProperty(propertyName, out var value)
+            || value.ValueKind != JsonValueKind.String)
+            throw InvalidMetadata(
+                $"{context}.{propertyName}",
+                "a string");
+
+        return value.GetString() ?? string.Empty;
+    }
+
+    private static InvalidDataException InvalidMetadata(
+        string propertyName,
+        string expected)
+        => new(
+            $"Import metadata property '{propertyName}' must be {expected}.");
 
     private async Task<bool> VerifyVanillaPreparedAsync(
         string gameRoot,
