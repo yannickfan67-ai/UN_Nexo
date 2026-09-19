@@ -84,3 +84,7 @@ public sealed record ModDependencyPlan(
 {
     public int RequiredDependencyCount => Math.Max(0, InstallOrder.Count - 1);
 }
+
+public sealed record ModDependencyInstallResult(
+    ModDependencyPlan Plan,
+    IReadOnlyList<ModProviderInstallResult> Installed);
