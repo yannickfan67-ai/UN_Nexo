@@ -231,27 +231,131 @@ internal static class Program
     {
         public List<string> Hosts { get; } = [];
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
         {
-            var host = request.RequestUri?.Host ?? string.Empty;
-            Hosts.Add(host);
-            if (host.Equals("bmclapi2.bangbang93.com", StringComparison.OrdinalIgnoreCase))
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new NeverProgressStream()) });
+            var uri = request.RequestUri
+                ?? throw new InvalidOperationException("Missing request URI.");
+            var host = uri.Host;
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            if (uri.AbsolutePath.EndsWith(
+                    "/stall-test.json",
+                    StringComparison.OrdinalIgnoreCase)
+                || uri.AbsolutePath.Contains(
+                    "/v1/packages/test/stall-test.json",
+                    StringComparison.OrdinalIgnoreCase))
             {
-                Content = new StringContent("{\"id\":\"test\",\"type\":\"release\",\"libraries\":[]}", Encoding.UTF8, "application/json")
-            });
+                Hosts.Add(host);
+                if (host.Equals(
+                        "bmclapi2.bangbang93.com",
+                        StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StreamContent(new NeverProgressStream())
+                    });
+
+                const string metadata =
+                    "{\"id\":\"stall-test\",\"type\":\"release\",\"libraries\":[],"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/stall-client.jar\"}},"
+                    + "\"assetIndex\":{\"id\":\"stall-assets\","
+                    + "\"url\":\"https://launchermeta.mojang.com/stall-assets.json\"}}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        metadata,
+                        Encoding.UTF8,
+                        "application/json")
+                });
+            }
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/stall-client.jar",
+                    StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(
+                        Encoding.UTF8.GetBytes("client"))
+                });
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/stall-assets.json",
+                    StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"objects\":{}}",
+                        Encoding.UTF8,
+                        "application/json")
+                });
+
+            if (host.Equals(
+                    "bmclapi2.bangbang93.com",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                Hosts.Add(host);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(new NeverProgressStream())
+                });
+            }
+
+            return Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
 
     private sealed class OfficialMetadataHandler : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri
+                ?? throw new InvalidOperationException("Missing request URI.");
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/telemetry-test.json",
+                    StringComparison.OrdinalIgnoreCase))
             {
-                Content = new StringContent("{\"id\":\"telemetry-test\",\"type\":\"release\",\"libraries\":[]}", Encoding.UTF8, "application/json")
-            });
+                const string metadata =
+                    "{\"id\":\"telemetry-test\",\"type\":\"release\",\"libraries\":[],"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/telemetry-client.jar\"}},"
+                    + "\"assetIndex\":{\"id\":\"telemetry-assets\","
+                    + "\"url\":\"https://launchermeta.mojang.com/telemetry-assets.json\"}}";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        metadata,
+                        Encoding.UTF8,
+                        "application/json")
+                });
+            }
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/telemetry-client.jar",
+                    StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(
+                        Encoding.UTF8.GetBytes(
+                            "telemetry-client-payload"))
+                });
+
+            if (uri.AbsolutePath.EndsWith(
+                    "/telemetry-assets.json",
+                    StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        "{\"objects\":{}}",
+                        Encoding.UTF8,
+                        "application/json")
+                });
+
+            return Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
     }
 
     private sealed class AlwaysStalledHandler : HttpMessageHandler
