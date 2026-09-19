@@ -19,7 +19,7 @@ public sealed class InstanceOperationCoordinator
     public InstanceOperationCoordinator(NexoPathService paths)
         => _paths = paths;
 
-    public async ValueTask<Lease> AcquireAsync(
+    public ValueTask<Lease> AcquireAsync(
         string instanceId,
         string operation,
         CancellationToken cancellationToken = default)
@@ -29,29 +29,64 @@ public sealed class InstanceOperationCoordinator
 
         var instanceRoot = Path.GetFullPath(
             _paths.GetInstanceDirectory(instanceId));
-        var current = CurrentScope.Value;
+        var current = PruneInactive(
+            CurrentScope.Value);
+        if (!ReferenceEquals(
+                current,
+                CurrentScope.Value))
+            CurrentScope.Value = current;
+
         if (current is not null
             && current.Contains(instanceRoot))
         {
             var nested = new Scope(
                 instanceRoot,
-                current);
+                current,
+                active: true);
             CurrentScope.Value = nested;
-            return new Lease(
-                nested,
-                previous: current,
-                keyedLease: null,
-                crossProcessLock: null);
+            return ValueTask.FromResult(
+                new Lease(
+                    nested,
+                    current,
+                    keyedLease: null,
+                    crossProcessLock: null));
         }
 
-        Directory.CreateDirectory(instanceRoot);
-        var keyedLease = await PathKeyedLock.AcquireAsync(
+        // Set the ambient scope synchronously, before the first await.
+        // AsyncLocal changes made only after an await would not reliably
+        // propagate back into the caller's captured execution context.
+        var pending = new Scope(
             instanceRoot,
-            cancellationToken);
+            current,
+            active: false);
+        CurrentScope.Value = pending;
+        return new ValueTask<Lease>(
+            AcquireOuterAsync(
+                instanceId,
+                operation,
+                instanceRoot,
+                pending,
+                current,
+                cancellationToken));
+    }
 
+    private static async Task<Lease> AcquireOuterAsync(
+        string instanceId,
+        string operation,
+        string instanceRoot,
+        Scope pending,
+        Scope? previous,
+        CancellationToken cancellationToken)
+    {
+        PathKeyedLock.Lease? keyedLease = null;
         FileStream? crossProcessLock = null;
         try
         {
+            Directory.CreateDirectory(instanceRoot);
+            keyedLease = await PathKeyedLock.AcquireAsync(
+                instanceRoot,
+                cancellationToken);
+
             cancellationToken.ThrowIfCancellationRequested();
             var lockPath = Path.Combine(
                 instanceRoot,
@@ -92,31 +127,39 @@ public sealed class InstanceOperationCoordinator
                 cancellationToken);
             crossProcessLock.Position = 0;
 
-            var previous = CurrentScope.Value;
-            var scope = new Scope(
-                instanceRoot,
-                previous);
-            CurrentScope.Value = scope;
+            pending.Active = true;
             return new Lease(
-                scope,
+                pending,
                 previous,
                 keyedLease,
                 crossProcessLock);
         }
         catch
         {
+            pending.Active = false;
             crossProcessLock?.Dispose();
-            keyedLease.Dispose();
+            keyedLease?.Dispose();
             throw;
         }
     }
 
+    private static Scope? PruneInactive(
+        Scope? scope)
+    {
+        while (scope is not null
+               && !scope.Active)
+            scope = scope.Parent;
+        return scope;
+    }
+
     private sealed class Scope(
         string key,
-        Scope? parent)
+        Scope? parent,
+        bool active)
     {
         public string Key { get; } = key;
         public Scope? Parent { get; } = parent;
+        public bool Active { get; set; } = active;
 
         public bool Contains(string candidate)
         {
@@ -124,7 +167,8 @@ public sealed class InstanceOperationCoordinator
                  scope is not null;
                  scope = scope.Parent)
             {
-                if (PathEquals(
+                if (scope.Active
+                    && PathEquals(
                         scope.Key,
                         candidate))
                     return true;
@@ -171,13 +215,17 @@ public sealed class InstanceOperationCoordinator
                     1) != 0)
                 return;
 
+            var current = PruneInactive(
+                CurrentScope.Value);
             if (!ReferenceEquals(
-                    CurrentScope.Value,
+                    current,
                     _scope))
                 throw new InvalidOperationException(
                     "Instance operation leases must be disposed in nested order.");
 
-            CurrentScope.Value = _previous;
+            _scope.Active = false;
+            CurrentScope.Value =
+                PruneInactive(_previous);
 
             var file = Interlocked.Exchange(
                 ref _crossProcessLock,
