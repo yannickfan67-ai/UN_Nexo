@@ -95,7 +95,7 @@
           <Grid RowDefinitions="Auto,12,*,12,Auto">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
               <TextBox x:Name="ModrinthSearchBox"
-                       Watermark="Search Modrinth (for example: Sodium)"
+                       PlaceholderText="Search Modrinth (for example: Sodium)"
                        MinHeight="40" />
               <Button Grid.Column="1"
                       x:Name="ModrinthSearchButton"
