@@ -152,7 +152,7 @@ public sealed class InstanceOperationCoordinator
         private FileStream? _crossProcessLock;
         private int _disposed;
 
-        internal Lease(
+        private Lease(
             Scope scope,
             Scope? previous,
             PathKeyedLock.Lease? keyedLease,
