@@ -45,7 +45,9 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
     {
         if (!instance.Loader.Equals("vanilla", StringComparison.OrdinalIgnoreCase)
             && !instance.Loader.Equals("fabric", StringComparison.OrdinalIgnoreCase)
-            && !instance.Loader.Equals("quilt", StringComparison.OrdinalIgnoreCase))
+            && !instance.Loader.Equals("quilt", StringComparison.OrdinalIgnoreCase)
+            && !instance.Loader.Equals("forge", StringComparison.OrdinalIgnoreCase)
+            && !instance.Loader.Equals("neoforge", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
                 $"Loader '{instance.Loader}' cannot be launched in this build yet.");
 
