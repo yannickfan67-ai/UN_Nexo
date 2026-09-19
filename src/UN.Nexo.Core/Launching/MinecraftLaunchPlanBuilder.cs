@@ -135,6 +135,7 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         var nativesRoot = Within(gameRoot, Path.Combine("natives", resolved.ClientVersionId));
         Directory.CreateDirectory(nativesRoot);
         var classpath = new List<string>();
+        var nativeArchives = new List<NativeArchiveExpectation>();
 
         if (root.TryGetProperty("libraries", out var libraries))
         {
@@ -176,12 +177,47 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 
                 var nativePath = nativeArtifact.GetProperty("path").GetString()
                     ?? throw new InvalidDataException("A native library has no path.");
+                var nativeArchivePath = Within(
+                    librariesRoot,
+                    nativePath);
                 await RequireFileAsync(
-                    Within(librariesRoot, nativePath),
+                    nativeArchivePath,
                     nativeArtifact,
                     cancellationToken);
+
+                var excludes = new List<string>
+                {
+                    "META-INF/"
+                };
+                if (library.TryGetProperty(
+                        "extract",
+                        out var extract)
+                    && extract.ValueKind == JsonValueKind.Object
+                    && extract.TryGetProperty(
+                        "exclude",
+                        out var excludeArray)
+                    && excludeArray.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var excluded in excludeArray.EnumerateArray())
+                    {
+                        if (excluded.ValueKind == JsonValueKind.String
+                            && !string.IsNullOrWhiteSpace(
+                                excluded.GetString()))
+                            excludes.Add(excluded.GetString()!);
+                    }
+                }
+
+                nativeArchives.Add(
+                    new NativeArchiveExpectation(
+                        nativeArchivePath,
+                        excludes));
             }
         }
+
+        await ValidateExtractedNativesAsync(
+            nativesRoot,
+            nativeArchives,
+            cancellationToken);
 
         var clientVersionRoot = Within(
             Path.Combine(gameRoot, "versions"),
@@ -659,6 +695,183 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         }
     }
 
+    private static async Task ValidateExtractedNativesAsync(
+        string nativesRoot,
+        IReadOnlyList<NativeArchiveExpectation> archives,
+        CancellationToken cancellationToken)
+    {
+        if (archives.Count == 0)
+            return;
+
+        var expected = new Dictionary<string, string>(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+
+        foreach (var native in archives)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var archive = ZipFile.OpenRead(
+                native.ArchivePath);
+            foreach (var entry in archive.Entries)
+            {
+                var relative = ValidateNativeRelativePath(
+                    entry.FullName);
+                if (IsZipSymlink(entry))
+                    throw new InvalidDataException(
+                        $"Native archive contains a symbolic-link entry: {entry.FullName}");
+
+                if (string.IsNullOrWhiteSpace(entry.Name)
+                    || entry.FullName.EndsWith(
+                        "/",
+                        StringComparison.Ordinal)
+                    || native.Excludes.Any(prefix =>
+                        relative.StartsWith(
+                            prefix.Replace('\\', '/'),
+                            StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                await using var stream = entry.Open();
+                expected[relative] =
+                    await ComputeStreamSha1Async(
+                        stream,
+                        cancellationToken);
+            }
+        }
+
+        var actual = EnumerateNativeFilesSafe(
+                nativesRoot)
+            .ToDictionary(
+                item => item.Relative,
+                item => item.FullPath,
+                OperatingSystem.IsWindows()
+                    ? StringComparer.OrdinalIgnoreCase
+                    : StringComparer.Ordinal);
+
+        foreach (var item in expected)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!actual.TryGetValue(
+                    item.Key,
+                    out var fullPath))
+                throw MissingOrCorrupt(
+                    Within(
+                        nativesRoot,
+                        item.Key));
+
+            var digest = await ComputeSha1Async(
+                fullPath,
+                cancellationToken);
+            if (!digest.Equals(
+                    item.Value,
+                    StringComparison.OrdinalIgnoreCase))
+                throw MissingOrCorrupt(fullPath);
+        }
+
+        foreach (var item in actual)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!expected.ContainsKey(item.Key))
+                throw new FileNotFoundException(
+                    $"Stale extracted native file is not declared by the verified native archives: {item.Value}. Run Prepare instance files again.",
+                    item.Value);
+        }
+    }
+
+    private static IEnumerable<(string Relative, string FullPath)>
+        EnumerateNativeFilesSafe(string root)
+    {
+        if (!Directory.Exists(root))
+            yield break;
+
+        if ((File.GetAttributes(root)
+             & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException(
+                $"Native runtime directory is a symbolic link/reparse point: {root}");
+
+        foreach (var file in Directory.EnumerateFiles(root))
+        {
+            if ((File.GetAttributes(file)
+                 & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException(
+                    $"Native runtime file is a symbolic link/reparse point: {file}");
+
+            yield return (
+                Path.GetRelativePath(root, file)
+                    .Replace(
+                        Path.DirectorySeparatorChar,
+                        '/'),
+                file);
+        }
+
+        foreach (var directory in Directory.EnumerateDirectories(root))
+        {
+            if ((File.GetAttributes(directory)
+                 & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException(
+                    $"Native runtime directory is a symbolic link/reparse point: {directory}");
+
+            foreach (var file
+                     in EnumerateNativeFilesSafe(directory))
+            {
+                var relative = Path.GetRelativePath(
+                        root,
+                        file.FullPath)
+                    .Replace(
+                        Path.DirectorySeparatorChar,
+                        '/');
+                yield return (
+                    relative,
+                    file.FullPath);
+            }
+        }
+    }
+
+    private static string ValidateNativeRelativePath(
+        string value)
+    {
+        var normalized = value.Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(normalized)
+            || normalized.StartsWith(
+                "/",
+                StringComparison.Ordinal)
+            || Path.IsPathRooted(normalized)
+            || normalized.Any(char.IsControl))
+            throw new InvalidDataException(
+                $"Unsafe native archive entry: {value}");
+
+        var parts = normalized.Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0
+            || parts.Any(part =>
+                part is "." or ".."))
+            throw new InvalidDataException(
+                $"Unsafe native archive entry: {value}");
+
+        return string.Join('/', parts);
+    }
+
+    private static bool IsZipSymlink(
+        ZipArchiveEntry entry)
+    {
+        var unixMode =
+            (entry.ExternalAttributes >> 16) & 0xF000;
+        return unixMode == 0xA000;
+    }
+
+    private static async Task<string> ComputeStreamSha1Async(
+        Stream stream,
+        CancellationToken cancellationToken)
+    {
+        using var sha1 = SHA1.Create();
+        var digest = await sha1.ComputeHashAsync(
+            stream,
+            cancellationToken);
+        return Convert.ToHexString(digest)
+            .ToLowerInvariant();
+    }
+
     private static async Task RequireAssetObjectAsync(
         string file,
         JsonElement metadata,
@@ -802,6 +1015,10 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
             }
         }
     }
+
+    private sealed record NativeArchiveExpectation(
+        string ArchivePath,
+        IReadOnlyList<string> Excludes);
 
     private static IEnumerable<string> ReadArguments(
         JsonElement list,

@@ -213,6 +213,7 @@ public sealed class MinecraftVanillaInstallService
             Detail: "Client JAR ready"));
 
         var libraryJobs = CollectLibraryDownloads(root, librariesRoot, nativesRoot);
+        var nativeJobs = new List<NativeExtractionJob>();
         var libraryCompleted = 0;
         Report(progress, new InstallProgress("Libraries", 0, libraryJobs.Count));
         foreach (var job in libraryJobs)
@@ -240,7 +241,9 @@ public sealed class MinecraftVanillaInstallService
                 progress,
                 cancellationToken);
             if (job.ExtractTo is not null)
-                ExtractNativeArchive(job.Path, job.ExtractTo, job.Excludes);
+                nativeJobs.Add(new NativeExtractionJob(
+                    job.Path,
+                    job.Excludes));
 
             libraryCompleted++;
             Report(progress, new InstallProgress(
@@ -248,6 +251,25 @@ public sealed class MinecraftVanillaInstallService
                 libraryCompleted,
                 libraryJobs.Count,
                 Path.GetFileName(job.Path)));
+        }
+
+        if (nativeJobs.Count > 0)
+        {
+            Report(progress, new InstallProgress(
+                "Native libraries",
+                0,
+                nativeJobs.Count,
+                versionId,
+                Detail: "Rebuilding native runtime from verified archives"));
+            ExtractNativeArchives(
+                nativeJobs,
+                nativesRoot);
+            Report(progress, new InstallProgress(
+                "Native libraries",
+                nativeJobs.Count,
+                nativeJobs.Count,
+                versionId,
+                Detail: "Native runtime atomically replaced"));
         }
 
         await DownloadLoggingConfigurationAsync(
@@ -905,14 +927,26 @@ public sealed class MinecraftVanillaInstallService
         string archivePath,
         string targetDirectory,
         IReadOnlyList<string> excludes)
-    {
-        var targetRoot = Path.GetFullPath(targetDirectory);
-        ValidateExistingPathChain(targetRoot);
+        => ExtractNativeArchives(
+            [new NativeExtractionJob(
+                archivePath,
+                excludes)],
+            targetDirectory);
 
+    private static void ExtractNativeArchives(
+        IReadOnlyList<NativeExtractionJob> archives,
+        string targetDirectory)
+    {
+        if (archives.Count == 0)
+            return;
+
+        var targetRoot = Path.GetFullPath(targetDirectory);
         var parent = Path.GetDirectoryName(targetRoot)
-            ?? throw new InvalidDataException("Native extraction target has no parent directory.");
+            ?? throw new InvalidDataException(
+                "Native extraction target has no parent directory.");
         Directory.CreateDirectory(parent);
         ValidateExistingPathChain(parent);
+        ValidateExistingNativeTree(targetRoot);
 
         var staging = Path.Combine(
             parent,
@@ -921,48 +955,73 @@ public sealed class MinecraftVanillaInstallService
 
         try
         {
-            using (var archive = ZipFile.OpenRead(archivePath))
-            {
-                foreach (var entry in archive.Entries)
-                {
-                    var relative = ValidateArchiveRelativePath(entry.FullName);
-                    if (IsZipSymlink(entry))
-                        throw new InvalidDataException(
-                            $"Native archive contains a symbolic-link entry: {entry.FullName}");
+            foreach (var native in archives)
+                ExtractNativeArchiveIntoStaging(
+                    native.ArchivePath,
+                    staging,
+                    native.Excludes);
 
-                    if (excludes.Any(prefix =>
-                            relative.StartsWith(
-                                prefix.Replace('\\', '/'),
-                                StringComparison.OrdinalIgnoreCase)))
-                        continue;
-
-                    var stagedPath = ResolveContained(staging, relative);
-                    if (entry.FullName.EndsWith("/", StringComparison.Ordinal)
-                        || string.IsNullOrWhiteSpace(entry.Name))
-                    {
-                        Directory.CreateDirectory(stagedPath);
-                        continue;
-                    }
-
-                    Directory.CreateDirectory(
-                        Path.GetDirectoryName(stagedPath)
-                        ?? throw new InvalidDataException("Native archive entry has no parent directory."));
-                    using var input = entry.Open();
-                    using var output = new FileStream(
-                        stagedPath,
-                        FileMode.CreateNew,
-                        FileAccess.Write,
-                        FileShare.None);
-                    input.CopyTo(output);
-                }
-            }
-
-            ValidateNativePublishPlan(staging, targetRoot);
-            PublishNativeTree(staging, targetRoot);
+            ValidateNativePublishPlan(staging);
+            PublishNativeTree(
+                staging,
+                targetRoot);
         }
         finally
         {
             TryDeleteDirectory(staging);
+        }
+    }
+
+    private static void ExtractNativeArchiveIntoStaging(
+        string archivePath,
+        string staging,
+        IReadOnlyList<string> excludes)
+    {
+        using var archive = ZipFile.OpenRead(archivePath);
+        foreach (var entry in archive.Entries)
+        {
+            var relative = ValidateArchiveRelativePath(
+                entry.FullName);
+            if (IsZipSymlink(entry))
+                throw new InvalidDataException(
+                    $"Native archive contains a symbolic-link entry: {entry.FullName}");
+
+            if (excludes.Any(prefix =>
+                    relative.StartsWith(
+                        prefix.Replace('\\', '/'),
+                        StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            var stagedPath = ResolveContained(
+                staging,
+                relative);
+            if (entry.FullName.EndsWith(
+                    "/",
+                    StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(entry.Name))
+            {
+                if (File.Exists(stagedPath))
+                    throw new InvalidDataException(
+                        $"Native archive directory collides with a file: {entry.FullName}");
+                Directory.CreateDirectory(stagedPath);
+                continue;
+            }
+
+            if (Directory.Exists(stagedPath))
+                throw new InvalidDataException(
+                    $"Native archive file collides with a directory: {entry.FullName}");
+
+            Directory.CreateDirectory(
+                Path.GetDirectoryName(stagedPath)
+                ?? throw new InvalidDataException(
+                    "Native archive entry has no parent directory."));
+            using var input = entry.Open();
+            using var output = new FileStream(
+                stagedPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None);
+            input.CopyTo(output);
         }
     }
 
@@ -973,124 +1032,119 @@ public sealed class MinecraftVanillaInstallService
             || normalized.StartsWith("/", StringComparison.Ordinal)
             || Path.IsPathRooted(normalized)
             || normalized.Any(char.IsControl))
-            throw new InvalidDataException($"Unsafe native archive entry: {value}");
+            throw new InvalidDataException(
+                $"Unsafe native archive entry: {value}");
 
-        var parts = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0 || parts.Any(part => part is "." or ".."))
-            throw new InvalidDataException($"Unsafe native archive entry: {value}");
+        var parts = normalized.Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0
+            || parts.Any(part => part is "." or ".."))
+            throw new InvalidDataException(
+                $"Unsafe native archive entry: {value}");
 
         return string.Join('/', parts);
     }
 
-    private static string ResolveContained(string root, string relative)
+    private static string ResolveContained(
+        string root,
+        string relative)
     {
-        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var fullRoot =
+            Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(root));
         var result = Path.GetFullPath(
             Path.Combine(
                 fullRoot,
-                relative.Replace('/', Path.DirectorySeparatorChar)));
+                relative.Replace(
+                    '/',
+                    Path.DirectorySeparatorChar)));
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
-        if (!result.StartsWith(fullRoot + Path.DirectorySeparatorChar, comparison))
-            throw new InvalidDataException("Native archive entry escaped the extraction root.");
+        if (!result.StartsWith(
+                fullRoot + Path.DirectorySeparatorChar,
+                comparison))
+            throw new InvalidDataException(
+                "Native archive entry escaped the extraction root.");
         return result;
     }
 
-    private static void ValidateNativePublishPlan(string staging, string targetRoot)
+    private static void ValidateNativePublishPlan(
+        string staging)
     {
-        ValidateExistingPathChain(targetRoot);
+        ValidateExistingNativeTree(staging);
+    }
 
-        foreach (var directory in Directory.EnumerateDirectories(
-                     staging,
-                     "*",
-                     SearchOption.AllDirectories))
-        {
-            var relative = Path.GetRelativePath(staging, directory);
-            var destination = ResolveContained(
-                targetRoot,
-                relative.Replace(Path.DirectorySeparatorChar, '/'));
-            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: false);
-        }
+    private static void ValidateExistingNativeTree(
+        string root)
+    {
+        if (File.Exists(root))
+            throw new InvalidDataException(
+                $"Native runtime path is a file: {root}");
+        if (!Directory.Exists(root))
+            return;
 
-        foreach (var file in Directory.EnumerateFiles(
-                     staging,
-                     "*",
-                     SearchOption.AllDirectories))
+        RejectReparsePoint(root);
+        foreach (var file in Directory.EnumerateFiles(root))
+            RejectReparsePoint(file);
+        foreach (var directory in Directory.EnumerateDirectories(root))
         {
-            var relative = Path.GetRelativePath(staging, file);
-            var destination = ResolveContained(
-                targetRoot,
-                relative.Replace(Path.DirectorySeparatorChar, '/'));
-            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: true);
+            RejectReparsePoint(directory);
+            ValidateExistingNativeTree(directory);
         }
     }
 
-    private static void ValidateTargetComponents(
-        string targetRoot,
-        string destination,
-        bool finalMustBeFile)
+    private static void PublishNativeTree(
+        string staging,
+        string targetRoot)
     {
-        var fullRoot = Path.GetFullPath(targetRoot);
-        var relative = Path.GetRelativePath(fullRoot, destination);
-        var parts = relative.Split(
-            Path.DirectorySeparatorChar,
-            StringSplitOptions.RemoveEmptyEntries);
-        var current = fullRoot;
+        var parent = Path.GetDirectoryName(targetRoot)
+            ?? throw new InvalidDataException(
+                "Native extraction target has no parent directory.");
+        Directory.CreateDirectory(parent);
+        ValidateExistingPathChain(parent);
+        ValidateExistingNativeTree(targetRoot);
+        ValidateExistingNativeTree(staging);
 
-        if (Directory.Exists(current) || File.Exists(current))
-            RejectReparsePoint(current);
+        var backup = Path.Combine(
+            parent,
+            ".native-backup-" + Guid.NewGuid().ToString("N"));
+        var hadExisting = Directory.Exists(targetRoot);
+        var targetMoved = false;
+        var published = false;
 
-        for (var index = 0; index < parts.Length; index++)
+        try
         {
-            current = Path.Combine(current, parts[index]);
-            var isFinal = index == parts.Length - 1;
-            if (!Directory.Exists(current) && !File.Exists(current))
-                continue;
+            if (hadExisting)
+            {
+                Directory.Move(
+                    targetRoot,
+                    backup);
+                targetMoved = true;
+            }
 
-            RejectReparsePoint(current);
-            if (!isFinal && File.Exists(current))
-                throw new InvalidDataException(
-                    $"Native extraction path collides with a file: {current}");
-            if (isFinal && finalMustBeFile && Directory.Exists(current))
-                throw new InvalidDataException(
-                    $"Native extraction file collides with a directory: {current}");
+            Directory.Move(
+                staging,
+                targetRoot);
+            published = true;
         }
-    }
-
-    private static void PublishNativeTree(string staging, string targetRoot)
-    {
-        Directory.CreateDirectory(targetRoot);
-        RejectReparsePoint(targetRoot);
-
-        foreach (var directory in Directory.EnumerateDirectories(
-                     staging,
-                     "*",
-                     SearchOption.AllDirectories)
-                 .OrderBy(path => path.Count(character =>
-                     character == Path.DirectorySeparatorChar)))
+        catch
         {
-            var relative = Path.GetRelativePath(staging, directory);
-            var destination = ResolveContained(
-                targetRoot,
-                relative.Replace(Path.DirectorySeparatorChar, '/'));
-            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: false);
-            Directory.CreateDirectory(destination);
-            RejectReparsePoint(destination);
+            if (targetMoved
+                && Directory.Exists(backup)
+                && !Directory.Exists(targetRoot))
+            {
+                Directory.Move(
+                    backup,
+                    targetRoot);
+            }
+            throw;
         }
-
-        foreach (var file in Directory.EnumerateFiles(
-                     staging,
-                     "*",
-                     SearchOption.AllDirectories))
+        finally
         {
-            var relative = Path.GetRelativePath(staging, file);
-            var destination = ResolveContained(
-                targetRoot,
-                relative.Replace(Path.DirectorySeparatorChar, '/'));
-            ValidateTargetComponents(targetRoot, destination, finalMustBeFile: true);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Move(file, destination, overwrite: true);
+            if (published)
+                TryDeleteDirectory(backup);
         }
     }
 
@@ -1644,6 +1698,10 @@ public sealed class MinecraftVanillaInstallService
         {
         }
     }
+
+    private sealed record NativeExtractionJob(
+        string ArchivePath,
+        IReadOnlyList<string> Excludes);
 
     private sealed record DownloadJob(
         string Url,
