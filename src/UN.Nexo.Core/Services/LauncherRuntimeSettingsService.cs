@@ -24,25 +24,34 @@ public sealed class LauncherRuntimeSettingsService
         if (!File.Exists(path))
             return new LauncherRuntimeSettings();
 
+        LauncherRuntimeSettings settings;
         try
         {
             await using var stream = File.OpenRead(path);
-            var settings = await JsonSerializer.DeserializeAsync<LauncherRuntimeSettings>(
-                stream, _jsonOptions, cancellationToken) ?? new LauncherRuntimeSettings();
+            settings = await JsonSerializer.DeserializeAsync<LauncherRuntimeSettings>(
+                           stream,
+                           _jsonOptions,
+                           cancellationToken)
+                       ?? throw new InvalidDataException(
+                           "Existing runtime settings contain a null root. The original runtime-settings.json was preserved.");
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException(
+                "Existing runtime settings are malformed. The original runtime-settings.json was preserved.",
+                ex);
+        }
+
+        try
+        {
             RuntimeLaunchOptions.Validate(settings);
             return settings;
         }
-        catch (JsonException)
+        catch (ArgumentException ex)
         {
-            return new LauncherRuntimeSettings();
-        }
-        catch (IOException)
-        {
-            return new LauncherRuntimeSettings();
-        }
-        catch (ArgumentException)
-        {
-            return new LauncherRuntimeSettings();
+            throw new InvalidDataException(
+                "Existing runtime settings contain invalid launch options. The original runtime-settings.json was preserved.",
+                ex);
         }
     }
 
