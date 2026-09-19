@@ -65,7 +65,13 @@ public sealed partial class MainWindow : Window
         var launcherVersion = typeof(MainWindow).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "dev";
-        Title = $"UN_Nexo {launcherVersion}";
+        var testOfflineMode = LauncherLaunchMode.IsTestOfflineEnabled(
+            Environment.GetCommandLineArgs().Skip(1));
+        Title = testOfflineMode
+            ? $"UN_Nexo {launcherVersion} [TEST OFFLINE]"
+            : $"UN_Nexo {launcherVersion}";
+        if (testOfflineMode)
+            LauncherStartupTrace.Write("[startup] TEST OFFLINE MODE enabled by explicit --test-offline switch");
         downloadHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         manifestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         authHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
@@ -98,7 +104,8 @@ public sealed partial class MainWindow : Window
             microsoftAuth,
             new RestrictedRegionService(regionHttpClient),
             new LauncherSettingsService(_paths),
-            downloadSources);
+            downloadSources,
+            testOfflineMode);
 
         DataContext = _viewModel;
         AddUtilityNavigation();
