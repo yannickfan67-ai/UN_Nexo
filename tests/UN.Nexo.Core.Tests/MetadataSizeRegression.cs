@@ -181,10 +181,12 @@ internal static class MetadataSizeRegression
         try
         {
             const string core =
-                "{\"id\":\"version-near-limit\",\"libraries\":[]}";
+                "{\"id\":\"version-near-limit\","
+                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
+                + "\"assetIndex\":{\"id\":\"near-assets\",\"url\":\"https://launchermeta.mojang.com/near-assets.json\"},"
+                + "\"libraries\":[]}";
             var body = core.PadRight(VersionLimit - 1, ' ');
-            using var client = new HttpClient(new SingleContentHandler(
-                new StringContent(body, Encoding.UTF8, "application/json")));
+            using var client = new HttpClient(new NearLimitHandler(body));
             var paths = new NexoPathService(root);
             var service = new MinecraftVanillaInstallService(
                 client,
@@ -311,15 +313,41 @@ internal static class MetadataSizeRegression
             {
                 const string metadata =
                     "{\"id\":\"asset-index-limit\",\"libraries\":[],"
+                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\"}},"
                     + "\"assetIndex\":{\"id\":\"limit-assets\","
                     + "\"url\":\"https://launchermeta.mojang.com/index.json\"}}";
                 return Task.FromResult(Response(
                     new StringContent(metadata, Encoding.UTF8, "application/json")));
             }
 
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(Response(
+                    new ByteArrayContent(Encoding.UTF8.GetBytes("client"))));
+
             if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult(Response(oversized));
 
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+    }
+
+    private sealed class NearLimitHandler(string metadata) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri
+                ?? throw new InvalidOperationException("Missing request URI.");
+            if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(Response(
+                    new StringContent(metadata, Encoding.UTF8, "application/json")));
+            if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(Response(
+                    new ByteArrayContent(Encoding.UTF8.GetBytes("client"))));
+            if (uri.Host.Equals("launchermeta.mojang.com", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(Response(
+                    new StringContent("{\"objects\":{}}", Encoding.UTF8, "application/json")));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
         }
     }
