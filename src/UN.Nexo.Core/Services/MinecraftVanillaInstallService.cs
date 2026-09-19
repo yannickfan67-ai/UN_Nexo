@@ -96,11 +96,24 @@ public sealed class MinecraftVanillaInstallService
         if (string.IsNullOrWhiteSpace(version.Url))
             throw new InvalidOperationException("The selected Minecraft version has no metadata URL.");
 
+        var versionId = MetadataPath.RequireSingleComponent(
+            version.Id,
+            "version.id");
         var gameRoot = _paths.GetInstanceGameDirectory(instance.Id);
-        var versionRoot = Path.Combine(gameRoot, "versions", version.Id);
+        var versionsRoot = Path.Combine(gameRoot, "versions");
+        var nativesParent = Path.Combine(gameRoot, "natives");
+        var versionRoot = MetadataPath.ResolveSingleComponent(
+            versionsRoot,
+            versionId,
+            string.Empty,
+            "version.id");
         var librariesRoot = Path.Combine(gameRoot, "libraries");
         var assetsRoot = Path.Combine(gameRoot, "assets");
-        var nativesRoot = Path.Combine(gameRoot, "natives", version.Id);
+        var nativesRoot = MetadataPath.ResolveSingleComponent(
+            nativesParent,
+            versionId,
+            string.Empty,
+            "version.id");
 
         Directory.CreateDirectory(versionRoot);
         Directory.CreateDirectory(librariesRoot);
@@ -108,8 +121,12 @@ public sealed class MinecraftVanillaInstallService
         Directory.CreateDirectory(Path.Combine(assetsRoot, "objects"));
         Directory.CreateDirectory(nativesRoot);
 
-        Report(progress, new InstallProgress("Version metadata", 0, 1, version.Id));
-        var versionJsonPath = Path.Combine(versionRoot, $"{version.Id}.json");
+        Report(progress, new InstallProgress("Version metadata", 0, 1, versionId));
+        var versionJsonPath = MetadataPath.ResolveSingleComponent(
+            versionRoot,
+            versionId,
+            ".json",
+            "version.id");
         await DownloadFileAsync(
             version.Url,
             versionJsonPath,
@@ -120,7 +137,7 @@ public sealed class MinecraftVanillaInstallService
             progress,
             cancellationToken,
             MaxVersionMetadataBytes);
-        Report(progress, new InstallProgress("Version metadata", 1, 1, version.Id, Detail: "Version metadata ready"));
+        Report(progress, new InstallProgress("Version metadata", 1, 1, versionId, Detail: "Version metadata ready"));
 
         using var versionDocument = await ReadBoundedJsonFileAsync(
             versionJsonPath,
@@ -132,11 +149,16 @@ public sealed class MinecraftVanillaInstallService
         if (root.TryGetProperty("downloads", out var downloads)
             && downloads.TryGetProperty("client", out var client))
         {
-            Report(progress, new InstallProgress("Minecraft client", 0, 1, version.Id));
+            Report(progress, new InstallProgress("Minecraft client", 0, 1, versionId));
             var clientUrl = client.GetProperty("url").GetString() ?? throw new InvalidDataException("Client URL missing.");
             var clientSha1 = client.TryGetProperty("sha1", out var clientSha) ? clientSha.GetString() : null;
-            await DownloadFileAsync(clientUrl, Path.Combine(versionRoot, $"{version.Id}.jar"), clientSha1, "Minecraft client", 0, 1, progress, cancellationToken);
-            Report(progress, new InstallProgress("Minecraft client", 1, 1, version.Id, Detail: "Client JAR ready"));
+            var clientPath = MetadataPath.ResolveSingleComponent(
+                versionRoot,
+                versionId,
+                ".jar",
+                "version.id");
+            await DownloadFileAsync(clientUrl, clientPath, clientSha1, "Minecraft client", 0, 1, progress, cancellationToken);
+            Report(progress, new InstallProgress("Minecraft client", 1, 1, versionId, Detail: "Client JAR ready"));
         }
 
         var libraryJobs = CollectLibraryDownloads(root, librariesRoot, nativesRoot);
@@ -186,7 +208,7 @@ public sealed class MinecraftVanillaInstallService
         {
             instance.Id,
             instance.Name,
-            version = version.Id,
+            version = versionId,
             loader = instance.Loader,
             installedAt = DateTimeOffset.UtcNow,
             source = _downloadSources.SourceId,
@@ -195,7 +217,7 @@ public sealed class MinecraftVanillaInstallService
         var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
         await File.WriteAllTextAsync(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }), cancellationToken);
 
-        Report(progress, new InstallProgress("Ready", 1, 1, version.Id, Detail: "All required Vanilla files are ready"));
+        Report(progress, new InstallProgress("Ready", 1, 1, versionId, Detail: "All required Vanilla files are ready"));
     }
 
     private async Task DownloadAssetsAsync(
@@ -341,7 +363,10 @@ public sealed class MinecraftVanillaInstallService
             return;
 
         var sha1 = element.TryGetProperty("sha1", out var shaElement) ? shaElement.GetString() : null;
-        var localPath = Path.Combine(librariesRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var localPath = MetadataPath.ResolveRelativePath(
+            librariesRoot,
+            relativePath,
+            "library artifact path");
         jobs.Add(new DownloadJob(url, localPath, sha1, extractTo, excludes));
     }
 
