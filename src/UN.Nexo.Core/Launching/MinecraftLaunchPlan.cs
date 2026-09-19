@@ -8,6 +8,8 @@ public sealed record MinecraftLaunchPlan(
     IReadOnlyList<string> Arguments,
     string LogDirectory)
 {
+    public string? InstanceId { get; init; }
+
     public ProcessStartInfo CreateStartInfo()
     {
         var info = new ProcessStartInfo(JavaPath)

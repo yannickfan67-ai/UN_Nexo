@@ -16,6 +16,7 @@ internal static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
+            ("Instance-scoped process concurrency (Unix)", ProcessConcurrencyRegression.RunAsync),
             ("Launch log bounds and retention", LaunchLogPolicyRegression.RunAsync),
             ("Java major parsing", TestJavaMajorAsync),
             ("Java discovery process cleanup", JavaDiscoveryRegression.RunAsync),
