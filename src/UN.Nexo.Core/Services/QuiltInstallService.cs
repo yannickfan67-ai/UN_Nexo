@@ -64,21 +64,25 @@ public sealed class QuiltInstallService(
                 cancellationToken)
             : null;
 
-        var instanceRoot = paths.GetInstanceDirectory(instance.Id);
-        var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
-        var versionsRoot = Path.Combine(gameRoot, "versions");
-        var profileRoot = Path.Combine(versionsRoot, instance.VersionId);
-        var profilePath = Path.Combine(profileRoot, instance.VersionId + ".json");
-        Directory.CreateDirectory(profileRoot);
-
-        JsonDocument profile;
-        var persistDownloadedProfile = false;
-        if (File.Exists(profilePath))
-        {
-            await using var profileStream = File.OpenRead(profilePath);
-            profile = await JsonDocument.ParseAsync(profileStream, cancellationToken: cancellationToken);
-        }
-        else
+        var profileLocation =
+            InheritedLoaderProfileStore.Resolve(
+                paths,
+                instance.Id,
+                instance.VersionId,
+                createDirectories: true);
+        var instanceRoot =
+            profileLocation.InstanceRoot;
+        var gameRoot =
+            profileLocation.GameRoot;
+        var profile =
+            await InheritedLoaderProfileStore.ReadAsync(
+                paths,
+                instance.Id,
+                instance.VersionId,
+                cancellationToken);
+        var persistDownloadedProfile =
+            profile is null;
+        if (profile is null)
         {
             if (string.IsNullOrWhiteSpace(instance.LoaderVersion))
                 throw new InvalidOperationException(
@@ -87,7 +91,6 @@ public sealed class QuiltInstallService(
                 baseVersion.Id,
                 instance.LoaderVersion,
                 cancellationToken);
-            persistDownloadedProfile = true;
         }
 
         using (profile)
@@ -95,7 +98,14 @@ public sealed class QuiltInstallService(
             var root = profile.RootElement;
             ValidateProfile(root, instance.VersionId, baseVersion.Id);
             if (persistDownloadedProfile)
-                await WriteProfileAtomicAsync(profilePath, root, cancellationToken);
+            {
+                await InheritedLoaderProfileStore.WriteAsync(
+                    paths,
+                    instance.Id,
+                    instance.VersionId,
+                    root,
+                    cancellationToken);
+            }
 
             var loaderVersion = instance.LoaderVersion ?? ReadLoaderVersion(root)
                 ?? throw new InvalidDataException("Quilt profile does not declare a Quilt Loader library.");
@@ -191,23 +201,27 @@ public sealed class QuiltInstallService(
         if (!string.IsNullOrWhiteSpace(instance.BaseVersionId))
             return instance.BaseVersionId;
 
-        var profilePath = Path.Combine(
-            paths.GetInstanceGameDirectory(instance.Id),
-            "versions",
-            instance.VersionId,
-            instance.VersionId + ".json");
-        if (!File.Exists(profilePath))
+        using var document =
+            await InheritedLoaderProfileStore.ReadAsync(
+                paths,
+                instance.Id,
+                instance.VersionId,
+                cancellationToken);
+        if (document is null)
             return null;
 
-        await using var stream = File.OpenRead(profilePath);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Quilt profile root must be an object.");
         if (!root.TryGetProperty("inheritsFrom", out var inherits))
             return null;
-        if (inherits.ValueKind != JsonValueKind.String)
-            throw new InvalidDataException("Quilt profile property 'inheritsFrom' must be a string.");
+        if (inherits.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(inherits.GetString()))
+        {
+            throw new InvalidDataException(
+                "Quilt profile property 'inheritsFrom' must be a non-empty string.");
+        }
+
         return inherits.GetString();
     }
 
@@ -568,16 +582,6 @@ public sealed class QuiltInstallService(
             return false;
         }
     }
-
-    private static Task WriteProfileAtomicAsync(
-        string path,
-        JsonElement profile,
-        CancellationToken cancellationToken)
-        => AtomicJsonFile.WriteAsync(
-            path,
-            profile,
-            new JsonSerializerOptions { WriteIndented = true },
-            cancellationToken);
 
     private void EnsureLibraryDestinationParentPhysical(
         string instanceId,

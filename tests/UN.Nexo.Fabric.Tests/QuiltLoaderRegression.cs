@@ -209,6 +209,14 @@ internal static class QuiltLoaderRegression
                 profileId,
                 minecraftVersion,
                 loaderVersion);
+
+            await TestLinkedVersionsDirectoryRejectedAsync(
+                paths,
+                service,
+                baseVersion,
+                profileId,
+                minecraftVersion,
+                loaderVersion);
         }
         finally
         {
@@ -292,6 +300,78 @@ internal static class QuiltLoaderRegression
         {
             if (linked)
                 TryDeleteDirectoryLink(linkedOrg);
+            TryDeleteTree(instanceRoot);
+            TryDeleteTree(externalRoot);
+        }
+    }
+
+    private static async Task TestLinkedVersionsDirectoryRejectedAsync(
+        NexoPathService paths,
+        QuiltInstallService service,
+        MinecraftVersionInfo baseVersion,
+        string profileId,
+        string minecraftVersion,
+        string loaderVersion)
+    {
+        var instance =
+            new GameInstance(
+                Guid.NewGuid().ToString("N"),
+                "Quilt linked versions regression",
+                profileId,
+                "quilt",
+                DateTimeOffset.UtcNow,
+                minecraftVersion,
+                loaderVersion);
+        var instanceRoot =
+            paths.GetInstanceDirectory(instance.Id);
+        Directory.CreateDirectory(instanceRoot);
+        var gameRoot =
+            paths.GetInstanceGameDirectory(instance.Id);
+        Directory.CreateDirectory(gameRoot);
+
+        var externalRoot =
+            Path.Combine(
+                Path.GetTempPath(),
+                "un-nexo-quilt-profile-external-"
+                + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(externalRoot);
+
+        var linkedVersions =
+            Path.Combine(
+                gameRoot,
+                "versions");
+        var linked = false;
+        try
+        {
+            linked =
+                TryCreateDirectoryLink(
+                    linkedVersions,
+                    externalRoot);
+            if (!linked)
+                return;
+
+            try
+            {
+                await service.PrepareAsync(
+                    instance,
+                    baseVersion);
+                throw new InvalidOperationException(
+                    "Linked Quilt versions directory unexpectedly accepted profile preparation.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                !Directory.EnumerateFileSystemEntries(
+                    externalRoot)
+                    .Any(),
+                "Quilt profile preparation must not write through a linked versions directory.");
+        }
+        finally
+        {
+            if (linked)
+                TryDeleteDirectoryLink(linkedVersions);
             TryDeleteTree(instanceRoot);
             TryDeleteTree(externalRoot);
         }
