@@ -52,7 +52,7 @@ internal static class Program
             var service = new MinecraftVanillaInstallService(client, paths, sources, TimeSpan.FromMilliseconds(100));
             var observed = new List<InstallProgress>();
             service.ProgressChanged += value => observed.Add(value);
-            var instance = new GameInstance("stall-test", "Stall fallback", "stall-test", "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(Guid.NewGuid().ToString("N"), "Stall fallback", "stall-test", "vanilla", DateTimeOffset.UtcNow);
             var version = new MinecraftVersionInfo("stall-test", "release", "https://piston-meta.mojang.com/v1/packages/test/stall-test.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
 
@@ -80,7 +80,7 @@ internal static class Program
             var handler = new StallThenOfficialHandler();
             using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
             var service = new MinecraftVanillaInstallService(client, new NexoPathService(temp), sources, TimeSpan.FromSeconds(5));
-            var instance = new GameInstance("cancel-test", "Cancel", "cancel-test", "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(Guid.NewGuid().ToString("N"), "Cancel", "cancel-test", "vanilla", DateTimeOffset.UtcNow);
             var version = new MinecraftVersionInfo("cancel-test", "release", "https://piston-meta.mojang.com/v1/packages/test/cancel-test.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
             using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
 
@@ -112,7 +112,7 @@ internal static class Program
             var activity = new List<bool>();
             service.ProgressChanged += value => observed.Add(value);
             service.InstallActivityChanged += value => activity.Add(value);
-            var instance = new GameInstance("telemetry-test", "Telemetry", "telemetry-test", "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(Guid.NewGuid().ToString("N"), "Telemetry", "telemetry-test", "vanilla", DateTimeOffset.UtcNow);
             var version = new MinecraftVersionInfo("telemetry-test", "release", "https://piston-meta.mojang.com/v1/packages/test/telemetry-test.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
 
             await service.InstallAsync(instance, version);
@@ -138,7 +138,7 @@ internal static class Program
             using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
             var sources = new DownloadSourceService();
             var service = new MinecraftVanillaInstallService(client, new NexoPathService(temp), sources, TimeSpan.FromSeconds(10));
-            var instance = new GameInstance("owned-cancel", "Owned cancel", "owned-cancel", "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(Guid.NewGuid().ToString("N"), "Owned cancel", "owned-cancel", "vanilla", DateTimeOffset.UtcNow);
             var version = new MinecraftVersionInfo("owned-cancel", "release", "https://piston-meta.mojang.com/v1/packages/test/owned-cancel.json", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, string.Empty, 0);
 
             var install = service.InstallAsync(instance, version);

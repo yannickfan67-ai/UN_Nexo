@@ -16,7 +16,7 @@ internal static class LaunchMetadataRegression
         {
             var paths = new NexoPathService(root);
             var instance = new GameInstance(
-                "launch-shape-instance",
+                Guid.NewGuid().ToString("N"),
                 "Launch shape test",
                 "launch-shape",
                 "vanilla",

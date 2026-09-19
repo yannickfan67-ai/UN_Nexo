@@ -205,7 +205,12 @@ internal static class MetadataSizeRegression
     }
 
     private static GameInstance Instance(string id)
-        => new(id, id, id, "vanilla", DateTimeOffset.UtcNow);
+        => new(
+            Guid.NewGuid().ToString("N"),
+            id,
+            id,
+            "vanilla",
+            DateTimeOffset.UtcNow);
 
     private static MinecraftVersionInfo Version(string id)
         => new(

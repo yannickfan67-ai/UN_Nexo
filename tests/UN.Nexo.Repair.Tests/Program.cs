@@ -20,7 +20,7 @@ internal static class Program
         {
             var paths = new NexoPathService(temp);
             paths.EnsureDirectories();
-            var instance = new GameInstance("repair-test", "Repair test", "repair-test", "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(Guid.NewGuid().ToString("N"), "Repair test", "repair-test", "vanilla", DateTimeOffset.UtcNow);
             var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
             var versionRoot = Path.Combine(gameRoot, "versions", instance.VersionId);
             var librariesRoot = Path.Combine(gameRoot, "libraries");
@@ -303,7 +303,7 @@ internal static class Program
             const string loaderVersion = "0.16.9";
             const string childVersionId = "fabric-loader-0.16.9-1.21.4";
             var instance = new GameInstance(
-                "fabric-repair-test",
+                Guid.NewGuid().ToString("N"),
                 "Fabric repair test",
                 childVersionId,
                 "fabric",

@@ -39,14 +39,19 @@ internal static class ModrinthProviderRegression
 
             var paths = new NexoPathService(root);
             var mods = new InstanceModService(paths);
+            var instanceId = Guid.NewGuid().ToString("N");
+            var redirectOkId = Guid.NewGuid().ToString("N");
+            var redirectBadId = Guid.NewGuid().ToString("N");
+            var redirectLoopId = Guid.NewGuid().ToString("N");
+            var badDownloadId = Guid.NewGuid().ToString("N");
             var installed = await provider.InstallAsync(
-                "fabric-test",
+                instanceId,
                 projects[0],
                 latest,
                 null,
                 mods);
             Assert(installed.InstalledMod.FileName == "sodium.jar", "Modrinth file was not installed.");
-            var installedPath = Path.Combine(mods.GetModsDirectory("fabric-test"), "sodium.jar");
+            var installedPath = Path.Combine(mods.GetModsDirectory(instanceId), "sodium.jar");
             Assert(File.Exists(installedPath), "Installed Modrinth JAR is missing.");
             Assert((await File.ReadAllBytesAsync(installedPath)).SequenceEqual(payload),
                 "Installed Modrinth JAR content changed.");
@@ -54,7 +59,7 @@ internal static class ModrinthProviderRegression
             handler.RedirectDownloadTarget =
                 "https://cdn.modrinth.com/data/AABBCCDD/versions/NEWVER01/redirected.jar";
             var redirected = await provider.InstallAsync(
-                "fabric-redirect-ok",
+                redirectOkId,
                 projects[0],
                 latest,
                 null,
@@ -68,7 +73,7 @@ internal static class ModrinthProviderRegression
             var untrustedRequestsBefore = handler.UntrustedDownloadRequests;
             try
             {
-                await provider.InstallAsync("fabric-redirect-bad", projects[0], latest, null, mods);
+                await provider.InstallAsync(redirectBadId, projects[0], latest, null, mods);
                 throw new Exception("Untrusted Modrinth redirect target should be rejected.");
             }
             catch (InvalidDataException ex)
@@ -79,14 +84,14 @@ internal static class ModrinthProviderRegression
             }
             Assert(handler.UntrustedDownloadRequests == untrustedRequestsBefore,
                 "Nexo must reject an untrusted redirect before sending the redirected GET.");
-            Assert(mods.List("fabric-redirect-bad").Count == 0,
+            Assert(mods.List(redirectBadId).Count == 0,
                 "Rejected Modrinth redirect must not publish a JAR.");
 
             handler.RedirectDownloadTarget = null;
             handler.RedirectLoop = true;
             try
             {
-                await provider.InstallAsync("fabric-redirect-loop", projects[0], latest, null, mods);
+                await provider.InstallAsync(redirectLoopId, projects[0], latest, null, mods);
                 throw new Exception("Redirect loop should exceed the bounded redirect policy.");
             }
             catch (InvalidDataException ex)
@@ -95,25 +100,25 @@ internal static class ModrinthProviderRegression
                     "Redirect-loop rejection should be actionable.");
             }
             handler.RedirectLoop = false;
-            Assert(mods.List("fabric-redirect-loop").Count == 0,
+            Assert(mods.List(redirectLoopId).Count == 0,
                 "Redirect-loop failure must not publish a JAR.");
 
             var matches = await provider.MatchInstalledAsync(
-                mods.GetModsDirectory("fabric-test"),
-                mods.List("fabric-test"));
+                mods.GetModsDirectory(instanceId),
+                mods.List(instanceId));
             Assert(matches.TryGetValue("AABBCCDD", out var match), "Installed Modrinth hash was not matched.");
             Assert(match.VersionId == "OLDVER01", "Installed Modrinth version metadata was not returned.");
             Assert(!match.IsCurrent(latest), "Older installed Modrinth version should report an update.");
 
-            mods.SetEnabled("fabric-test", "sodium.jar", enabled: false);
+            mods.SetEnabled(instanceId, "sodium.jar", enabled: false);
             var disabledMatches = await provider.MatchInstalledAsync(
-                mods.GetModsDirectory("fabric-test"),
-                mods.List("fabric-test"));
+                mods.GetModsDirectory(instanceId),
+                mods.List(instanceId));
             var disabledMatch = disabledMatches["AABBCCDD"];
             Assert(!disabledMatch.IsEnabled, "Disabled Modrinth JAR state should be retained during hash matching.");
 
             var updated = await provider.InstallAsync(
-                "fabric-test",
+                instanceId,
                 projects[0],
                 latest,
                 disabledMatch,
@@ -124,7 +129,7 @@ internal static class ModrinthProviderRegression
             handler.BadDownload = true;
             try
             {
-                await provider.InstallAsync("fabric-bad", projects[0], latest, null, mods);
+                await provider.InstallAsync(badDownloadId, projects[0], latest, null, mods);
                 throw new Exception("Checksum mismatch should reject a Modrinth download.");
             }
             catch (InvalidDataException ex)
@@ -132,7 +137,7 @@ internal static class ModrinthProviderRegression
                 Assert(ex.Message.Contains("SHA-1", StringComparison.OrdinalIgnoreCase),
                     "Checksum rejection should be actionable.");
             }
-            Assert(mods.List("fabric-bad").Count == 0,
+            Assert(mods.List(badDownloadId).Count == 0,
                 "Failed Modrinth verification must not publish a JAR.");
 
             handler.BadDownload = false;

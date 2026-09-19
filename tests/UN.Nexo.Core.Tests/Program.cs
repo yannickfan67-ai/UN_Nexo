@@ -461,7 +461,7 @@ internal static class Program
                     new DownloadSourceService(),
                     TimeSpan.FromSeconds(2));
                 var instance = new GameInstance(
-                    "asset-id-test",
+                    Guid.NewGuid().ToString("N"),
                     "Asset id test",
                     "asset-id-test",
                     "vanilla",
@@ -514,7 +514,7 @@ internal static class Program
                 new DownloadSourceService(),
                 TimeSpan.FromSeconds(2));
             var instance = new GameInstance(
-                "asset-id-valid",
+                    Guid.NewGuid().ToString("N"),
                 "Asset id valid",
                 "asset-id-valid",
                 "vanilla",
@@ -563,7 +563,7 @@ internal static class Program
                     new DownloadSourceService(),
                     TimeSpan.FromSeconds(2));
                 var instance = new GameInstance(
-                    "asset-index-validation",
+                    Guid.NewGuid().ToString("N"),
                     "Asset index validation",
                     "asset-index-validation",
                     "vanilla",
@@ -649,7 +649,7 @@ internal static class Program
                     new DownloadSourceService(),
                     TimeSpan.FromSeconds(2));
                 var instance = new GameInstance(
-                    "asset-index-valid",
+                    Guid.NewGuid().ToString("N"),
                     "Asset index valid",
                     "asset-index-valid",
                     "vanilla",
@@ -695,7 +695,8 @@ internal static class Program
         try
         {
             var paths = new NexoPathService(root);
-            var gameRoot = paths.GetInstanceGameDirectory("server-test");
+            var instanceId = Guid.NewGuid().ToString("N");
+            var gameRoot = paths.GetInstanceGameDirectory(instanceId);
             var versionsRoot = Path.Combine(gameRoot, "versions");
             Directory.CreateDirectory(versionsRoot);
 
@@ -740,7 +741,7 @@ internal static class Program
                 [],
                 Path.Combine(gameRoot, "logs", "server-test.log"));
             var quickInstance = new GameInstance(
-                "server-test",
+                instanceId,
                 "Inherited Quick Play",
                 "quick-child",
                 "fabric",
@@ -841,7 +842,8 @@ internal static class Program
         try
         {
             var paths = new NexoPathService(temp);
-            var instance = new GameInstance("test-instance", $"Minecraft {version}", version, "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(
+                    Guid.NewGuid().ToString("N"), $"Minecraft {version}", version, "vanilla", DateTimeOffset.UtcNow);
             var accountUuid = Guid.NewGuid();
             var account = new LauncherAccount("local-test", "offline", "NexoTester", accountUuid.ToString(), DateTimeOffset.UtcNow);
             var instanceRoot = paths.GetInstanceDirectory(instance.Id);
@@ -982,7 +984,8 @@ internal static class Program
         try
         {
             var paths = new NexoPathService(temp);
-            var instance = new GameInstance("mc-152", "Minecraft 1.5.2", version, "vanilla", DateTimeOffset.UtcNow);
+            var instance = new GameInstance(
+                    Guid.NewGuid().ToString("N"), "Minecraft 1.5.2", version, "vanilla", DateTimeOffset.UtcNow);
             var account = new LauncherAccount("local-152", "offline", "LegacyTester", Guid.NewGuid().ToString(), DateTimeOffset.UtcNow);
             var instanceRoot = paths.GetInstanceDirectory(instance.Id);
             var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
