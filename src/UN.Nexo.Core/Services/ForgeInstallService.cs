@@ -136,6 +136,11 @@ public sealed class ForgeInstallService
         IProgress<InstallProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(instance.LoaderVersion))
+            throw new InvalidOperationException(
+                "Forge version is missing from the instance metadata.");
+        var forgeVersion = instance.LoaderVersion.Trim();
+
         var instanceRoot =
             _paths.EnsureInstanceDirectoryPhysical(instance.Id);
         var gameRoot =
