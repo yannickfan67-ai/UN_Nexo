@@ -39,7 +39,7 @@
             <TextBlock Text="Source directory" FontSize="19" FontWeight="SemiBold" />
             <TextBlock Text="Choose .minecraft, or a game directory containing versions/. You can also paste a path directly." Classes="muted" FontSize="12" TextWrapping="Wrap" />
             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-              <TextBox x:Name="SourcePathBox" Watermark="C:\Users\…\AppData\Roaming\.minecraft" />
+              <TextBox x:Name="SourcePathBox" PlaceholderText="C:\Users\…\AppData\Roaming\.minecraft" />
               <Button Grid.Column="1" Content="Browse…" Click="OnBrowseClicked" Padding="13,8" />
               <Button Grid.Column="2" x:Name="ScanButton" Content="Scan" Click="OnScanClicked" Padding="13,8" />
             </Grid>
@@ -71,7 +71,7 @@
             <StackPanel Spacing="10">
               <TextBlock Text="Import preview" FontSize="19" FontWeight="SemiBold" />
               <TextBlock Text="New instance name" Classes="muted" FontSize="11" />
-              <TextBox x:Name="InstanceNameBox" Watermark="Imported Minecraft" />
+              <TextBox x:Name="InstanceNameBox" PlaceholderText="Imported Minecraft" />
               <Border Background="#0E141C" CornerRadius="9" Padding="12">
                 <StackPanel Spacing="6">
                   <TextBlock Text="What is copied" FontWeight="SemiBold" />
