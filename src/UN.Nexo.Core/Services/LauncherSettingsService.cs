@@ -38,14 +38,14 @@ public sealed class LauncherSettingsService
         }
     }
 
-    // SaveAsync accepts a complete snapshot. Saves targeting the same canonical file are
-    // serialized process-wide; if callers submit stale snapshots, the last writer wins.
+    // SaveAsync accepts a complete snapshot. Publication is serialized across Nexo processes;
+    // callers still own snapshot freshness, so a later complete snapshot intentionally wins.
     public async Task SaveAsync(LauncherSettings settings, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
         _paths.EnsureDirectories();
         var path = GetSettingsPath();
-        using var writeLease = await PathKeyedLock.AcquireAsync(path, cancellationToken);
+        await using var writeLease = await PersistedStoreMutationLock.AcquireAsync(path, cancellationToken);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
