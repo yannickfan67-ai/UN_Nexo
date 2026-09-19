@@ -64,7 +64,8 @@ public sealed partial class AccountStoreService
 
         var existingIndex = accounts.FindIndex(account =>
             account is not null && string.Equals(account.Id, accountId, StringComparison.Ordinal));
-        var createdAt = existingIndex >= 0 ? accounts[existingIndex].CreatedAt : DateTimeOffset.UtcNow;
+        var verifiedAt = DateTimeOffset.UtcNow;
+        var createdAt = existingIndex >= 0 ? accounts[existingIndex].CreatedAt : verifiedAt;
         var account = new LauncherAccount(
             accountId,
             "microsoft",
@@ -72,7 +73,8 @@ public sealed partial class AccountStoreService
             normalizedUuid,
             createdAt)
         {
-            AuthenticationId = authenticationId
+            AuthenticationId = authenticationId,
+            EntitlementVerifiedAt = verifiedAt
         };
 
         if (existingIndex >= 0)
@@ -163,7 +165,8 @@ public sealed partial class AccountStoreService
                 {
                     Type = "offline",
                     Uuid = normalizedUuid,
-                    AuthenticationId = null
+                    AuthenticationId = null,
+                    EntitlementVerifiedAt = null
                 };
             }
             else if (string.Equals(type, "microsoft", StringComparison.OrdinalIgnoreCase))

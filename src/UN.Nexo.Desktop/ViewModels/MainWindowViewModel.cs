@@ -17,6 +17,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly FabricInstallService _fabricInstaller;
     private readonly AccountStoreService _accounts;
     private readonly MicrosoftMinecraftAuthService _microsoftAuth;
+    private readonly RestrictedRegionService _restrictedRegions;
     private readonly LauncherSettingsService _settings;
     private readonly DownloadSourceService _downloadSources;
     private readonly MinecraftLaunchPlanBuilder _launchBuilder;
@@ -27,6 +28,7 @@ public partial class MainWindowViewModel : ObservableObject
     private CancellationTokenSource? _gameCancellation;
     private readonly Queue<string> _gameLogLines = new();
     private bool _settingsLoadFailed;
+    private readonly bool _testOfflineMode;
 
 
     [ObservableProperty] private bool isBusy;
@@ -64,9 +66,12 @@ public partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private string gameStatus = "Select an instance and a profile.";
     [ObservableProperty] private string gameLog = string.Empty;
 
+    public bool IsTestOfflineMode => _testOfflineMode;
+
     public bool CanPlay => !IsBusy && !IsInstallBusy && !IsAccountAuthBusy && !IsGameRunning
         && SelectedInstance is not null
-        && SelectedAccount is not null;
+        && SelectedAccount is not null
+        && (SelectedAccount.IsMicrosoft || (_testOfflineMode && SelectedAccount.IsOffline));
 
     private void UpdatePlayAvailability()
     {
@@ -91,9 +96,13 @@ public partial class MainWindowViewModel : ObservableObject
         else if (JavaInstallations.Count == 0)
             GameStatus = "Ready · required Java will download automatically.";
         else if (SelectedAccount.IsMicrosoft)
-            GameStatus = "Ready · Microsoft credentials will refresh securely when you press Play.";
+            GameStatus = SelectedAccount.EntitlementVerifiedAt is null
+                ? "Ready · Microsoft sign-in is required before this profile can play."
+                : "Ready · Microsoft credentials will refresh securely when you press Play.";
+        else if (_testOfflineMode && SelectedAccount.IsOffline)
+            GameStatus = "TEST OFFLINE MODE · Ready for an explicit offline-profile test launch.";
         else
-            GameStatus = "Ready for offline play.";
+            GameStatus = "Offline profiles cannot launch directly · use a verified Microsoft profile.";
     }
 
     partial void OnIsBusyChanged(bool value) => UpdatePlayAvailability();
@@ -117,8 +126,10 @@ public partial class MainWindowViewModel : ObservableObject
         FabricInstallService fabricInstaller,
         AccountStoreService accounts,
         MicrosoftMinecraftAuthService microsoftAuth,
+        RestrictedRegionService restrictedRegions,
         LauncherSettingsService settings,
-        DownloadSourceService downloadSources)
+        DownloadSourceService downloadSources,
+        bool testOfflineMode = false)
     {
         _launchBuilder = new MinecraftLaunchPlanBuilder(paths);
         _runtimeInspector = new MinecraftRuntimeInspector(paths);
@@ -132,8 +143,10 @@ public partial class MainWindowViewModel : ObservableObject
         _fabricInstaller = fabricInstaller;
         _accounts = accounts;
         _microsoftAuth = microsoftAuth;
+        _restrictedRegions = restrictedRegions;
         _settings = settings;
         _downloadSources = downloadSources;
+        _testOfflineMode = testOfflineMode;
         JavaInstallations.CollectionChanged += (_, _) => UpdatePlayAvailability();
     }
 
@@ -554,6 +567,7 @@ public partial class MainWindowViewModel : ObservableObject
         var account = SelectedAccount;
         var launchAccount = account;
         MinecraftLaunchCredentials? credentials = null;
+        var usedRestrictedOfflineFallback = false;
         var cancellation = new CancellationTokenSource();
         _gameCancellation = cancellation;
         IsGameRunning = true;
@@ -564,6 +578,17 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
+            if (account.IsOffline && !_testOfflineMode)
+            {
+                throw new MicrosoftAuthenticationRequiredException(
+                    "Generic offline profiles are not launchable. Sign in with a Microsoft account. In CN/RU, a previously entitlement-verified Microsoft profile may use restricted-region offline fallback when the online service is temporarily unreachable.");
+            }
+            if (account.IsOffline)
+            {
+                AppendGameLog(
+                    "TEST OFFLINE MODE is active because UN_Nexo was started with --test-offline. This launch has no Microsoft/Minecraft authenticated session.");
+            }
+
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
 
             GameStatus = $"Waiting for exclusive access to {instance.Name}…";
@@ -577,10 +602,35 @@ public partial class MainWindowViewModel : ObservableObject
             {
                 GameStatus = $"Refreshing Microsoft session for {account.DisplayName}…";
                 LauncherStatus = GameStatus;
-                var session = await _microsoftAuth.AcquireSessionAsync(account, cancellation.Token);
-                launchAccount = session.Account;
-                credentials = session.Credentials;
-                ReplaceAccountInList(account, session.Account);
+                try
+                {
+                    var session = await _microsoftAuth.AcquireSessionAsync(
+                        account,
+                        cancellation.Token);
+                    launchAccount = session.Account;
+                    credentials = session.Credentials;
+                    ReplaceAccountInList(account, session.Account);
+                }
+                catch (Exception ex) when (
+                    IsTransientOnlineSessionFailure(ex, cancellation.Token))
+                {
+                    GameStatus = "Online Minecraft session unavailable · checking restricted-region fallback…";
+                    LauncherStatus = GameStatus;
+                    if (!await _restrictedRegions.CanUseOfflineFallbackAsync(
+                            account,
+                            cancellation.Token))
+                        throw;
+
+                    launchAccount = account with
+                    {
+                        Type = "offline",
+                        AuthenticationId = null
+                    };
+                    credentials = null;
+                    usedRestrictedOfflineFallback = true;
+                    AppendGameLog(
+                        "Using restricted-region offline fallback for a previously entitlement-verified Microsoft profile. Public IP and country are not persisted.");
+                }
             }
 
             var plan = await _launchBuilder.BuildAsync(
@@ -589,9 +639,11 @@ public partial class MainWindowViewModel : ObservableObject
                 JavaInstallations.ToArray(),
                 credentials,
                 cancellation.Token);
-            GameStatus = launchAccount.IsMicrosoft
-                ? $"Running {instance.Name} · Microsoft profile {launchAccount.DisplayName}"
-                : $"Running {instance.Name} · Offline profile {launchAccount.DisplayName}";
+            GameStatus = usedRestrictedOfflineFallback
+                ? $"Running {instance.Name} · verified restricted-region offline fallback · {account.DisplayName}"
+                : launchAccount.IsMicrosoft
+                    ? $"Running {instance.Name} · Microsoft profile {launchAccount.DisplayName}"
+                    : $"Running {instance.Name} · TEST OFFLINE MODE · {launchAccount.DisplayName}";
             LauncherStatus = GameStatus;
             var result = await _gameProcess.RunAsync(
                 plan, new Progress<string>(AppendGameLog), cancellation.Token);
@@ -627,6 +679,23 @@ public partial class MainWindowViewModel : ObservableObject
             LauncherStatus = GameStatus;
             cancellation.Dispose();
         }
+    }
+
+    private static bool IsTransientOnlineSessionFailure(
+        Exception exception,
+        CancellationToken callerCancellation)
+    {
+        if (exception is OperationCanceledException)
+            return !callerCancellation.IsCancellationRequested;
+        if (exception is TimeoutException)
+            return true;
+        if (exception is not HttpRequestException http)
+            return false;
+        if (http.StatusCode is null)
+            return true;
+
+        var status = (int)http.StatusCode.Value;
+        return status is 408 or 429 || status >= 500;
     }
 
     [RelayCommand(CanExecute = nameof(IsGameRunning))]

@@ -41,6 +41,8 @@ internal static class MicrosoftAuthRegression
             Assert(session.Account.DisplayName == "NexoTester", "Minecraft profile name was not persisted.");
             Assert(session.Account.AuthenticationId == HomeAccountId,
                 "Only the non-secret MSAL account identity should be persisted.");
+            Assert(session.Account.EntitlementVerifiedAt is not null,
+                "A successful entitlement/profile exchange must record a non-secret verification timestamp.");
             Assert(session.Credentials.AccessToken == MinecraftToken,
                 "Minecraft access token should reach the in-memory launch credentials.");
             Assert(session.Credentials.ClientId == MsalMicrosoftAccessTokenProvider.ClientId,

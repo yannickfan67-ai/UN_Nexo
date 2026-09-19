@@ -55,13 +55,27 @@ public sealed partial class MainWindow : Window
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
+        var regionHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
         var launcherVersion = typeof(MainWindow).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "dev";
-        Title = $"UN_Nexo {launcherVersion}";
+        var testOfflineMode = LauncherLaunchMode.IsTestOfflineEnabled(
+            Environment.GetCommandLineArgs().Skip(1));
+        Title = testOfflineMode
+            ? $"UN_Nexo {launcherVersion} [TEST OFFLINE]"
+            : $"UN_Nexo {launcherVersion}";
+        if (testOfflineMode)
+            LauncherStartupTrace.Write("[startup] TEST OFFLINE MODE enabled by explicit --test-offline switch");
         downloadHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         manifestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         authHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
+        regionHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         ApplyRuntimeVersionLabel(launcherVersion);
 
         LauncherStartupTrace.Write("[startup] Creating launcher services");
@@ -88,8 +102,10 @@ public sealed partial class MainWindow : Window
             _fabricInstaller,
             accountStore,
             microsoftAuth,
+            new RestrictedRegionService(regionHttpClient),
             new LauncherSettingsService(_paths),
-            downloadSources);
+            downloadSources,
+            testOfflineMode);
 
         DataContext = _viewModel;
         AddUtilityNavigation();

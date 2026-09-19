@@ -48,3 +48,27 @@ Nexo does not log the authentication request/response bodies or complete launch 
 Microsoft/Xbox authentication can succeed while Minecraft Services still returns HTTP 403 with `Invalid app registration` for an application that has not been authorized on the Minecraft side.
 
 UN_Nexo treats that as a separate application-authorization error. New or rejected application IDs can be submitted for Minecraft AppID review through Microsoft's official short link: [https://aka.ms/mce-reviewappid](https://aka.ms/mce-reviewappid). The launcher does not work around approval by borrowing a Client ID from the official launcher, Prism Launcher, or any other project. Once Minecraft Services authorizes the UN_Nexo registration, the same flow can continue without changing user account storage.
+
+
+## Restricted-region offline fallback
+
+UN_Nexo does not use IP geolocation to bypass Minecraft ownership checks. Normal play uses a Microsoft-authenticated Minecraft session.
+
+For service-restricted regions, Nexo may offer a narrow continuity fallback only when all of the following are true:
+
+- the public IP geolocation check positively identifies `CN` or `RU`;
+- the selected profile is a Microsoft profile that previously completed the Minecraft entitlement and Java-profile checks on this device; and
+- the current online session refresh failed because of a transient network/service failure rather than an explicit authentication, entitlement, identity, or AppID rejection.
+
+The launcher stores only the non-secret time of the last successful entitlement/profile verification. It does not persist the public IP address or country result. The geolocation response is used in memory only. A geolocation timeout, malformed response, redirect, unknown country, or failed request does not grant offline access.
+
+Generic offline profiles are not a substitute for this policy and are not eligible to launch under the restricted-region fallback.
+
+
+## Explicit offline test mode
+
+Packaged builds recognize the exact command-line switch `--test-offline` for launcher development and troubleshooting. The switch is never enabled by default.
+
+When the launcher is started with `--test-offline`, a locally configured Offline profile may launch without a Microsoft/Minecraft session so maintainers can quickly isolate Java, instance, loader, mod, graphics, and process-launch failures from authentication failures. The window title and launch status are visibly marked `TEST OFFLINE`.
+
+This mode does not represent the profile as Microsoft-authenticated, does not create entitlement metadata, does not grant a Minecraft Services token, and does not change the normal launch policy when the switch is absent. It is a diagnostic/test path and must not be presented as proof of Minecraft ownership.
