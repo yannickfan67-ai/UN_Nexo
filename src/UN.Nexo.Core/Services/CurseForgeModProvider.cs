@@ -568,13 +568,11 @@ public sealed class CurseForgeModProvider : IModDependencyProvider
         CancellationToken cancellationToken)
     {
         var current = RequireTrustedCdnUri(downloadUrl);
-        var apiKey = await _apiKeyProvider.GetApiKeyAsync(cancellationToken);
 
         for (var redirectCount = 0; ; redirectCount++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
             ApplyUserAgent(request);
-            request.Headers.TryAddWithoutValidation("x-api-key", apiKey);
 
             var response = await _httpClient.SendAsync(
                 request,
