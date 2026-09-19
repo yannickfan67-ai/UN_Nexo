@@ -45,6 +45,30 @@ internal static class CurseForgeProviderRegression
             Assert(handler.LastUserAgent.Contains("UN_Nexo", StringComparison.Ordinal),
                 "CurseForge requests must carry the UN_Nexo user agent.");
 
+            var proxyHandler = new CurseForgeProxyHandler();
+            using (var proxyClient = new HttpClient(proxyHandler))
+            {
+                var proxyProvider = new CurseForgeModProvider(
+                    proxyClient,
+                    new ThrowingKeyProvider(),
+                    "yannickfan67-ai-UN_Nexo/test",
+                    "https://proxy.example.test/curseforge/v1/");
+                Assert(proxyProvider.IsConfigured,
+                    "A configured server-side CurseForge proxy must not require a desktop API key.");
+                Assert(proxyProvider.UsesServerSideCredentialProxy,
+                    "Custom CurseForge API base should be treated as a server-side credential proxy.");
+
+                var proxyProjects = await proxyProvider.SearchAsync(
+                    "example",
+                    "1.21.4",
+                    "fabric",
+                    10);
+                Assert(proxyProjects.Count == 1,
+                    "CurseForge proxy should expose the same provider search contract.");
+                Assert(proxyHandler.RequestsWithApiKey == 0,
+                    "Nexo must not forward a CurseForge API key to a custom proxy origin.");
+            }
+
             var latest = await provider.GetLatestCompatibleVersionAsync(
                 "100",
                 "1.21.4",
@@ -214,6 +238,53 @@ internal static class CurseForgeProviderRegression
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(key);
         }
+    }
+
+    private sealed class ThrowingKeyProvider : ICurseForgeApiKeyProvider
+    {
+        public bool IsConfigured => false;
+
+        public ValueTask<string> GetApiKeyAsync(
+            CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException(
+                "Custom proxy mode must not request a desktop CurseForge API key.");
+    }
+
+    private sealed class CurseForgeProxyHandler : HttpMessageHandler
+    {
+        public int RequestsWithApiKey { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri
+                ?? throw new InvalidOperationException("Missing proxy request URI.");
+            if (!uri.Host.Equals("proxy.example.test", StringComparison.OrdinalIgnoreCase))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+            if (request.Headers.Contains("x-api-key"))
+                RequestsWithApiKey++;
+
+            var path = uri.AbsolutePath;
+            if (path.EndsWith("/games", StringComparison.Ordinal))
+                return Task.FromResult(Json("""{"data":[{"id":432,"name":"Minecraft","slug":"minecraft"}]}"""));
+            if (path.EndsWith("/categories", StringComparison.Ordinal))
+                return Task.FromResult(Json("""{"data":[{"id":6,"name":"Mods","slug":"mc-mods","isClass":true}]}"""));
+            if (path.EndsWith("/mods/search", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Json(
+                    """{"data":[{"id":100,"name":"Proxy Example","slug":"proxy-example","summary":"Proxy test","downloadCount":1,"authors":[{"name":"Tester"}]}]}"""));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private static HttpResponseMessage Json(string value)
+            => new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(value, Encoding.UTF8, "application/json")
+            };
     }
 
     private sealed class CurseForgeHandler(
