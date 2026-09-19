@@ -20,6 +20,8 @@ public sealed partial class MainWindow : Window
     private readonly QuiltInstallService _quiltInstaller;
     private readonly ForgeMetaService _forgeMeta;
     private readonly ForgeInstallService _forgeInstaller;
+    private readonly NeoForgeMetaService _neoForgeMeta;
+    private readonly NeoForgeInstallService _neoForgeInstaller;
     private Task? _initializationTask;
     private ServerHubWindow? _serverHub;
     private RuntimeSettingsWindow? _runtimeSettingsWindow;
@@ -29,6 +31,7 @@ public sealed partial class MainWindow : Window
     private FabricManagerWindow? _fabricWindow;
     private QuiltManagerWindow? _quiltWindow;
     private ForgeManagerWindow? _forgeWindow;
+    private NeoForgeManagerWindow? _neoForgeWindow;
     private ModManagerWindow? _modWindow;
     private DownloadManagerWindow? _downloadManagerWindow;
 
@@ -105,6 +108,11 @@ public sealed partial class MainWindow : Window
             downloadHttpClient,
             _paths,
             _installer);
+        _neoForgeMeta = new NeoForgeMetaService(manifestHttpClient);
+        _neoForgeInstaller = new NeoForgeInstallService(
+            downloadHttpClient,
+            _paths,
+            _installer);
         var accountStore = new AccountStoreService(_paths);
         var microsoftAuth = new MicrosoftMinecraftAuthService(
             authHttpClient,
@@ -119,6 +127,7 @@ public sealed partial class MainWindow : Window
             _fabricInstaller,
             _quiltInstaller,
             _forgeInstaller,
+            _neoForgeInstaller,
             accountStore,
             microsoftAuth,
             new RestrictedRegionService(regionHttpClient),
@@ -216,15 +225,26 @@ public sealed partial class MainWindow : Window
             nav.Children.Insert(Math.Min(quiltIndex + 1, nav.Children.Count), forge);
         }
 
+        if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "NeoForge")))
+        {
+            var neoForge = new Button { Content = "NeoForge" };
+            neoForge.Classes.Add("nav");
+            neoForge.Click += (_, _) => OpenNeoForge();
+            var forgeIndex = nav.Children
+                .Select((child, index) => (child, index))
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Forge")).index;
+            nav.Children.Insert(Math.Min(forgeIndex + 1, nav.Children.Count), neoForge);
+        }
+
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Mods")))
         {
             var mods = new Button { Content = "Mods" };
             mods.Classes.Add("nav");
             mods.Click += (_, _) => OpenMods();
-            var forgeIndex = nav.Children
+            var neoForgeIndex = nav.Children
                 .Select((child, index) => (child, index))
-                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "Forge")).index;
-            nav.Children.Insert(Math.Min(forgeIndex + 1, nav.Children.Count), mods);
+                .FirstOrDefault(pair => pair.child is Button button && Equals(button.Content, "NeoForge")).index;
+            nav.Children.Insert(Math.Min(neoForgeIndex + 1, nav.Children.Count), mods);
         }
 
         if (!nav.Children.OfType<Button>().Any(button => Equals(button.Content, "Import")))
@@ -362,6 +382,25 @@ public sealed partial class MainWindow : Window
             _installer);
         _forgeWindow.Closed += (_, _) => _forgeWindow = null;
         _forgeWindow.Show(this);
+    }
+
+    private void OpenNeoForge()
+    {
+        if (_neoForgeWindow is not null)
+        {
+            _neoForgeWindow.Activate();
+            return;
+        }
+
+        _neoForgeWindow = new NeoForgeManagerWindow(
+            _viewModel,
+            _manifest,
+            _instances,
+            _neoForgeMeta,
+            _neoForgeInstaller,
+            _installer);
+        _neoForgeWindow.Closed += (_, _) => _neoForgeWindow = null;
+        _neoForgeWindow.Show(this);
     }
 
     private void OpenMods()
