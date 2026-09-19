@@ -11,7 +11,9 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class CurseForgeModProvider : IModDependencyProvider
 {
-    private const string ApiBase = "https://api.curseforge.com/v1/";
+    private const string OfficialApiBase = "https://api.curseforge.com/v1/";
+    public const string ApiBaseEnvironmentVariableName =
+        "UN_NEXO_CURSEFORGE_API_BASE";
     private const int MaxMetadataBytes = 4 * 1024 * 1024;
     private const long MaxModBytes = 512L * 1024L * 1024L;
     private const int MaxRedirects = 5;
@@ -21,13 +23,16 @@ public sealed class CurseForgeModProvider : IModDependencyProvider
     private readonly HttpClient _httpClient;
     private readonly ICurseForgeApiKeyProvider _apiKeyProvider;
     private readonly string _userAgent;
+    private readonly Uri _apiBase;
+    private readonly bool _sendApiKey;
     private readonly SemaphoreSlim _catalogGate = new(1, 1);
     private (int GameId, int ModsClassId)? _minecraftCatalog;
 
     public CurseForgeModProvider(
         HttpClient httpClient,
         ICurseForgeApiKeyProvider apiKeyProvider,
-        string? userAgent = null)
+        string? userAgent = null,
+        string? apiBase = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _apiKeyProvider = apiKeyProvider ?? throw new ArgumentNullException(nameof(apiKeyProvider));
@@ -35,13 +40,20 @@ public sealed class CurseForgeModProvider : IModDependencyProvider
             ? "yannickfan67-ai-UN_Nexo/0.0 (github.com/yannickfan67-ai/UN_Nexo)"
             : userAgent.Trim();
 
+        var configuredBase = string.IsNullOrWhiteSpace(apiBase)
+            ? Environment.GetEnvironmentVariable(ApiBaseEnvironmentVariableName)
+            : apiBase;
+        _apiBase = ResolveApiBase(configuredBase);
+        _sendApiKey = IsOfficialApiBase(_apiBase);
+
         using var probe = new HttpRequestMessage();
         probe.Headers.UserAgent.ParseAdd(_userAgent);
     }
 
     public string ProviderId => "curseforge";
     public string DisplayName => "CurseForge";
-    public bool IsConfigured => _apiKeyProvider.IsConfigured;
+    public bool IsConfigured => !_sendApiKey || _apiKeyProvider.IsConfigured;
+    public bool UsesServerSideCredentialProxy => !_sendApiKey;
 
     public async Task<IReadOnlyList<ModProviderProject>> SearchAsync(
         string query,
@@ -631,15 +643,19 @@ public sealed class CurseForgeModProvider : IModDependencyProvider
         HttpContent? content,
         CancellationToken cancellationToken)
     {
-        var apiKey = await _apiKeyProvider.GetApiKeyAsync(cancellationToken);
         using var request = new HttpRequestMessage(
             method,
-            new Uri(new Uri(ApiBase), relative));
+            new Uri(_apiBase, relative));
         request.Content = content;
         ApplyUserAgent(request);
         request.Headers.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+
+        if (_sendApiKey)
+        {
+            var apiKey = await _apiKeyProvider.GetApiKeyAsync(cancellationToken);
+            request.Headers.TryAddWithoutValidation("x-api-key", apiKey);
+        }
 
         using var response = await _httpClient.SendAsync(
             request,
@@ -890,6 +906,42 @@ public sealed class CurseForgeModProvider : IModDependencyProvider
             throw new InvalidDataException(
                 "The selected CurseForge file metadata is not safe to install.");
     }
+
+    private static Uri ResolveApiBase(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured))
+            return new Uri(OfficialApiBase);
+
+        if (!Uri.TryCreate(configured.Trim(), UriKind.Absolute, out var uri)
+            || uri.Scheme != Uri.UriSchemeHttps
+            || (!uri.IsDefaultPort && uri.Port != 443)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !string.IsNullOrEmpty(uri.Query)
+            || !string.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new InvalidOperationException(
+                $"{ApiBaseEnvironmentVariableName} must be an absolute HTTPS URL on the default TLS port, without credentials, query, or fragment.");
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Path = uri.AbsolutePath.EndsWith("/", StringComparison.Ordinal)
+                ? uri.AbsolutePath
+                : uri.AbsolutePath + "/"
+        };
+        return builder.Uri;
+    }
+
+    private static bool IsOfficialApiBase(Uri uri)
+        => uri.Scheme == Uri.UriSchemeHttps
+           && (uri.IsDefaultPort || uri.Port == 443)
+           && string.IsNullOrEmpty(uri.UserInfo)
+           && uri.IdnHost.Equals(
+               "api.curseforge.com",
+               StringComparison.OrdinalIgnoreCase)
+           && uri.AbsolutePath.Equals(
+               "/v1/",
+               StringComparison.Ordinal);
 
     private static int NormalizeLoader(string loader)
     {
