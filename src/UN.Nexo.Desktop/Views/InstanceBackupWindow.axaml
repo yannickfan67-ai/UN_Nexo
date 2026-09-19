@@ -41,7 +41,7 @@
           <StackPanel Spacing="10">
             <TextBlock Text="Clone instance" FontSize="19" FontWeight="SemiBold" />
             <TextBlock Text="The clone is staged completely before it becomes visible. You can copy the whole instance or leave worlds behind." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-            <TextBox x:Name="CloneNameBox" Watermark="New instance name" />
+            <TextBox x:Name="CloneNameBox" PlaceholderText="New instance name" />
             <CheckBox x:Name="IncludeWorldsBox" IsChecked="True" Content="Include world saves" />
             <Button x:Name="CloneButton" Classes="primary" Content="Clone selected instance" Click="OnCloneClicked" HorizontalAlignment="Left" />
           </StackPanel>
