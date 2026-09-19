@@ -17,6 +17,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly FabricInstallService _fabricInstaller;
     private readonly QuiltInstallService _quiltInstaller;
     private readonly ForgeInstallService _forgeInstaller;
+    private readonly NeoForgeInstallService _neoForgeInstaller;
     private readonly AccountStoreService _accounts;
     private readonly MicrosoftMinecraftAuthService _microsoftAuth;
     private readonly RestrictedRegionService _restrictedRegions;
@@ -128,6 +129,7 @@ public partial class MainWindowViewModel : ObservableObject
         FabricInstallService fabricInstaller,
         QuiltInstallService quiltInstaller,
         ForgeInstallService forgeInstaller,
+        NeoForgeInstallService neoForgeInstaller,
         AccountStoreService accounts,
         MicrosoftMinecraftAuthService microsoftAuth,
         RestrictedRegionService restrictedRegions,
@@ -147,6 +149,7 @@ public partial class MainWindowViewModel : ObservableObject
         _fabricInstaller = fabricInstaller;
         _quiltInstaller = quiltInstaller;
         _forgeInstaller = forgeInstaller;
+        _neoForgeInstaller = neoForgeInstaller;
         _accounts = accounts;
         _microsoftAuth = microsoftAuth;
         _restrictedRegions = restrictedRegions;
@@ -209,6 +212,7 @@ public partial class MainWindowViewModel : ObservableObject
                 "fabric" => "Fabric files prepared",
                 "quilt" => "Quilt files prepared",
                 "forge" => "Forge files prepared",
+                "neoforge" => "NeoForge files prepared",
                 _ => "Vanilla files prepared"
             }
             : "Not installed";
@@ -395,6 +399,7 @@ public partial class MainWindowViewModel : ObservableObject
                     "fabric" => $"Fabric files prepared · {targetSource}",
                     "quilt" => $"Quilt files prepared · {targetSource}",
                     "forge" => $"Forge files prepared · {targetSource}",
+                    "neoforge" => $"NeoForge files prepared · {targetSource}",
                     _ => $"Vanilla files prepared · {targetSource}"
                 };
             }
@@ -457,6 +462,7 @@ public partial class MainWindowViewModel : ObservableObject
                         "fabric" => $"Fabric files prepared · {_downloadSources.DisplayName}",
                         "quilt" => $"Quilt files prepared · {_downloadSources.DisplayName}",
                         "forge" => $"Forge files prepared · {_downloadSources.DisplayName}",
+                        "neoforge" => $"NeoForge files prepared · {_downloadSources.DisplayName}",
                         _ => $"Vanilla files prepared · {_downloadSources.DisplayName}"
                     };
                 }
@@ -579,6 +585,28 @@ public partial class MainWindowViewModel : ObservableObject
                 baseVersionId,
                 cancellationToken);
             await _forgeInstaller.PrepareAsync(
+                instance,
+                baseVersion,
+                progress,
+                cancellationToken);
+            return;
+        }
+
+        if (instance.Loader.Equals("neoforge", StringComparison.OrdinalIgnoreCase))
+        {
+            var baseVersionId = !string.IsNullOrWhiteSpace(instance.BaseVersionId)
+                ? instance.BaseVersionId
+                : await _neoForgeInstaller.GetBaseVersionIdAsync(
+                    instance,
+                    cancellationToken);
+            if (string.IsNullOrWhiteSpace(baseVersionId))
+                throw new InvalidDataException(
+                    "NeoForge instance does not declare its base Minecraft version.");
+
+            var baseVersion = await ResolveCatalogVersionAsync(
+                baseVersionId,
+                cancellationToken);
+            await _neoForgeInstaller.PrepareAsync(
                 instance,
                 baseVersion,
                 progress,
