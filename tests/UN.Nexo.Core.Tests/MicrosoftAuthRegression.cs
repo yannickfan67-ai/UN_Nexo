@@ -99,6 +99,8 @@ internal static class MicrosoftAuthRegression
                 Assert(ex.Message.Contains("Client ID", StringComparison.OrdinalIgnoreCase)
                        || ex.Message.Contains("application registration", StringComparison.OrdinalIgnoreCase),
                     "App-registration failure should be actionable.");
+                Assert(ex.Message.Contains("https://aka.ms/mce-reviewappid", StringComparison.Ordinal),
+                    "App-registration failure should point to the official AppID review route.");
                 Assert(!ex.Message.Contains(MicrosoftToken, StringComparison.Ordinal)
                        && !ex.Message.Contains(XstsToken, StringComparison.Ordinal),
                     "Authentication errors must not echo tokens.");
