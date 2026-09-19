@@ -194,7 +194,7 @@
                     <TextBlock Text="Start with Vanilla. Mod loaders will be added on top of the same instance model." Classes="muted" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
                   </StackPanel>
                   <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="10" ColumnSpacing="10">
-                    <TextBox Grid.ColumnSpan="2" Watermark="Instance name" Text="{Binding NewInstanceName}" />
+                    <TextBox Grid.ColumnSpan="2" PlaceholderText="Instance name" Text="{Binding NewInstanceName}" />
                     <ComboBox Grid.Row="1" ItemsSource="{Binding AvailableVersions}" SelectedItem="{Binding SelectedVersion}" MaxDropDownHeight="360" MinWidth="120">
                       <ComboBox.ItemTemplate>
                         <DataTemplate>
@@ -267,7 +267,7 @@
                   <TextBlock Text="Offline profile" FontSize="19" FontWeight="SemiBold" />
                   <TextBlock Text="Useful for local worlds, development and offline-mode test servers. It does not replace Minecraft ownership or Microsoft authentication." Classes="muted" FontSize="12" TextWrapping="Wrap" />
                   <StackPanel Spacing="10">
-                    <TextBox Watermark="Minecraft name (3-16 characters)" Text="{Binding OfflineUserName}" />
+                    <TextBox PlaceholderText="Minecraft name (3-16 characters)" Text="{Binding OfflineUserName}" />
                     <Button Classes="primary" Content="Add offline profile" Command="{Binding CreateOfflineAccountCommand}" HorizontalAlignment="Left" />
                   </StackPanel>
                 </StackPanel>
