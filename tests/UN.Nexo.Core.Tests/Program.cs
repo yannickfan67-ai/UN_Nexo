@@ -19,6 +19,8 @@ internal static class Program
                 return await PersistedStoreRegression.RunServerStoreAddHelperAsync(args);
             if (args[0] == "--hold-store-lock")
                 return await PersistedStoreRegression.RunStoreLockHolderHelperAsync(args);
+            if (args[0] == "--installer-output-helper")
+                return await InstallerProcessOutputRegression.RunHelperAsync(args);
 
             Console.Error.WriteLine("Unknown test helper mode: " + args[0]);
             return 2;
@@ -27,6 +29,7 @@ internal static class Program
         var tests = new (string Name, Func<Task> Run)[]
         {
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
+            ("Bounded loader installer process output", InstallerProcessOutputRegression.RunAsync),
             ("Instance-scoped process concurrency (Unix)", ProcessConcurrencyRegression.RunAsync),
             ("Launch log bounds and retention", LaunchLogPolicyRegression.RunAsync),
             ("Java major parsing", TestJavaMajorAsync),
