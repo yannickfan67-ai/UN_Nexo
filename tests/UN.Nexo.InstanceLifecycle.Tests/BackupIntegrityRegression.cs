@@ -370,8 +370,6 @@ internal static class BackupIntegrityRegression
         {
             if (linked)
                 TryDeleteDirectoryLink(backupRoot);
-            if (Directory.Exists(backupRoot) && !PathEquals(backupRoot, savedRoot))
-                TryDeleteTree(backupRoot);
             if (Directory.Exists(savedRoot) && !Directory.Exists(backupRoot))
                 Directory.Move(savedRoot, backupRoot);
             TryDeleteTree(externalRoot);
