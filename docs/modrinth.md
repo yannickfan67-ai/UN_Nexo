@@ -34,3 +34,17 @@ Updates are never applied silently. Selecting an installed project checks the la
 - A failed download or checksum verification does not publish a mod into the instance.
 
 Local **Install JAR…** remains available independently of Modrinth.
+
+
+## Dependency plans
+
+Before a Modrinth install/update mutates the instance, UN_Nexo resolves the selected version's dependency graph.
+
+- `required` dependencies are resolved recursively for the same Minecraft version and loader and are installed automatically.
+- `optional` dependencies are surfaced in the plan but are not installed automatically.
+- `incompatible` relationships are treated as conflicts when they target another project/version selected by the same plan.
+- `embedded` relationships do not produce a separate install.
+- Project-only and version-pinned dependency edges are both supported.
+- Cycles, conflicting pinned versions and oversized dependency graphs fail before publication.
+
+All files that need to change are downloaded and verified into staging first. The resulting file set is then published under a single instance operation lease. If publication fails part-way through, newly published files are rolled back and replaced files are restored, so Play/backup/repair cannot observe a partially installed required-dependency set.
