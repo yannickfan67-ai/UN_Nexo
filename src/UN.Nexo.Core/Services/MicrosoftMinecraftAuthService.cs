@@ -282,7 +282,7 @@ public sealed class MicrosoftMinecraftAuthService
                 && response.StatusCode == HttpStatusCode.Forbidden
                 && body.Contains("Invalid app registration", StringComparison.OrdinalIgnoreCase))
                 throw new MinecraftApplicationNotAuthorizedException(
-                    "Microsoft and Xbox sign-in succeeded, but Minecraft Services rejected UN_Nexo's application registration. The UN_Nexo Client ID must be authorized by Minecraft Services; Nexo will not borrow another launcher's Client ID.");
+                    "Microsoft and Xbox sign-in succeeded, but Minecraft Services rejected UN_Nexo's application registration. The UN_Nexo Client ID must be approved by Minecraft Services. Submit or review the AppID at https://aka.ms/mce-reviewappid, then retry after approval; Nexo will not borrow another launcher's Client ID.");
 
             if (TryReadXboxError(body, out var xboxMessage))
                 throw new InvalidOperationException(xboxMessage);
