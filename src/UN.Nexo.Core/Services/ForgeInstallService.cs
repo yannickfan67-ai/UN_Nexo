@@ -353,6 +353,69 @@ public sealed class ForgeInstallService
         }
     }
 
+    public async Task<string?> GetBaseVersionIdAsync(
+        GameInstance instance,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+        if (!string.IsNullOrWhiteSpace(instance.BaseVersionId))
+            return instance.BaseVersionId;
+
+        var profilePath =
+            Path.Combine(
+                _paths.GetInstanceGameDirectory(instance.Id),
+                "versions",
+                instance.VersionId,
+                instance.VersionId + ".json");
+        if (!File.Exists(profilePath))
+            return null;
+
+        RejectExistingReparseFile(
+            profilePath,
+            "Forge launch metadata");
+        var info = new FileInfo(profilePath);
+        if (info.Length > 8L * 1024L * 1024L)
+        {
+            throw new InvalidDataException(
+                "Forge launch metadata exceeds the 8 MiB local metadata limit.");
+        }
+
+        await using var stream =
+            new FileStream(
+                profilePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                64 * 1024,
+                FileOptions.Asynchronous
+                | FileOptions.SequentialScan);
+        using var document =
+            await JsonDocument.ParseAsync(
+                stream,
+                cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException(
+                "Forge launch metadata root must be an object.");
+
+        if (!root.TryGetProperty(
+                "inheritsFrom",
+                out var inherits))
+        {
+            return null;
+        }
+
+        if (inherits.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(
+                inherits.GetString()))
+        {
+            throw new InvalidDataException(
+                "Forge launch metadata property 'inheritsFrom' must be a non-empty string.");
+        }
+
+        return inherits.GetString();
+    }
+
     public static ProcessStartInfo BuildInstallerStartInfo(
         string javaPath,
         string installerPath,
