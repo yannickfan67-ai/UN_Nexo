@@ -515,6 +515,9 @@ public sealed class JavaRuntimeProvisionService
         return value.GetString()!;
     }
 
+    private const int MaxRuntimeProbeOutputChars =
+        16 * 1024;
+
     private static async Task<bool> ValidateRuntimeAsync(
         string javaPath,
         int expectedMajor,
@@ -537,50 +540,57 @@ public sealed class JavaRuntimeProvisionService
             };
             startInfo.ArgumentList.Add("-version");
 
-            using var process = Process.Start(startInfo);
-            if (process is null)
-                return false;
-
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
+
+            BoundedProcessCapture capture;
             try
             {
-                var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
-                var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-                await process.WaitForExitAsync(timeout.Token);
-                var text = $"{await stderrTask}\n{await stdoutTask}";
-                if (process.ExitCode != 0)
-                    return false;
-
-                var version = ExtractQuotedVersion(text);
-                if (MinecraftLaunchPlanBuilder.JavaMajor(version) != expectedMajor)
-                    return false;
-
-                return text.Contains("64-Bit", StringComparison.OrdinalIgnoreCase)
-                       || text.Contains("amd64", StringComparison.OrdinalIgnoreCase)
-                       || text.Contains("x86_64", StringComparison.OrdinalIgnoreCase)
-                       || text.Contains("aarch64", StringComparison.OrdinalIgnoreCase);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                try
-                {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                }
-                catch { }
-                return false;
+                capture =
+                    await BoundedProcessRunner.RunAsync(
+                        startInfo,
+                        "managed Java runtime probe",
+                        MaxRuntimeProbeOutputChars,
+                        timeout.Token);
             }
             catch (OperationCanceledException)
+                when (!cancellationToken.IsCancellationRequested)
             {
-                try
-                {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                }
-                catch { }
-                throw;
+                return false;
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (capture.ExitCode != 0)
+                return false;
+
+            var text =
+                capture.StandardError.Text
+                + "\n"
+                + capture.StandardOutput.Text;
+
+            var version =
+                ExtractQuotedVersion(text);
+            if (MinecraftLaunchPlanBuilder.JavaMajor(version)
+                != expectedMajor)
+            {
+                return false;
+            }
+
+            return text.Contains(
+                       "64-Bit",
+                       StringComparison.OrdinalIgnoreCase)
+                   || text.Contains(
+                       "amd64",
+                       StringComparison.OrdinalIgnoreCase)
+                   || text.Contains(
+                       "x86_64",
+                       StringComparison.OrdinalIgnoreCase)
+                   || text.Contains(
+                       "aarch64",
+                       StringComparison.OrdinalIgnoreCase);
         }
         catch (OperationCanceledException)
         {
