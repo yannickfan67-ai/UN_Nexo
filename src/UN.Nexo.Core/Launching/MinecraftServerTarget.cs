@@ -4,7 +4,10 @@ using System.Net.Sockets;
 
 namespace UN.Nexo.Core.Launching;
 
-public sealed record MinecraftServerTarget(string Host, int Port)
+public sealed record MinecraftServerTarget(
+    string Host,
+    int Port,
+    bool HasExplicitPort = true)
 {
     public const int DefaultPort = 25565;
 
@@ -23,6 +26,7 @@ public sealed record MinecraftServerTarget(string Host, int Port)
 
         string host;
         var port = DefaultPort;
+        var hasExplicitPort = false;
 
         if (text.StartsWith("[", StringComparison.Ordinal))
         {
@@ -41,6 +45,7 @@ public sealed record MinecraftServerTarget(string Host, int Port)
                 if (!remainder.StartsWith(":", StringComparison.Ordinal)
                     || !TryParsePort(remainder[1..], out port))
                     throw new FormatException("Invalid server port.");
+                hasExplicitPort = true;
             }
         }
         else
@@ -52,6 +57,7 @@ public sealed record MinecraftServerTarget(string Host, int Port)
                 host = text[..separator];
                 if (!TryParsePort(text[(separator + 1)..], out port))
                     throw new FormatException("Invalid server port.");
+                hasExplicitPort = true;
             }
             else
             {
@@ -64,7 +70,10 @@ public sealed record MinecraftServerTarget(string Host, int Port)
         if (host.Length == 0 || host.Length > 253 || host.Any(char.IsWhiteSpace))
             throw new FormatException("Invalid server host.");
 
-        return new MinecraftServerTarget(host, port);
+        return new MinecraftServerTarget(
+            host,
+            port,
+            hasExplicitPort);
     }
 
     private static bool TryParsePort(string text, out int port)
