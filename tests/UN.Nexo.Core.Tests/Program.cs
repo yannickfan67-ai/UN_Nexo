@@ -31,6 +31,7 @@ internal static class Program
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
             ("Asset-index schema and hash validation", TestAssetIndexSchemaAndHashValidationAsync),
             ("Vanilla metadata path containment", VanillaPathContainmentRegression.RunAsync),
+            ("Vanilla required metadata contract", VanillaMetadataContractRegression.RunAsync),
             ("Atomic install-state publication", InstallStateAtomicRegression.RunAsync),
             ("Native extraction containment", NativeExtractionRegression.RunAsync),
             ("Runtime memory and JVM arguments", TestRuntimeLaunchOptionsAsync),
