@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Fabric.Tests;
@@ -23,7 +25,7 @@ internal static class InstanceModServiceRegression
             Assert(installed.FileName == "example-mod.jar", "Installed mod filename changed unexpectedly.");
             Assert(File.Exists(Path.Combine(paths.GetInstanceGameDirectory(primaryId), "mods", "example-mod.jar")), "Mod was not copied into the selected instance.");
             Assert(service.List(otherId).Count == 0, "Mods leaked into another instance.");
-            var disabled = service.SetEnabled(primaryId, installed.FileName, false);
+            var disabled = await service.SetEnabledAsync(primaryId, installed.FileName, false);
             Assert(!disabled.IsEnabled && disabled.FileName == "example-mod.jar.disabled", "Disabling should rename the JAR to .jar.disabled.");
             Assert(!service.List(primaryId).Single().IsEnabled, "Disabled state was not listed correctly.");
             await File.WriteAllBytesAsync(source, [9, 8, 7, 6]);
@@ -32,15 +34,128 @@ internal static class InstanceModServiceRegression
             Assert(service.List(primaryId).Count == 1, "Replacing a disabled mod must not leave duplicate entries.");
             Assert((await File.ReadAllBytesAsync(Path.Combine(paths.GetInstanceGameDirectory(primaryId), "mods", "example-mod.jar"))).SequenceEqual(new byte[] { 9, 8, 7, 6 }), "Replacement did not publish the new JAR content.");
             try { await service.InstallAsync(primaryId, source, false); throw new Exception("Duplicate install without replacement should fail."); } catch (IOException) { }
-            service.Remove(primaryId, replaced.FileName);
+            await service.RemoveAsync(primaryId, replaced.FileName);
             Assert(service.List(primaryId).Count == 0, "Removing a mod should remove it from the instance.");
             var textFile = Path.Combine(sourceRoot, "not-a-mod.txt");
             await File.WriteAllTextAsync(textFile, "not a jar");
             try { await service.InstallAsync(primaryId, textFile); throw new Exception("Non-JAR mod installation should fail."); } catch (InvalidDataException) { }
-            try { service.Remove(primaryId, "../escape.jar"); throw new Exception("Traversal mod filename should fail."); } catch (InvalidDataException) { }
+            try { await service.RemoveAsync(primaryId, "../escape.jar"); throw new Exception("Traversal mod filename should fail."); } catch (InvalidDataException) { }
+
+            await VerifyMutationsWaitForInstanceLeaseAsync(paths, service, source);
+            await VerifyCrossProcessLeaseBlocksInstallAsync(paths, service, source, root);
             await VerifyLinkedModsDirectoryIsRejectedAsync(paths, service, source, root, linkedId);
         }
         finally { try { Directory.Delete(root, true); } catch { } }
+    }
+
+    private static async Task VerifyMutationsWaitForInstanceLeaseAsync(
+        NexoPathService paths,
+        InstanceModService service,
+        string source)
+    {
+        var instanceId = Guid.NewGuid().ToString("N");
+        var installed = await service.InstallAsync(instanceId, source);
+        var coordinator = new InstanceOperationCoordinator(paths);
+
+        var lease = await coordinator.AcquireAsync(instanceId, "test-holder");
+        Task<InstalledMod>? disable = null;
+        try
+        {
+            disable = service.SetEnabledAsync(instanceId, installed.FileName, false);
+            await Task.Delay(150);
+            Assert(!disable.IsCompleted, "Disabling a mod must wait for the instance operation lease.");
+        }
+        finally
+        {
+            await lease.DisposeAsync();
+        }
+
+        var disabled = await disable.WaitAsync(TimeSpan.FromSeconds(5));
+
+        lease = await coordinator.AcquireAsync(instanceId, "test-holder");
+        Task? remove = null;
+        try
+        {
+            remove = service.RemoveAsync(instanceId, disabled.FileName);
+            await Task.Delay(150);
+            Assert(!remove.IsCompleted, "Removing a mod must wait for the instance operation lease.");
+        }
+        finally
+        {
+            await lease.DisposeAsync();
+        }
+
+        await remove.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    private static async Task VerifyCrossProcessLeaseBlocksInstallAsync(
+        NexoPathService paths,
+        InstanceModService service,
+        string source,
+        string root)
+    {
+        var instanceId = Guid.NewGuid().ToString("N");
+        var ready = Path.Combine(root, "cross-process-ready-" + instanceId);
+        var release = Path.Combine(root, "cross-process-release-" + instanceId);
+        using var helper = StartLeaseHelper(root, instanceId, ready, release);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        while (!File.Exists(ready))
+        {
+            if (helper.HasExited)
+            {
+                var stderr = await helper.StandardError.ReadToEndAsync();
+                throw new Exception("Cross-process lease helper exited early: " + stderr);
+            }
+            await Task.Delay(25, timeout.Token);
+        }
+
+        var install = service.InstallAsync(
+            instanceId,
+            source,
+            cancellationToken: timeout.Token);
+        await Task.Delay(200, timeout.Token);
+
+        Assert(!install.IsCompleted, "Mod installation must wait while another Nexo process holds the instance lease.");
+        Assert(!Directory.Exists(paths.GetInstanceGameDirectory(instanceId)),
+            "Blocked mod installation must not mutate the instance before acquiring the lease.");
+
+        await File.WriteAllTextAsync(release, "release", timeout.Token);
+        await install.WaitAsync(timeout.Token);
+        await helper.WaitForExitAsync(timeout.Token);
+        Assert(helper.ExitCode == 0, "Cross-process lease helper should exit cleanly.");
+    }
+
+    private static Process StartLeaseHelper(
+        string root,
+        string instanceId,
+        string ready,
+        string release)
+    {
+        var processPath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Could not determine the current test host.");
+        var entryAssembly = Assembly.GetEntryAssembly()?.Location
+            ?? throw new InvalidOperationException("Could not determine the Fabric test assembly.");
+
+        var start = new ProcessStartInfo(processPath)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+
+        if (Path.GetFileNameWithoutExtension(processPath)
+            .Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+            start.ArgumentList.Add(entryAssembly);
+
+        start.ArgumentList.Add("--hold-instance-lease");
+        start.ArgumentList.Add(root);
+        start.ArgumentList.Add(instanceId);
+        start.ArgumentList.Add(ready);
+        start.ArgumentList.Add(release);
+
+        return Process.Start(start)
+            ?? throw new InvalidOperationException("Could not start the cross-process lease helper.");
     }
 
     private static async Task VerifyLinkedModsDirectoryIsRejectedAsync(
