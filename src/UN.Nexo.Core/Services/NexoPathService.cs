@@ -53,21 +53,24 @@ public sealed class NexoPathService
 
     public string GetInstanceDirectory(string instanceId)
     {
-        if (string.IsNullOrWhiteSpace(instanceId))
-            throw new ArgumentException("Instance ID is required.", nameof(instanceId));
-        if (!Guid.TryParseExact(instanceId, "N", out var parsedId)
-            || !parsedId.ToString("N").Equals(instanceId, StringComparison.Ordinal))
-            throw new ArgumentException("Instance ID must be a canonical lowercase GUID-N value.", nameof(instanceId));
+        ValidateInstanceId(instanceId);
+
+        ValidateExistingManagedDirectory(GetDataRoot(), "Nexo data root");
+        ValidateExistingManagedDirectory(GetInstancesRoot(), "managed instances root");
 
         var instancesRoot = Path.GetFullPath(GetInstancesRoot());
         var candidate = Path.GetFullPath(Path.Combine(instancesRoot, instanceId));
         var rootWithSeparator = Path.EndsInDirectorySeparator(instancesRoot)
             ? instancesRoot
             : instancesRoot + Path.DirectorySeparatorChar;
-        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
 
         if (!candidate.StartsWith(rootWithSeparator, comparison))
-            throw new ArgumentException("Instance path must remain inside the managed instances directory.", nameof(instanceId));
+            throw new ArgumentException(
+                "Instance path must remain inside the managed instances directory.",
+                nameof(instanceId));
 
         return candidate;
     }
@@ -77,8 +80,128 @@ public sealed class NexoPathService
 
     public void EnsureDirectories()
     {
-        Directory.CreateDirectory(GetDataRoot());
-        Directory.CreateDirectory(GetInstancesRoot());
-        Directory.CreateDirectory(GetRuntimesRoot());
+        EnsureDataRootPhysical();
+        EnsureInstancesRootPhysical();
+        EnsureRuntimesRootPhysical();
+    }
+
+    public string EnsureDataRootPhysical()
+    {
+        var root = Path.GetFullPath(GetDataRoot());
+        EnsureOrCreatePhysicalDirectory(root, "Nexo data root");
+        return root;
+    }
+
+    public string EnsureInstancesRootPhysical()
+    {
+        var dataRoot = EnsureDataRootPhysical();
+        var instancesRoot = Path.GetFullPath(GetInstancesRoot());
+        EnsureDirectManagedChild(dataRoot, instancesRoot, "managed instances root");
+        EnsureOrCreatePhysicalDirectory(instancesRoot, "managed instances root");
+        EnsurePhysicalDirectory(dataRoot, "Nexo data root");
+        return instancesRoot;
+    }
+
+    public string EnsureRuntimesRootPhysical()
+    {
+        var dataRoot = EnsureDataRootPhysical();
+        var runtimesRoot = Path.GetFullPath(GetRuntimesRoot());
+        EnsureDirectManagedChild(dataRoot, runtimesRoot, "managed runtimes root");
+        EnsureOrCreatePhysicalDirectory(runtimesRoot, "managed runtimes root");
+        EnsurePhysicalDirectory(dataRoot, "Nexo data root");
+        return runtimesRoot;
+    }
+
+    public string EnsureInstanceDirectoryPhysical(string instanceId)
+    {
+        ValidateInstanceId(instanceId);
+        var instancesRoot = EnsureInstancesRootPhysical();
+        var instanceRoot = GetInstanceDirectory(instanceId);
+        if (!Directory.Exists(instanceRoot))
+            throw new DirectoryNotFoundException(
+                $"Managed instance directory is missing: {instanceRoot}");
+
+        EnsurePhysicalDirectory(instanceRoot, "managed instance directory");
+        EnsurePhysicalDirectory(instancesRoot, "managed instances root");
+        return instanceRoot;
+    }
+
+    private static void ValidateInstanceId(string instanceId)
+    {
+        if (string.IsNullOrWhiteSpace(instanceId))
+            throw new ArgumentException("Instance ID is required.", nameof(instanceId));
+        if (!Guid.TryParseExact(instanceId, "N", out var parsedId)
+            || !parsedId.ToString("N").Equals(instanceId, StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                "Instance ID must be a canonical lowercase GUID-N value.",
+                nameof(instanceId));
+        }
+    }
+
+    private static void EnsureOrCreatePhysicalDirectory(
+        string path,
+        string label)
+    {
+        if (Directory.Exists(path))
+        {
+            EnsurePhysicalDirectory(path, label);
+            return;
+        }
+
+        if (File.Exists(path))
+            throw new InvalidDataException($"{label} is occupied by a file.");
+
+        Directory.CreateDirectory(path);
+        EnsurePhysicalDirectory(path, label);
+    }
+
+    private static void ValidateExistingManagedDirectory(
+        string path,
+        string label)
+    {
+        if (Directory.Exists(path))
+            EnsurePhysicalDirectory(path, label);
+        else if (File.Exists(path))
+            throw new InvalidDataException($"{label} is occupied by a file.");
+    }
+
+    private static void EnsurePhysicalDirectory(
+        string path,
+        string label)
+    {
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.Directory) == 0)
+            throw new InvalidDataException($"{label} must be a directory.");
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            throw new InvalidDataException(
+                $"{label} must be a physical directory; symbolic links, junctions and other reparse points are not allowed.");
+        }
+    }
+
+    private static void EnsureDirectManagedChild(
+        string parent,
+        string child,
+        string label)
+    {
+        var parentFull = Path.GetFullPath(parent)
+            .TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+        var expectedParent = Path.GetDirectoryName(Path.GetFullPath(child))
+            ?.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (expectedParent is null
+            || !string.Equals(parentFull, expectedParent, comparison))
+        {
+            throw new InvalidDataException(
+                $"{label} must be a direct child of the Nexo data root.");
+        }
     }
 }
