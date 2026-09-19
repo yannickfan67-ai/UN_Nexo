@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
 
 namespace UN.Nexo.Fabric.Tests;
