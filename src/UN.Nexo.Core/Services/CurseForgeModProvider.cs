@@ -9,7 +9,7 @@ using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
 
-public sealed class CurseForgeModProvider : IModDependencyProvider
+public sealed class CurseForgeModProvider : IModDependencyProvider, IModRecommendationProvider
 {
     private const string OfficialApiBase = "https://api.curseforge.com/v1/";
     public const string ApiBaseEnvironmentVariableName =
@@ -97,6 +97,60 @@ public sealed class CurseForgeModProvider : IModDependencyProvider
         }
 
         return projects;
+    }
+
+    public async Task<IReadOnlyList<ModProviderRecommendation>> RecommendAsync(
+        string minecraftVersion,
+        string loader,
+        int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var gameVersion = RequireValue(
+            minecraftVersion,
+            nameof(minecraftVersion));
+        var loaderType = NormalizeLoader(loader);
+        if (limit is < 1 or > PageSize)
+            throw new ArgumentOutOfRangeException(
+                nameof(limit),
+                $"CurseForge recommendation limit must be between 1 and {PageSize}.");
+
+        var catalog = await EnsureMinecraftCatalogAsync(
+            cancellationToken);
+        var relative =
+            "mods/search?gameId="
+            + catalog.GameId.ToString(CultureInfo.InvariantCulture)
+            + "&classId="
+            + catalog.ModsClassId.ToString(CultureInfo.InvariantCulture)
+            + "&gameVersion="
+            + Uri.EscapeDataString(gameVersion)
+            + "&modLoaderType="
+            + loaderType.ToString(CultureInfo.InvariantCulture)
+            + "&sortField=2&sortOrder=desc"
+            + "&pageSize="
+            + limit.ToString(CultureInfo.InvariantCulture);
+
+        using var document = await SendApiJsonAsync(
+            HttpMethod.Get,
+            relative,
+            content: null,
+            cancellationToken);
+        if (!TryGetDataArray(document.RootElement, out var data))
+            throw new InvalidDataException(
+                "CurseForge recommendation response must contain a data array.");
+
+        var result = new List<ModProviderRecommendation>();
+        foreach (var item in data.EnumerateArray())
+        {
+            var project = ParseProject(item);
+            if (project is not null)
+            {
+                result.Add(new ModProviderRecommendation(
+                    project,
+                    $"Popularity · Minecraft {gameVersion} · {loader.Trim().ToLowerInvariant()}"));
+            }
+        }
+
+        return result;
     }
 
     public async Task<ModProviderProject?> GetProjectAsync(

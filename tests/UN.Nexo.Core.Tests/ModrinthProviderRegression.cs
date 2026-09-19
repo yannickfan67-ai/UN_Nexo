@@ -33,6 +33,35 @@ internal static class ModrinthProviderRegression
             Assert(handler.LastSearchQuery.Contains("fabric", StringComparison.OrdinalIgnoreCase),
                 "Loader facet was not sent to Modrinth.");
 
+            var recommendations = await provider.RecommendAsync(
+                "1.21.4",
+                "fabric",
+                20);
+            Assert(recommendations.Count == 1,
+                "Expected one compatible Modrinth recommendation.");
+            Assert(recommendations[0].Project.ProjectId == "AABBCCDD",
+                "Modrinth recommendation should preserve the project identity.");
+            Assert(recommendations[0].Signal.Contains(
+                    "Top downloads",
+                    StringComparison.OrdinalIgnoreCase),
+                "Modrinth recommendation signal should explain its ranking.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "index=downloads",
+                    StringComparison.OrdinalIgnoreCase),
+                "Modrinth recommendations must request downloads ranking.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "1.21.4",
+                    StringComparison.Ordinal),
+                "Modrinth recommendations must retain the Minecraft version facet.");
+            Assert(handler.LastSearchQuery.Contains(
+                    "fabric",
+                    StringComparison.OrdinalIgnoreCase),
+                "Modrinth recommendations must retain the loader facet.");
+            Assert(!handler.LastSearchQuery.Contains(
+                    "query=",
+                    StringComparison.OrdinalIgnoreCase),
+                "Modrinth recommendations should browse ranked compatible projects rather than inventing a search query.");
+
             var latest = await provider.GetLatestCompatibleVersionAsync("AABBCCDD", "1.21.4", "fabric")
                          ?? throw new Exception("Expected a compatible Modrinth version.");
             Assert(latest.VersionId == "NEWVER01", "Latest compatible Modrinth version was not selected.");

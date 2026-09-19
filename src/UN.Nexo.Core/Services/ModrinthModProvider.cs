@@ -7,7 +7,7 @@ using UN.Nexo.Core.Models;
 
 namespace UN.Nexo.Core.Services;
 
-public sealed class ModrinthModProvider : IModDependencyProvider
+public sealed class ModrinthModProvider : IModDependencyProvider, IModRecommendationProvider
 {
     private const string ApiBase = "https://api.modrinth.com/v2/";
     private const int MaxMetadataBytes = 4 * 1024 * 1024;
@@ -57,43 +57,41 @@ public sealed class ModrinthModProvider : IModDependencyProvider
 
         using var request = CreateRequest(HttpMethod.Get, relative);
         using var document = await SendJsonAsync(request, cancellationToken);
-        var root = document.RootElement;
-        if (root.ValueKind != JsonValueKind.Object
-            || !root.TryGetProperty("hits", out var hits)
-            || hits.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("Modrinth search response must contain a hits array.");
+        return ParseSearchProjects(document.RootElement);
+    }
 
-        var projects = new List<ModProviderProject>();
-        foreach (var item in hits.EnumerateArray())
+    public async Task<IReadOnlyList<ModProviderRecommendation>> RecommendAsync(
+        string minecraftVersion,
+        string loader,
+        int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var version = RequireValue(minecraftVersion, nameof(minecraftVersion));
+        var normalizedLoader = NormalizeLoader(loader);
+        if (limit is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(
+                nameof(limit),
+                "Modrinth recommendation limit must be between 1 and 100.");
+
+        var facets = JsonSerializer.Serialize(new[]
         {
-            if (item.ValueKind != JsonValueKind.Object
-                || !TryGetRequiredString(item, "project_id", out var projectId)
-                || !IsOpaqueId(projectId)
-                || !TryGetRequiredString(item, "slug", out var slug)
-                || !TryGetRequiredString(item, "title", out var title))
-                continue;
+            new[] { "project_type:mod" },
+            new[] { $"versions:{version}" },
+            new[] { $"categories:{normalizedLoader}" }
+        });
+        var relative =
+            "search?facets=" + Uri.EscapeDataString(facets)
+            + "&index=downloads"
+            + "&limit=" + limit;
 
-            var description = TryGetString(item, "description") ?? string.Empty;
-            var author = TryGetString(item, "author") ?? "Unknown author";
-            var iconUrl = TryGetString(item, "icon_url");
-            var downloads = item.TryGetProperty("downloads", out var downloadsElement)
-                            && downloadsElement.TryGetInt64(out var parsedDownloads)
-                ? Math.Max(0, parsedDownloads)
-                : 0;
-
-            projects.Add(new ModProviderProject(
-                ProviderId,
-                projectId,
-                slug,
-                title,
-                description,
-                author,
-                iconUrl,
-                downloads,
-                "https://modrinth.com/mod/" + Uri.EscapeDataString(slug)));
-        }
-
-        return projects;
+        using var request = CreateRequest(HttpMethod.Get, relative);
+        using var document = await SendJsonAsync(request, cancellationToken);
+        var projects = ParseSearchProjects(document.RootElement);
+        return projects
+            .Select(project => new ModProviderRecommendation(
+                project,
+                $"Top downloads · Minecraft {version} · {normalizedLoader}"))
+            .ToArray();
     }
 
     public async Task<ModProviderProject?> GetProjectAsync(
@@ -362,6 +360,52 @@ public sealed class ModrinthModProvider : IModDependencyProvider
             existing?.IsEnabled ?? true,
             cancellationToken);
         return new ModProviderInstallResult(project, version, installed);
+    }
+
+    private IReadOnlyList<ModProviderProject> ParseSearchProjects(
+        JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("hits", out var hits)
+            || hits.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException(
+                "Modrinth search response must contain a hits array.");
+
+        var projects = new List<ModProviderProject>();
+        foreach (var item in hits.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object
+                || !TryGetRequiredString(item, "project_id", out var projectId)
+                || !IsOpaqueId(projectId)
+                || !TryGetRequiredString(item, "slug", out var slug)
+                || !TryGetRequiredString(item, "title", out var title))
+                continue;
+
+            var description =
+                TryGetString(item, "description") ?? string.Empty;
+            var author =
+                TryGetString(item, "author") ?? "Unknown author";
+            var iconUrl = TryGetString(item, "icon_url");
+            var downloads =
+                item.TryGetProperty("downloads", out var downloadsElement)
+                && downloadsElement.TryGetInt64(out var parsedDownloads)
+                    ? Math.Max(0, parsedDownloads)
+                    : 0;
+
+            projects.Add(new ModProviderProject(
+                ProviderId,
+                projectId,
+                slug,
+                title,
+                description,
+                author,
+                iconUrl,
+                downloads,
+                "https://modrinth.com/mod/"
+                + Uri.EscapeDataString(slug)));
+        }
+
+        return projects;
     }
 
     private static bool PathEquals(string left, string right)

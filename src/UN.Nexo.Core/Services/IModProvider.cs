@@ -33,3 +33,12 @@ public interface IModProvider
         InstanceModService modService,
         CancellationToken cancellationToken = default);
 }
+
+public interface IModRecommendationProvider : IModProvider
+{
+    Task<IReadOnlyList<ModProviderRecommendation>> RecommendAsync(
+        string minecraftVersion,
+        string loader,
+        int limit = 20,
+        CancellationToken cancellationToken = default);
+}

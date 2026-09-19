@@ -292,6 +292,96 @@ public sealed partial class ModManagerWindow : Window
         await SearchProviderAsync();
     }
 
+    private async void OnModrinthRecommendClicked(
+        object? sender,
+        Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await RecommendProviderAsync();
+    }
+
+    private async Task RecommendProviderAsync()
+    {
+        if (_busy || SelectedInstance is not { } instance)
+            return;
+
+        var provider = ActiveProvider;
+        if (provider is not IModRecommendationProvider recommendations)
+        {
+            OperationStatus.Text =
+                $"{provider.DisplayName} does not expose recommendations.";
+            return;
+        }
+
+        if (!SupportsProvider(instance.Loader))
+        {
+            OperationStatus.Text =
+                $"{provider.DisplayName} recommendations are not supported for the '{instance.Loader}' loader.";
+            UpdateModrinthAvailability();
+            return;
+        }
+
+        if (!ActiveProviderConfigured)
+        {
+            OperationStatus.Text =
+                $"CurseForge is not configured. Set {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} for direct API access, or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} for a server-side proxy.";
+            UpdateModrinthAvailability();
+            return;
+        }
+
+        try
+        {
+            _busy = true;
+            UpdateModrinthAvailability();
+            ModrinthRecommendButton.Content = "Loading…";
+            SelectedModrinthDetail.Text =
+                $"Loading compatible {provider.DisplayName} recommendations for {instance.MinecraftVersionId} · {instance.Loader}…";
+
+            var installedMods = _mods.List(instance.Id);
+            var suggested = await new ModRecommendationService(
+                    recommendations)
+                .GetAsync(
+                    _mods.GetModsDirectory(instance.Id),
+                    installedMods,
+                    instance.MinecraftVersionId,
+                    instance.Loader,
+                    limit: 20);
+
+            var items = suggested
+                .Select(recommendation =>
+                    new ModrinthBrowserItem(
+                        recommendation.Project,
+                        installed: null,
+                        recommendation.Signal))
+                .ToArray();
+
+            ModrinthResultsList.ItemsSource = items;
+            ModrinthResultCount.Text =
+                $"{items.Length} recommendation{(items.Length == 1 ? string.Empty : "s")}";
+            SelectedModrinthDetail.Text = items.Length == 0
+                ? $"No new compatible {provider.DisplayName} recommendations were found after excluding installed projects."
+                : "Recommendations are suggestions only. Select one to inspect its exact compatible version and dependencies before choosing Install.";
+            OperationStatus.Text =
+                $"Loaded {items.Length} {provider.DisplayName} recommendation{(items.Length == 1 ? string.Empty : "s")} · installed projects excluded · nothing installed automatically.";
+        }
+        catch (Exception ex)
+        {
+            ModrinthResultsList.ItemsSource =
+                Array.Empty<ModrinthBrowserItem>();
+            ModrinthResultCount.Text = "0 recommendations";
+            SelectedModrinthDetail.Text =
+                $"{provider.DisplayName} recommendations failed.";
+            OperationStatus.Text =
+                $"{provider.DisplayName} recommendations failed: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            ModrinthRecommendButton.Content = "Recommend";
+            RefreshMods();
+            UpdateModrinthSelectionButtons();
+        }
+    }
+
     private async Task SearchProviderAsync()
     {
         if (_busy || SelectedInstance is not { } instance)
@@ -526,7 +616,10 @@ public sealed partial class ModManagerWindow : Window
 
             ReplaceBrowserItem(
                 item,
-                new ModrinthBrowserItem(item.Project, rootMatch));
+                new ModrinthBrowserItem(
+                    item.Project,
+                    rootMatch,
+                    item.RecommendationSignal));
             OperationStatus.Text = result.Installed.Count == 0
                 ? $"'{item.Project.Title}' and all required dependencies are already current."
                 : $"Published {result.Installed.Count} mod file{(result.Installed.Count == 1 ? string.Empty : "s")} atomically into '{instance.Name}'.";
@@ -596,7 +689,7 @@ public sealed partial class ModManagerWindow : Window
             ? $"Choose an instance before searching {provider.DisplayName}."
             : !ActiveProviderConfigured
                 ? $"CurseForge needs {EnvironmentCurseForgeApiKeyProvider.EnvironmentVariableName} for direct API access, or {CurseForgeModProvider.ApiBaseEnvironmentVariableName} for a server-side proxy. Nexo does not embed or persist the key."
-                : $"Search {provider.DisplayName} to find mods compatible with this instance.";
+                : $"Search {provider.DisplayName}, or use Recommend for compatible popular projects. Recommendations never install automatically.";
 
         OpenProjectButton.IsEnabled = false;
         ModrinthInstallButton.IsEnabled = false;
@@ -615,6 +708,11 @@ public sealed partial class ModManagerWindow : Window
 
         ModrinthSearchButton.IsEnabled =
             !_busy && supported && configured;
+        ModrinthRecommendButton.IsEnabled =
+            !_busy
+            && supported
+            && configured
+            && provider is IModRecommendationProvider;
 
         ProviderPolicyLabel.Text = provider is CurseForgeModProvider curseForge
             ? curseForge.UsesServerSideCredentialProxy
