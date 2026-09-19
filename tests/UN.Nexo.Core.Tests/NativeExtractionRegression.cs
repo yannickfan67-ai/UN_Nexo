@@ -9,6 +9,7 @@ internal static class NativeExtractionRegression
     internal static Task RunAsync()
     {
         TestNormalNestedEntry();
+        TestSecondExtractionRemovesStaleFiles();
         TestTraversalLeavesNoPartialTree();
         TestPreexistingLinkedComponent();
         return Task.CompletedTask;
@@ -31,6 +32,60 @@ internal static class NativeExtractionRegression
             Assert(
                 File.ReadAllText(Path.Combine(target, "nested", "native.bin")) == "payload",
                 "Safe nested native entry should extract inside the natives root.");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static void TestSecondExtractionRemovesStaleFiles()
+    {
+        var root = NewRoot("stale");
+        try
+        {
+            var first = Path.Combine(root, "first.zip");
+            var second = Path.Combine(root, "second.zip");
+            CreateZip(
+                first,
+                ("keep/native.bin", "first"),
+                ("old/stale.bin", "stale"));
+            CreateZip(
+                second,
+                ("keep/native.bin", "second"));
+
+            var target = Path.Combine(
+                root,
+                "natives",
+                "test");
+            MinecraftVanillaInstallService.ExtractNativeArchive(
+                first,
+                target,
+                ["META-INF/"]);
+            Assert(
+                File.Exists(Path.Combine(
+                    target,
+                    "old",
+                    "stale.bin")),
+                "First extraction should create the old native fixture.");
+
+            MinecraftVanillaInstallService.ExtractNativeArchive(
+                second,
+                target,
+                ["META-INF/"]);
+
+            Assert(
+                !File.Exists(Path.Combine(
+                    target,
+                    "old",
+                    "stale.bin")),
+                "Clean native publication must remove files no longer present in the verified archive set.");
+            Assert(
+                File.ReadAllText(Path.Combine(
+                    target,
+                    "keep",
+                    "native.bin")) == "second",
+                "Second clean publication should replace retained native content.");
         }
         finally
         {
