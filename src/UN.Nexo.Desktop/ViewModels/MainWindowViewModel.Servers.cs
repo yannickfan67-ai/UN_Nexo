@@ -38,6 +38,14 @@ public partial class MainWindowViewModel
         try
         {
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
+
+            GameStatus = $"Waiting for exclusive access to {instance.Name}…";
+            LauncherStatus = GameStatus;
+            await using var operationLease = await _operations.AcquireAsync(
+                instance.Id,
+                "play-server",
+                cancellation.Token);
+
             var plan = await _launchBuilder.BuildAsync(
                 instance, account, JavaInstallations.ToArray(), cancellation.Token);
             plan = await new MinecraftServerLaunchDecorator(_paths).ApplyAsync(
