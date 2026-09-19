@@ -37,6 +37,7 @@ internal static class Program
             ("Managed Java atomic publication", ManagedRuntimePublicationRegression.RunAsync),
             ("Managed Java archive containment", ManagedRuntimeArchiveRegression.RunAsync),
             ("Modrinth provider integration", ModrinthProviderRegression.RunAsync),
+            ("CurseForge provider integration", CurseForgeProviderRegression.RunAsync),
             ("Mod dependency planning and atomic publication", ModDependencyRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
             ("Restricted-region offline fallback policy", RestrictedRegionRegression.RunAsync),

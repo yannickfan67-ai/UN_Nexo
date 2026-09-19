@@ -132,6 +132,30 @@ dotnet run --project tests/UN.Nexo.Repair.Tests/UN.Nexo.Repair.Tests.csproj -c R
 dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 ```
 
+## CurseForge provider
+
+The mod browser supports Modrinth without credentials and CurseForge through one of two runtime configurations. No CurseForge API key is compiled into the public repository or release artifacts.
+
+Direct API access:
+
+```bash
+export UN_NEXO_CURSEFORGE_API_KEY='your-key'
+```
+
+On PowerShell:
+
+```powershell
+$env:UN_NEXO_CURSEFORGE_API_KEY = 'your-key'
+```
+
+For a server-side proxy such as a Cloudflare Worker, keep the CurseForge key in the server-side secret store and point Nexo at an HTTPS CurseForge-compatible v1 base URL:
+
+```bash
+export UN_NEXO_CURSEFORGE_API_BASE='https://your-worker.example/curseforge/v1/'
+```
+
+When a custom API base is configured, Nexo does **not** send `x-api-key` to that origin; the proxy is expected to add the credential server-side. Mod downloads still have to resolve to the trusted HTTPS `forgecdn.net` CDN and are SHA-1/size verified before atomic publication. See [`docs/curseforge.md`](docs/curseforge.md).
+
 ## Current limitations
 
 - Live Microsoft/Minecraft sign-in still depends on Minecraft Services authorizing the registered UN_Nexo Client ID and completing real-account acceptance testing
@@ -139,7 +163,7 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 - Friend-to-friend room-code/P2P networking is not included yet
 - Fabric preparation/repair is included; Forge and NeoForge installers are not included yet
 - HTTP Range resume for partially downloaded files is not implemented yet
-- Mod management supports local JARs and Modrinth-compatible mods; resource-pack/shader management is not included yet
+- Mod management supports local JARs plus Modrinth and CurseForge mods; resource-pack/shader management is not included yet
 - Repair supports Vanilla and Fabric; other loader-specific repair is not implemented yet
 - Linux CI uses Ubuntu/Xvfb; Linux Mint/Cinnamon still needs real-device acceptance testing
 
@@ -150,7 +174,7 @@ dotnet run --project src/UN.Nexo.Desktop/UN.Nexo.Desktop.csproj
 3. Add per-instance runtime overrides and richer managed-Java controls
 4. Add instance rename/delete and richer backup/restore management
 5. Add NeoForge and Forge support after the current Fabric path
-6. Extend Modrinth management to resource packs/shaders and richer dependency handling
+6. Extend provider browsing to resource packs/shaders and compatible-mod recommendations
 7. Add Terracotta/EasyTier/Scaffolding-compatible friend room networking after protocol/license review
 8. Add app/package icons, signing and updater
 
