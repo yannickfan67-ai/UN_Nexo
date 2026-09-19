@@ -477,6 +477,84 @@ public sealed class MinecraftVanillaInstallService
         => new(
             $"Vanilla version metadata property '{propertyName}' must be {expected}.");
 
+    private async Task DownloadLoggingConfigurationAsync(
+        JsonElement root,
+        string assetsRoot,
+        IProgress<InstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (!root.TryGetProperty("logging", out var logging))
+            return;
+        if (logging.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("logging", "an object");
+        if (!logging.TryGetProperty("client", out var clientLogging))
+            return;
+        if (clientLogging.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata("logging.client", "an object");
+        if (!clientLogging.TryGetProperty("file", out var file))
+            return;
+        if (file.ValueKind != JsonValueKind.Object)
+            throw InvalidMetadata(
+                "logging.client.file",
+                "an object");
+
+        var id = MetadataPath.RequireSingleComponent(
+            RequireString(
+                file,
+                "id",
+                "logging.client.file.id"),
+            "logging.client.file.id");
+        var url = RequireString(
+            file,
+            "url",
+            "logging.client.file.url");
+        var sha1 = OptionalSha1(
+            file,
+            "sha1",
+            "logging.client.file.sha1");
+        var size = OptionalSize(
+            file,
+            "size",
+            "logging.client.file.size");
+        RequireBinaryIntegrity(
+            sha1,
+            size,
+            "logging.client.file");
+
+        var target = MetadataPath.ResolveSingleComponent(
+            Path.Combine(assetsRoot, "log_configs"),
+            id,
+            string.Empty,
+            "logging.client.file.id");
+
+        Report(
+            progress,
+            new InstallProgress(
+                "Logging configuration",
+                0,
+                1,
+                id));
+        await DownloadFileAsync(
+            url,
+            target,
+            sha1,
+            size,
+            requireIntegrity: true,
+            "Logging configuration",
+            0,
+            1,
+            progress,
+            cancellationToken);
+        Report(
+            progress,
+            new InstallProgress(
+                "Logging configuration",
+                1,
+                1,
+                id,
+                Detail: "Logging configuration ready"));
+    }
+
     private async Task DownloadAssetsAsync(
         string indexPath,
         string assetsRoot,
@@ -527,7 +605,17 @@ public sealed class MinecraftVanillaInstallService
                 var target = ResolveAssetObjectPath(objectsRoot, hash);
                 var url = $"https://resources.download.minecraft.net/{prefix}/{hash}";
                 var before = Volatile.Read(ref completed);
-                await DownloadFileAsync(url, target, hash, "Assets", before, assetHashes.Length, progress, token);
+                await DownloadFileAsync(
+                    url,
+                    target,
+                    hash,
+                    expectedSize: null,
+                    requireIntegrity: true,
+                    "Assets",
+                    before,
+                    assetHashes.Length,
+                    progress,
+                    token);
                 var value = Interlocked.Increment(ref completed);
                 Report(progress, new InstallProgress("Assets", value, assetHashes.Length, hash));
             });
@@ -1057,6 +1145,8 @@ public sealed class MinecraftVanillaInstallService
         string url,
         string path,
         string? expectedSha1,
+        long? expectedSize,
+        bool requireIntegrity,
         string stage,
         int completed,
         int total,
@@ -1064,131 +1154,314 @@ public sealed class MinecraftVanillaInstallService
         CancellationToken cancellationToken,
         long? maxBytes = null)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        expectedSha1 = NormalizeSha1(
+            expectedSha1,
+            stage + " SHA-1");
+        if (expectedSize is <= 0)
+            throw new InvalidDataException(
+                $"{stage} expected size must be positive.");
+        if (requireIntegrity)
+            RequireBinaryIntegrity(
+                expectedSha1,
+                expectedSize,
+                stage);
+
+        Directory.CreateDirectory(
+            Path.GetDirectoryName(path)!);
         var item = Path.GetFileName(path);
 
         if (File.Exists(path)
-            && (maxBytes is null || new FileInfo(path).Length <= maxBytes.Value)
-            && await HashMatchesAsync(path, expectedSha1, cancellationToken))
+            && (maxBytes is null
+                || new FileInfo(path).Length <= maxBytes.Value))
         {
-            Report(progress, new InstallProgress(stage, completed, total, item, "Cache", Detail: "Verified existing file"));
-            return;
+            var cached = await VerifyFileAsync(
+                path,
+                expectedSha1,
+                expectedSize,
+                cancellationToken);
+            if (cached is not null)
+            {
+                Report(
+                    progress,
+                    new InstallProgress(
+                        stage,
+                        completed,
+                        total,
+                        item,
+                        "Cache",
+                        Detail: cached));
+                return;
+            }
         }
 
-        var temporaryPath = path + ".part";
+        var temporaryPath =
+            path + "." + Guid.NewGuid().ToString("N") + ".part";
         Exception? lastException = null;
         var candidates = _downloadSources.GetCandidates(url);
 
-        for (var candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
+        for (var candidateIndex = 0;
+             candidateIndex < candidates.Count;
+             candidateIndex++)
         {
             var candidate = candidates[candidateIndex];
             var source = SourceLabel(candidate);
             var fallback = candidateIndex > 0;
 
-            if (File.Exists(temporaryPath))
-                File.Delete(temporaryPath);
+            TryDeleteFile(temporaryPath);
 
-            Report(progress, new InstallProgress(
-                stage,
-                completed,
-                total,
-                item,
-                source,
-                IsFallback: fallback,
-                Detail: fallback ? "Retrying with fallback source" : "Connecting…"));
-
-            try
-            {
-                using var response = await TrustedHttpDownload.SendGetAsync(
-                    _httpClient,
-                    candidate,
-                    stage,
-                    cancellationToken);
-                if (!response.IsSuccessStatusCode)
-                {
-                    lastException = new HttpRequestException($"HTTP {(int)response.StatusCode} from {new Uri(candidate).Host}.");
-                    Report(progress, new InstallProgress(stage, completed, total, item, source, IsFallback: fallback, Detail: lastException.Message));
-                    continue;
-                }
-
-                var contentLength = response.Content.Headers.ContentLength;
-                if (maxBytes is not null && contentLength is > 0 && contentLength.Value > maxBytes.Value)
-                    throw new InvalidDataException(
-                        $"{stage} response exceeds the {maxBytes.Value}-byte limit.");
-
-                await using (var input = await response.Content.ReadAsStreamAsync(cancellationToken))
-                await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true))
-                {
-                    await CopyWithIdleTimeoutAsync(
-                        input,
-                        output,
-                        candidate,
-                        (bytes, bytesPerSecond) => Report(progress, new InstallProgress(
-                            stage,
-                            completed,
-                            total,
-                            item,
-                            source,
-                            bytes,
-                            contentLength,
-                            bytesPerSecond,
-                            fallback,
-                            fallback ? "Downloading from fallback source" : "Downloading")),
-                        cancellationToken,
-                        maxBytes);
-                }
-
-                if (!await HashMatchesAsync(temporaryPath, expectedSha1, cancellationToken))
-                {
-                    File.Delete(temporaryPath);
-                    lastException = new InvalidDataException($"SHA-1 verification failed from {new Uri(candidate).Host}.");
-                    Report(progress, new InstallProgress(stage, completed, total, item, source, IsFallback: fallback, Detail: lastException.Message));
-                    continue;
-                }
-
-                File.Move(temporaryPath, path, overwrite: true);
-                Report(progress, new InstallProgress(
-                    stage,
-                    completed,
-                    total,
-                    item,
-                    source,
-                    contentLength ?? new FileInfo(path).Length,
-                    contentLength,
-                    0,
-                    fallback,
-                    "Verified"));
-                return;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                if (File.Exists(temporaryPath))
-                    File.Delete(temporaryPath);
-                throw;
-            }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or TimeoutException or InvalidDataException)
-            {
-                lastException = ex;
-                Report(progress, new InstallProgress(
+            Report(
+                progress,
+                new InstallProgress(
                     stage,
                     completed,
                     total,
                     item,
                     source,
                     IsFallback: fallback,
-                    Detail: candidateIndex + 1 < candidates.Count
-                        ? $"{ex.Message} Switching source…"
-                        : ex.Message));
+                    Detail: fallback
+                        ? "Retrying with fallback source"
+                        : "Connecting…"));
+
+            try
+            {
+                using var response =
+                    await TrustedHttpDownload.SendGetAsync(
+                        _httpClient,
+                        candidate,
+                        stage,
+                        cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastException = new HttpRequestException(
+                        $"HTTP {(int)response.StatusCode} from {new Uri(candidate).Host}.");
+                    Report(
+                        progress,
+                        new InstallProgress(
+                            stage,
+                            completed,
+                            total,
+                            item,
+                            source,
+                            IsFallback: fallback,
+                            Detail: lastException.Message));
+                    continue;
+                }
+
+                var contentLength =
+                    response.Content.Headers.ContentLength;
+                if (contentLength is < 0)
+                    throw new InvalidDataException(
+                        $"{stage} response declared an invalid content length.");
+                if (maxBytes is not null
+                    && contentLength is > 0
+                    && contentLength.Value > maxBytes.Value)
+                    throw new InvalidDataException(
+                        $"{stage} response exceeds the {maxBytes.Value}-byte limit.");
+                if (expectedSize.HasValue
+                    && contentLength.HasValue
+                    && contentLength.Value != expectedSize.Value)
+                    throw new InvalidDataException(
+                        $"{stage} response length {contentLength.Value} does not match expected size {expectedSize.Value}.");
+
+                long downloaded;
+                await using (var input =
+                             await response.Content.ReadAsStreamAsync(
+                                 cancellationToken))
+                await using (var output = new FileStream(
+                                 temporaryPath,
+                                 FileMode.CreateNew,
+                                 FileAccess.Write,
+                                 FileShare.None,
+                                 128 * 1024,
+                                 FileOptions.Asynchronous
+                                 | FileOptions.SequentialScan))
+                {
+                    downloaded = await CopyWithIdleTimeoutAsync(
+                        input,
+                        output,
+                        candidate,
+                        (bytes, bytesPerSecond) =>
+                            Report(
+                                progress,
+                                new InstallProgress(
+                                    stage,
+                                    completed,
+                                    total,
+                                    item,
+                                    source,
+                                    bytes,
+                                    contentLength,
+                                    bytesPerSecond,
+                                    fallback,
+                                    fallback
+                                        ? "Downloading from fallback source"
+                                        : "Downloading")),
+                        cancellationToken,
+                        maxBytes);
+                }
+
+                if (downloaded <= 0)
+                    throw new InvalidDataException(
+                        $"{stage} response body was empty.");
+                if (contentLength.HasValue
+                    && downloaded != contentLength.Value)
+                    throw new InvalidDataException(
+                        $"{stage} response ended after {downloaded} bytes; expected {contentLength.Value}.");
+                if (expectedSize.HasValue
+                    && downloaded != expectedSize.Value)
+                    throw new InvalidDataException(
+                        $"{stage} downloaded {downloaded} bytes; expected {expectedSize.Value}.");
+
+                var verification = await VerifyFileAsync(
+                    temporaryPath,
+                    expectedSha1,
+                    expectedSize,
+                    cancellationToken);
+                if (expectedSha1 is not null
+                    && verification is null)
+                    throw new InvalidDataException(
+                        $"SHA-1 verification failed from {new Uri(candidate).Host}.");
+                if (expectedSize.HasValue
+                    && verification is null)
+                    throw new InvalidDataException(
+                        $"Size verification failed from {new Uri(candidate).Host}.");
+
+                File.Move(
+                    temporaryPath,
+                    path,
+                    overwrite: true);
+                var detail = expectedSha1 is not null
+                    ? "SHA-1 verified"
+                    : expectedSize.HasValue
+                        ? "Size-validated (no digest supplied)"
+                        : "Downloaded; metadata validation pending";
+                Report(
+                    progress,
+                    new InstallProgress(
+                        stage,
+                        completed,
+                        total,
+                        item,
+                        source,
+                        downloaded,
+                        contentLength,
+                        0,
+                        fallback,
+                        detail));
+                return;
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested)
+            {
+                TryDeleteFile(temporaryPath);
+                throw;
+            }
+            catch (Exception ex) when (
+                ex is HttpRequestException
+                or IOException
+                or TaskCanceledException
+                or TimeoutException
+                or InvalidDataException)
+            {
+                TryDeleteFile(temporaryPath);
+                lastException = ex;
+                Report(
+                    progress,
+                    new InstallProgress(
+                        stage,
+                        completed,
+                        total,
+                        item,
+                        source,
+                        IsFallback: fallback,
+                        Detail: candidateIndex + 1
+                                < candidates.Count
+                            ? $"{ex.Message} Switching source…"
+                            : ex.Message));
             }
         }
 
-        if (File.Exists(temporaryPath))
-            File.Delete(temporaryPath);
-
-        throw lastException ?? new HttpRequestException($"No download source was available for {Path.GetFileName(path)}.");
+        TryDeleteFile(temporaryPath);
+        throw lastException
+              ?? new HttpRequestException(
+                  $"No download source was available for {Path.GetFileName(path)}.");
     }
 
-    private async Task CopyWithIdleTimeoutAsync(
+    private async Task<string> ResolveSha1SidecarAsync(
+        string url,
+        CancellationToken cancellationToken)
+    {
+        Exception? lastException = null;
+        var candidates = _downloadSources.GetCandidates(url);
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                using var response =
+                    await TrustedHttpDownload.SendGetAsync(
+                        _httpClient,
+                        candidate,
+                        "Maven checksum",
+                        cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastException = new HttpRequestException(
+                        $"HTTP {(int)response.StatusCode} from {new Uri(candidate).Host}.");
+                    continue;
+                }
+
+                if (response.Content.Headers.ContentLength
+                    is > MaxChecksumBytes)
+                    throw new InvalidDataException(
+                        "Maven SHA-1 sidecar exceeds the 1024-byte limit.");
+
+                await using var input =
+                    await response.Content.ReadAsStreamAsync(
+                        cancellationToken);
+                await using var output = new MemoryStream();
+                _ = await CopyWithIdleTimeoutAsync(
+                    input,
+                    output,
+                    candidate,
+                    static (_, _) => { },
+                    cancellationToken,
+                    MaxChecksumBytes);
+
+                var text = Encoding.ASCII
+                    .GetString(output.ToArray())
+                    .Trim();
+                var token = text.Split(
+                        [' ', '\t', '\r', '\n'],
+                        StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault();
+                if (!IsSha1(token))
+                    throw new InvalidDataException(
+                        "Maven SHA-1 sidecar did not contain a valid 40-character digest.");
+
+                return token!.ToLowerInvariant();
+            }
+            catch (OperationCanceledException) when (
+                cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (
+                ex is HttpRequestException
+                or IOException
+                or TaskCanceledException
+                or TimeoutException
+                or InvalidDataException)
+            {
+                lastException = ex;
+            }
+        }
+
+        throw lastException
+              ?? new InvalidDataException(
+                  "No trusted Maven SHA-1 sidecar was available.");
+    }
+
+    private async Task<long> CopyWithIdleTimeoutAsync(
         Stream input,
         Stream output,
         string candidate,
@@ -1203,15 +1476,20 @@ public sealed class MinecraftVanillaInstallService
 
         while (true)
         {
-            using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var idle =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
             idle.CancelAfter(_transferIdleTimeout);
 
             int read;
             try
             {
-                read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), idle.Token);
+                read = await input.ReadAsync(
+                    buffer.AsMemory(0, buffer.Length),
+                    idle.Token);
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested)
             {
                 throw new TimeoutException(
                     $"Download from {new Uri(candidate).Host} made no progress for {_transferIdleTimeout.TotalSeconds:0.#} seconds.");
@@ -1219,20 +1497,34 @@ public sealed class MinecraftVanillaInstallService
 
             if (read == 0)
             {
-                progress(downloaded, downloaded / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001));
-                return;
+                progress(
+                    downloaded,
+                    downloaded
+                    / Math.Max(
+                        stopwatch.Elapsed.TotalSeconds,
+                        0.001));
+                return downloaded;
             }
 
-            if (maxBytes is not null && downloaded + read > maxBytes.Value)
+            if (maxBytes is not null
+                && downloaded + read > maxBytes.Value)
                 throw new InvalidDataException(
                     $"Download from {new Uri(candidate).Host} exceeded the {maxBytes.Value}-byte limit.");
 
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            await output.WriteAsync(
+                buffer.AsMemory(0, read),
+                cancellationToken);
             downloaded += read;
 
-            if (stopwatch.Elapsed - lastReport >= TimeSpan.FromMilliseconds(200))
+            if (stopwatch.Elapsed - lastReport
+                >= TimeSpan.FromMilliseconds(200))
             {
-                progress(downloaded, downloaded / Math.Max(stopwatch.Elapsed.TotalSeconds, 0.001));
+                progress(
+                    downloaded,
+                    downloaded
+                    / Math.Max(
+                        stopwatch.Elapsed.TotalSeconds,
+                        0.001));
                 lastReport = stopwatch.Elapsed;
             }
         }
@@ -1246,7 +1538,9 @@ public sealed class MinecraftVanillaInstallService
     {
         var info = new FileInfo(path);
         if (!info.Exists)
-            throw new FileNotFoundException($"{label} file is missing.", path);
+            throw new FileNotFoundException(
+                $"{label} file is missing.",
+                path);
         if (info.Length > maxBytes)
             throw new InvalidDataException(
                 $"{label} file exceeds the {maxBytes}-byte limit.");
@@ -1259,27 +1553,59 @@ public sealed class MinecraftVanillaInstallService
                 FileAccess.Read,
                 FileShare.Read,
                 64 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
+                FileOptions.Asynchronous
+                | FileOptions.SequentialScan);
             return await JsonDocument.ParseAsync(
                 stream,
                 cancellationToken: cancellationToken);
         }
         catch (JsonException ex)
         {
-            throw new InvalidDataException($"{label} contains malformed JSON.", ex);
+            throw new InvalidDataException(
+                $"{label} contains malformed JSON.",
+                ex);
         }
     }
 
-    private static async Task<bool> HashMatchesAsync(string path, string? expectedSha1, CancellationToken cancellationToken)
+    private static async Task<string?> VerifyFileAsync(
+        string path,
+        string? expectedSha1,
+        long? expectedSize,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(expectedSha1))
-            return File.Exists(path);
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length <= 0)
+            return null;
 
-        await using var stream = File.OpenRead(path);
+        if (expectedSize.HasValue
+            && info.Length != expectedSize.Value)
+            return null;
+
+        if (expectedSha1 is null)
+            return expectedSize.HasValue
+                ? "Size-validated existing file (no digest supplied)"
+                : null;
+
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            128 * 1024,
+            FileOptions.Asynchronous
+            | FileOptions.SequentialScan);
         using var sha1 = SHA1.Create();
-        var hash = await sha1.ComputeHashAsync(stream, cancellationToken);
-        var actual = Convert.ToHexString(hash).ToLowerInvariant();
-        return string.Equals(actual, expectedSha1, StringComparison.OrdinalIgnoreCase);
+        var hash = await sha1.ComputeHashAsync(
+            stream,
+            cancellationToken);
+        var actual = Convert.ToHexString(hash)
+            .ToLowerInvariant();
+        return string.Equals(
+                actual,
+                expectedSha1,
+                StringComparison.OrdinalIgnoreCase)
+            ? "SHA-1 verified existing file"
+            : null;
     }
 
     private static string SourceLabel(string candidate)
@@ -1320,6 +1646,8 @@ public sealed class MinecraftVanillaInstallService
         string Url,
         string Path,
         string? Sha1,
+        long? Size,
+        string? ChecksumUrl,
         string? ExtractTo,
         IReadOnlyList<string> Excludes);
 }
