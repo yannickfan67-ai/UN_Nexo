@@ -523,11 +523,11 @@ internal static class Program
             var instance = new GameInstance(
                     Guid.NewGuid().ToString("N"),
                 "Asset id valid",
-                "asset-id-valid",
+                "asset-id-test",
                 "vanilla",
                 DateTimeOffset.UtcNow);
             var version = new MinecraftVersionInfo(
-                "asset-id-valid",
+                "asset-id-test",
                 "release",
                 "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
