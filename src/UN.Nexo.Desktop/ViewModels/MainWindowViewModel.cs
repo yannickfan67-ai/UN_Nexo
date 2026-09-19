@@ -22,6 +22,7 @@ public partial class MainWindowViewModel : ObservableObject
     private readonly MinecraftLaunchPlanBuilder _launchBuilder;
     private readonly MinecraftRuntimeInspector _runtimeInspector;
     private readonly JavaRuntimeProvisionService _runtimeProvisioner;
+    private readonly InstanceOperationCoordinator _operations;
     private readonly MinecraftProcessService _gameProcess = new();
     private CancellationTokenSource? _gameCancellation;
     private readonly Queue<string> _gameLogLines = new();
@@ -122,6 +123,7 @@ public partial class MainWindowViewModel : ObservableObject
         _launchBuilder = new MinecraftLaunchPlanBuilder(paths);
         _runtimeInspector = new MinecraftRuntimeInspector(paths);
         _runtimeProvisioner = new JavaRuntimeProvisionService(paths);
+        _operations = new InstanceOperationCoordinator(paths);
         _javaDiscovery = javaDiscovery;
         _paths = paths;
         _manifest = manifest;
@@ -563,6 +565,13 @@ public partial class MainWindowViewModel : ObservableObject
         try
         {
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
+
+            GameStatus = $"Waiting for exclusive access to {instance.Name}…";
+            LauncherStatus = GameStatus;
+            await using var operationLease = await _operations.AcquireAsync(
+                instance.Id,
+                "play",
+                cancellation.Token);
 
             if (account.IsMicrosoft)
             {
