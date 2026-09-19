@@ -189,6 +189,233 @@ public sealed class InstanceModService
         return CreateModel(finalPath);
     }
 
+    internal async Task<IReadOnlyList<InstalledMod>> InstallProviderBatchAsync(
+        string instanceId,
+        IReadOnlyList<ProviderModBatchItem> items,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(instanceId))
+            throw new ArgumentException("An instance id is required.", nameof(instanceId));
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0)
+            return [];
+
+        var validated = new List<(
+            string SourcePath,
+            string FileName,
+            string? ExistingFileName,
+            bool ExistingIsEnabled)>(items.Count);
+
+        foreach (var item in items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (sourcePath, fileName) = ValidateInstallSource(item.SourcePath);
+            EnsurePhysicalRegularFile(
+                sourcePath,
+                "The staged provider mod must be a physical regular file.");
+            if (item.ExistingFileName is not null)
+                ValidateManagedFileName(item.ExistingFileName, allowDisabled: true);
+            validated.Add((
+                sourcePath,
+                fileName,
+                item.ExistingFileName,
+                item.ExistingIsEnabled));
+        }
+
+        await using var operationLease = await _operations.AcquireAsync(
+            instanceId,
+            "provider dependency batch install",
+            cancellationToken);
+
+        var modsDirectory = VerifyModsDirectory(instanceId, create: true)!;
+        var mutations = new List<BatchMutation>(validated.Count);
+        var finalNames = new HashSet<string>(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+        var existingNames = new HashSet<string>(
+            OperatingSystem.IsWindows()
+                ? StringComparer.OrdinalIgnoreCase
+                : StringComparer.Ordinal);
+
+        foreach (var item in validated)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var finalFileName = item.ExistingFileName is not null && !item.ExistingIsEnabled
+                ? item.FileName + DisabledSuffix
+                : item.FileName;
+            if (!finalNames.Add(finalFileName))
+                throw new IOException(
+                    $"The provider dependency plan contains duplicate destination '{finalFileName}'.");
+
+            string? existingPath = null;
+            if (item.ExistingFileName is not null)
+            {
+                if (!existingNames.Add(item.ExistingFileName))
+                    throw new IOException(
+                        $"The provider dependency plan updates '{item.ExistingFileName}' more than once.");
+                if (!TryResolvePhysicalManagedModPath(
+                        modsDirectory,
+                        item.ExistingFileName,
+                        out existingPath))
+                {
+                    throw new FileNotFoundException(
+                        "A previously matched provider mod no longer exists as a physical managed file.",
+                        ResolveManagedPath(
+                            modsDirectory,
+                            item.ExistingFileName,
+                            allowDisabled: true));
+                }
+            }
+
+            var finalPath = ResolveManagedPath(
+                modsDirectory,
+                finalFileName,
+                allowDisabled: true);
+            if (File.Exists(finalPath)
+                && (existingPath is null || !PathEquals(existingPath, finalPath)))
+            {
+                throw new IOException(
+                    $"Cannot publish provider dependency '{finalFileName}' because that file already exists.");
+            }
+
+            if (existingPath is null)
+            {
+                var counterpartName = finalFileName.EndsWith(
+                    ".jar" + DisabledSuffix,
+                    StringComparison.OrdinalIgnoreCase)
+                    ? finalFileName[..^DisabledSuffix.Length]
+                    : finalFileName + DisabledSuffix;
+                var counterpartPath = ResolveManagedPath(
+                    modsDirectory,
+                    counterpartName,
+                    allowDisabled: true);
+                if (File.Exists(counterpartPath))
+                {
+                    throw new IOException(
+                        $"Cannot publish provider dependency '{finalFileName}' because '{counterpartName}' already exists.");
+                }
+            }
+
+            mutations.Add(new BatchMutation(
+                item.SourcePath,
+                existingPath,
+                finalPath,
+                TemporaryPath(finalPath, "batch-new"),
+                existingPath is null
+                    ? null
+                    : TemporaryPath(existingPath, "batch-old")));
+        }
+
+        var oldPaths = mutations
+            .Where(item => item.ExistingPath is not null)
+            .Select(item => item.ExistingPath!)
+            .ToArray();
+        foreach (var mutation in mutations)
+        {
+            if (oldPaths.Any(oldPath =>
+                    !PathEquals(oldPath, mutation.ExistingPath ?? string.Empty)
+                    && PathEquals(oldPath, mutation.FinalPath)))
+            {
+                throw new IOException(
+                    "The provider dependency plan would overwrite another mod that is also being updated.");
+            }
+        }
+
+        try
+        {
+            foreach (var mutation in mutations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await CopyPhysicalFileAsync(
+                    mutation.SourcePath,
+                    mutation.PreparedPath,
+                    requirePhysicalSource: true,
+                    cancellationToken);
+            }
+
+            foreach (var mutation in mutations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (mutation.ExistingPath is null)
+                    continue;
+
+                if (!IsPhysicalManagedModPath(mutation.ExistingPath))
+                    throw new IOException(
+                        "A provider mod changed before the dependency batch could be published.");
+                VerifyPhysicalDirectory(modsDirectory);
+                File.Move(
+                    mutation.ExistingPath,
+                    mutation.BackupPath!,
+                    overwrite: false);
+                mutation.OldMoved = true;
+            }
+
+            foreach (var mutation in mutations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                VerifyPhysicalDirectory(modsDirectory);
+                EnsurePhysicalRegularFile(
+                    mutation.PreparedPath,
+                    "A staged dependency changed before publication.");
+                File.Move(
+                    mutation.PreparedPath,
+                    mutation.FinalPath,
+                    overwrite: false);
+                mutation.NewPublished = true;
+            }
+
+            foreach (var mutation in mutations)
+            {
+                if (mutation.BackupPath is not null)
+                    TryDelete(mutation.BackupPath);
+            }
+
+            return mutations
+                .Select(mutation => CreateModel(mutation.FinalPath))
+                .ToArray();
+        }
+        catch
+        {
+            for (var index = mutations.Count - 1; index >= 0; index--)
+            {
+                var mutation = mutations[index];
+                if (mutation.NewPublished)
+                    TryDelete(mutation.FinalPath);
+
+                if (mutation.OldMoved
+                    && mutation.ExistingPath is not null
+                    && mutation.BackupPath is not null
+                    && File.Exists(mutation.BackupPath)
+                    && !File.Exists(mutation.ExistingPath))
+                {
+                    try
+                    {
+                        VerifyPhysicalDirectory(modsDirectory);
+                        File.Move(
+                            mutation.BackupPath,
+                            mutation.ExistingPath,
+                            overwrite: false);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+
+            throw;
+        }
+        finally
+        {
+            foreach (var mutation in mutations)
+            {
+                TryDelete(mutation.PreparedPath);
+                if (mutation.BackupPath is not null)
+                    TryDelete(mutation.BackupPath);
+            }
+        }
+    }
+
     public InstalledMod SetEnabled(string instanceId, string fileName, bool enabled)
         => SetEnabledAsync(instanceId, fileName, enabled).GetAwaiter().GetResult();
 
@@ -485,6 +712,37 @@ public sealed class InstanceModService
         {
             throw new InvalidDataException(message);
         }
+    }
+
+    private static string TemporaryPath(string path, string kind)
+        => path + "." + kind + "-" + Guid.NewGuid().ToString("N") + ".tmp";
+
+    private static bool PathEquals(string left, string right)
+    {
+        if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
+            return false;
+        return string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
+    }
+
+    private sealed class BatchMutation(
+        string sourcePath,
+        string? existingPath,
+        string finalPath,
+        string preparedPath,
+        string? backupPath)
+    {
+        public string SourcePath { get; } = sourcePath;
+        public string? ExistingPath { get; } = existingPath;
+        public string FinalPath { get; } = finalPath;
+        public string PreparedPath { get; } = preparedPath;
+        public string? BackupPath { get; } = backupPath;
+        public bool OldMoved { get; set; }
+        public bool NewPublished { get; set; }
     }
 
     private static bool FileNameEquals(string left, string right)
