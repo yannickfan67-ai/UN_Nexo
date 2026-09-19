@@ -130,7 +130,10 @@ public sealed class FabricInstallService(
                 foreach (var library in libraries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    await DownloadLibraryAsync(library, cancellationToken);
+                    await DownloadLibraryAsync(
+                        instance.Id,
+                        library,
+                        cancellationToken);
                     completed++;
                     Report(progress, new InstallProgress(
                         "Fabric libraries",
@@ -152,6 +155,7 @@ public sealed class FabricInstallService(
                     source = "fabric-meta",
                     state = "prepared"
                 };
+                paths.EnsureInstanceDirectoryPhysical(instance.Id);
                 await AtomicJsonFile.WriteAsync(
                     statePath,
                     state,
@@ -360,6 +364,7 @@ public sealed class FabricInstallService(
     }
 
     private async Task DownloadLibraryAsync(
+        string instanceId,
         LibraryDownload library,
         CancellationToken cancellationToken)
     {
@@ -375,6 +380,7 @@ public sealed class FabricInstallService(
         if (await IsValidAsync(library.Path, expectedSha1, cancellationToken))
             return;
 
+        paths.EnsureInstanceDirectoryPhysical(instanceId);
         Directory.CreateDirectory(Path.GetDirectoryName(library.Path)!);
         var temp = library.Path + ".part";
         TryDeleteFile(temp);
@@ -407,6 +413,7 @@ public sealed class FabricInstallService(
                 throw new InvalidDataException(
                     $"Downloaded Fabric library failed verification: {library.Url}");
 
+            paths.EnsureInstanceDirectoryPhysical(instanceId);
             File.Move(temp, library.Path, overwrite: true);
         }
         catch

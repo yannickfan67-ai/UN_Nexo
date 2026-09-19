@@ -414,6 +414,7 @@ public sealed class MinecraftVanillaInstallService
             source = _downloadSources.SourceId,
             state = "prepared"
         };
+        _paths.EnsureInstanceDirectoryPhysical(instance.Id);
         var statePath = Path.Combine(_paths.GetInstanceDirectory(instance.Id), "install-state.json");
         await AtomicJsonFile.WriteAsync(
             statePath,
@@ -1305,8 +1306,11 @@ public sealed class MinecraftVanillaInstallService
                 expectedSize,
                 stage);
 
-        Directory.CreateDirectory(
-            Path.GetDirectoryName(path)!);
+        var destinationParent = Path.GetDirectoryName(path)
+            ?? throw new InvalidDataException($"{stage} destination has no parent directory.");
+        ValidateExistingPathChain(destinationParent);
+        Directory.CreateDirectory(destinationParent);
+        ValidateExistingPathChain(destinationParent);
         var item = Path.GetFileName(path);
 
         if (File.Exists(path)
@@ -1465,6 +1469,7 @@ public sealed class MinecraftVanillaInstallService
                     throw new InvalidDataException(
                         $"Size verification failed from {new Uri(candidate).Host}.");
 
+                ValidateExistingPathChain(destinationParent);
                 File.Move(
                     temporaryPath,
                     path,

@@ -57,9 +57,7 @@ public sealed class JavaRuntimeProvisionService
             : throw new PlatformNotSupportedException(
                 "Automatic Java acquisition currently supports Windows and Linux only.");
 
-        _paths.EnsureDirectories();
-        var runtimesRoot = _paths.GetRuntimesRoot();
-        Directory.CreateDirectory(runtimesRoot);
+        var runtimesRoot = _paths.EnsureRuntimesRootPhysical();
         var targetRoot = Path.Combine(runtimesRoot, $"temurin-{major}-{os}-x64");
 
         var existing = await TryLoadExistingAsync(targetRoot, major, cancellationToken);
@@ -125,7 +123,11 @@ public sealed class JavaRuntimeProvisionService
                         manifest,
                         cancellationToken);
 
-                    PublishRuntimeDirectory(runtimeHome, targetRoot, cancellationToken);
+                    PublishRuntimeDirectory(
+                        runtimeHome,
+                        targetRoot,
+                        cancellationToken,
+                        () => _paths.EnsureRuntimesRootPhysical());
 
                     var finalJavaPath = Path.Combine(targetRoot, relativeJavaPath);
                     _trustedThisSession.TryAdd(targetRoot, 0);
@@ -190,7 +192,8 @@ public sealed class JavaRuntimeProvisionService
     internal static void PublishRuntimeDirectory(
         string preparedRuntimeRoot,
         string targetRoot,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action? validateTargetParent = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(preparedRuntimeRoot);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetRoot);
@@ -204,12 +207,18 @@ public sealed class JavaRuntimeProvisionService
 
         var parent = Path.GetDirectoryName(target)
             ?? throw new InvalidDataException("Managed Java target has no parent directory.");
+        validateTargetParent?.Invoke();
         Directory.CreateDirectory(parent);
+        RejectReparsePointIfPresent(parent, "Managed Java runtimes root");
+        RejectReparsePointIfPresent(target, "Managed Java target");
 
         var backup = target + ".rollback-" + Guid.NewGuid().ToString("N");
         var movedPrevious = false;
         try
         {
+            validateTargetParent?.Invoke();
+            RejectReparsePointIfPresent(parent, "Managed Java runtimes root");
+            RejectReparsePointIfPresent(target, "Managed Java target");
             if (Directory.Exists(target))
             {
                 Directory.Move(target, backup);
@@ -221,6 +230,8 @@ public sealed class JavaRuntimeProvisionService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            validateTargetParent?.Invoke();
+            RejectReparsePointIfPresent(parent, "Managed Java runtimes root");
             Directory.Move(prepared, target);
         }
         catch
@@ -252,6 +263,19 @@ public sealed class JavaRuntimeProvisionService
                 // directory is harmless and can be cleaned up by a later maintenance pass.
             }
         }
+    }
+
+    private static void RejectReparsePointIfPresent(
+        string path,
+        string label)
+    {
+        if (!Directory.Exists(path) && !File.Exists(path))
+            return;
+
+        var attributes = File.GetAttributes(path);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException(
+                $"{label} must not be a symbolic link, junction or other reparse point.");
     }
 
     private async Task<JavaInstallation?> TryLoadExistingAsync(

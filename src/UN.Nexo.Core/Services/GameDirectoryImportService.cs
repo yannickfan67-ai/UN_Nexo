@@ -310,7 +310,12 @@ public sealed class GameDirectoryImportService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            Directory.Move(stagingRoot, targetRoot);
+            _paths.EnsureInstancesRootPhysical();
+            var finalTargetRoot = _paths.GetInstanceDirectory(instanceId);
+            if (Directory.Exists(finalTargetRoot) || File.Exists(finalTargetRoot))
+                throw new IOException("The import destination changed before publication.");
+            _paths.EnsureInstancesRootPhysical();
+            Directory.Move(stagingRoot, finalTargetRoot);
             return new GameDirectoryImportResult(instance, prepared, copiedBytes, copiedFiles, warnings.Distinct().ToArray());
         }
         catch

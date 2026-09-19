@@ -15,13 +15,13 @@ public sealed class InstanceStoreService
 
     public async Task<IReadOnlyList<GameInstance>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        _paths.EnsureDirectories();
+        var instancesRoot = _paths.EnsureInstancesRootPhysical();
         var result = new List<GameInstance>();
         var idComparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-        foreach (var directory in Directory.EnumerateDirectories(_paths.GetInstancesRoot()))
+        foreach (var directory in Directory.EnumerateDirectories(instancesRoot))
         {
             try
             {
@@ -78,8 +78,7 @@ public sealed class InstanceStoreService
         var normalizedVersionId = RequireValue(versionId, nameof(versionId), "Minecraft version");
         var normalizedLoader = RequireValue(loader, nameof(loader), "Loader");
 
-        _paths.EnsureDirectories();
-        var instancesRoot = _paths.GetInstancesRoot();
+        var instancesRoot = _paths.EnsureInstancesRootPhysical();
         var nameGatePath = Path.Combine(instancesRoot, ".instance-name-gate");
         await using var nameLease = await PersistedStoreMutationLock.AcquireAsync(
             nameGatePath,
@@ -103,7 +102,9 @@ public sealed class InstanceStoreService
             string.IsNullOrWhiteSpace(baseVersionId) ? null : baseVersionId.Trim(),
             string.IsNullOrWhiteSpace(loaderVersion) ? null : loaderVersion.Trim());
         var directory = Path.Combine(instancesRoot, id);
+        _paths.EnsureInstancesRootPhysical();
         Directory.CreateDirectory(directory);
+        _paths.EnsureInstanceDirectoryPhysical(id);
 
         var metadataPath = Path.Combine(directory, "instance.json");
         var temporaryPath = metadataPath + ".tmp";
@@ -122,6 +123,7 @@ public sealed class InstanceStoreService
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            _paths.EnsureInstanceDirectoryPhysical(id);
             File.Move(temporaryPath, metadataPath);
             return instance;
         }
