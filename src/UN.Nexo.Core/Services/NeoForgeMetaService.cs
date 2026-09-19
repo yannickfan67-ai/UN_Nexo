@@ -301,7 +301,8 @@ public sealed class NeoForgeMetaService(HttpClient httpClient)
         string label,
         CancellationToken cancellationToken)
     {
-        if (content.Headers.ContentLength is > maxBytes)
+        if (content.Headers.ContentLength is long declaredLength
+            && declaredLength > maxBytes)
         {
             throw new InvalidDataException(
                 $"{label} exceeds the {maxBytes}-byte limit.");
