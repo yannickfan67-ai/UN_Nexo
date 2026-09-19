@@ -14,6 +14,7 @@ internal static class PersistedStoreRegression
         await TestSettingsStoresAsync();
         await TestAccountStoreAsync();
         await TestServerStoreAsync();
+        await TestStoreLockRejectsLinkedSidecarAsync();
         await TestServerStoreCrossProcessAsync();
     }
 
@@ -283,6 +284,64 @@ internal static class PersistedStoreRegression
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestStoreLockRejectsLinkedSidecarAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-store-lock-link-tests",
+            Guid.NewGuid().ToString("N"));
+        var outsideRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-store-lock-link-targets",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideRoot);
+
+        try
+        {
+            var storePath = Path.Combine(root, "servers.json");
+            var lockPath = storePath + ".lock";
+            var outsidePath = Path.Combine(outsideRoot, "outside.txt");
+            var marker = Encoding.UTF8.GetBytes(
+                "outside-lock-target-must-remain-unchanged");
+            await File.WriteAllBytesAsync(outsidePath, marker);
+
+            try
+            {
+                File.CreateSymbolicLink(lockPath, outsidePath);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or PlatformNotSupportedException
+                or IOException)
+            {
+                Console.WriteLine(
+                    "SKIP persisted-store linked lock fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            await ThrowsAsync<UnauthorizedAccessException>(
+                async () =>
+                {
+                    await using var lease =
+                        await PersistedStoreMutationLock.AcquireAsync(
+                            storePath);
+                },
+                "linked persisted-store lock sidecar must be rejected");
+
+            EqualBytes(
+                marker,
+                await File.ReadAllBytesAsync(outsidePath),
+                "rejected persisted-store lock sidecar must not modify its target");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+            try { Directory.Delete(outsideRoot, recursive: true); } catch { }
         }
     }
 

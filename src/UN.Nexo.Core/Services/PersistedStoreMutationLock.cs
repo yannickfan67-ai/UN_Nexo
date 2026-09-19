@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace UN.Nexo.Core.Services;
 
 /// <summary>
@@ -27,43 +25,19 @@ internal static class PersistedStoreMutationLock
             fullPath,
             cancellationToken);
 
-        FileStream? crossProcessStream = null;
+        CrossProcessFileLock.Lease? crossProcessLease = null;
         try
         {
-            var lockPath = fullPath + ".lock";
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    crossProcessStream = new FileStream(
-                        lockPath,
-                        FileMode.OpenOrCreate,
-                        FileAccess.ReadWrite,
-                        FileShare.None,
-                        4096,
-                        FileOptions.Asynchronous | FileOptions.WriteThrough);
-                    break;
-                }
-                catch (IOException) when (!cancellationToken.IsCancellationRequested)
-                {
-                    await Task.Delay(RetryDelay, cancellationToken);
-                }
-            }
-
-            crossProcessStream.SetLength(0);
-            var metadata = Encoding.UTF8.GetBytes(
-                $"pid={Environment.ProcessId}\n"
-                + $"store={Path.GetFileName(fullPath)}\n"
-                + $"started={DateTimeOffset.UtcNow:O}\n");
-            await crossProcessStream.WriteAsync(metadata, cancellationToken);
-            await crossProcessStream.FlushAsync(cancellationToken);
-
-            return new Lease(processLease, crossProcessStream);
+            crossProcessLease = await CrossProcessFileLock.AcquireAsync(
+                fullPath + ".lock",
+                RetryDelay,
+                cancellationToken);
+            return new Lease(processLease, crossProcessLease);
         }
         catch
         {
-            crossProcessStream?.Dispose();
+            if (crossProcessLease is not null)
+                await crossProcessLease.DisposeAsync();
             processLease.Dispose();
             throw;
         }
@@ -72,15 +46,15 @@ internal static class PersistedStoreMutationLock
     internal sealed class Lease : IAsyncDisposable
     {
         private PathKeyedLock.Lease? _processLease;
-        private FileStream? _crossProcessStream;
+        private CrossProcessFileLock.Lease? _crossProcessLease;
         private bool _disposed;
 
         internal Lease(
             PathKeyedLock.Lease processLease,
-            FileStream crossProcessStream)
+            CrossProcessFileLock.Lease crossProcessLease)
         {
             _processLease = processLease;
-            _crossProcessStream = crossProcessStream;
+            _crossProcessLease = crossProcessLease;
         }
 
         public ValueTask DisposeAsync()
@@ -89,12 +63,13 @@ internal static class PersistedStoreMutationLock
                 return ValueTask.CompletedTask;
             _disposed = true;
 
-            var stream = Interlocked.Exchange(ref _crossProcessStream, null);
-            stream?.Dispose();
+            var crossProcessLease = Interlocked.Exchange(
+                ref _crossProcessLease,
+                null);
+            if (crossProcessLease is not null)
+                crossProcessLease.DisposeAsync().GetAwaiter().GetResult();
 
-            var processLease = Interlocked.Exchange(ref _processLease, null);
-            processLease?.Dispose();
-
+            Interlocked.Exchange(ref _processLease, null)?.Dispose();
             return ValueTask.CompletedTask;
         }
     }
