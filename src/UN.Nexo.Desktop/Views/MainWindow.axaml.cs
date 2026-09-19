@@ -55,6 +55,13 @@ public sealed partial class MainWindow : Window
         {
             Timeout = TimeSpan.FromSeconds(30)
         };
+        var regionHttpClient = new HttpClient(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false
+        })
+        {
+            Timeout = TimeSpan.FromSeconds(5)
+        };
         var launcherVersion = typeof(MainWindow).Assembly
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? "dev";
@@ -62,6 +69,7 @@ public sealed partial class MainWindow : Window
         downloadHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         manifestHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         authHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
+        regionHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd($"UN_Nexo/{launcherVersion}");
         ApplyRuntimeVersionLabel(launcherVersion);
 
         LauncherStartupTrace.Write("[startup] Creating launcher services");
@@ -88,6 +96,7 @@ public sealed partial class MainWindow : Window
             _fabricInstaller,
             accountStore,
             microsoftAuth,
+            new RestrictedRegionService(regionHttpClient),
             new LauncherSettingsService(_paths),
             downloadSources);
 
