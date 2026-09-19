@@ -119,12 +119,13 @@ public sealed partial class JavaDiscoveryService
         catch (Exception) when (path.Length > 0) { }
     }
 
+    private const int MaxProbeOutputChars = 16 * 1024;
+
     private async Task<JavaInstallation?> ProbeAsync(
         string javaPath,
         string source,
         CancellationToken cancellationToken)
     {
-        Process? process = null;
         try
         {
             var startInfo = new ProcessStartInfo
@@ -137,84 +138,79 @@ public sealed partial class JavaDiscoveryService
                 CreateNoWindow = true
             };
 
-            process = Process.Start(startInfo);
-            if (process is null)
-                return null;
-
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
             timeout.CancelAfter(_probeTimeout);
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token);
-            var text = $"{await stderrTask}\n{await stdoutTask}";
+            BoundedProcessCapture capture;
+            try
+            {
+                capture =
+                    await BoundedProcessRunner.RunAsync(
+                        startInfo,
+                        "Java version probe",
+                        MaxProbeOutputChars,
+                        timeout.Token);
+            }
+            catch (OperationCanceledException)
+                when (!cancellationToken.IsCancellationRequested)
+            {
+                return null;
+            }
 
-            if (process.ExitCode != 0)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (capture.ExitCode != 0)
                 return null;
 
-            var match = JavaVersionRegex().Match(text);
-            if (!match.Success || string.IsNullOrWhiteSpace(match.Groups["version"].Value))
+            var text =
+                capture.StandardError.Text
+                + "\n"
+                + capture.StandardOutput.Text;
+
+            var match =
+                JavaVersionRegex().Match(text);
+            if (!match.Success
+                || string.IsNullOrWhiteSpace(
+                    match.Groups["version"].Value))
+            {
                 return null;
+            }
 
-            var version = match.Groups["version"].Value;
-            var is64Bit = text.Contains("64-Bit", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("amd64", StringComparison.OrdinalIgnoreCase)
-                          || text.Contains("aarch64", StringComparison.OrdinalIgnoreCase);
-            var home = Directory.GetParent(Path.GetDirectoryName(javaPath) ?? string.Empty)?.FullName
-                       ?? Path.GetDirectoryName(javaPath)
-                       ?? string.Empty;
+            var version =
+                match.Groups["version"].Value;
+            var is64Bit =
+                text.Contains(
+                    "64-Bit",
+                    StringComparison.OrdinalIgnoreCase)
+                || text.Contains(
+                    "amd64",
+                    StringComparison.OrdinalIgnoreCase)
+                || text.Contains(
+                    "aarch64",
+                    StringComparison.OrdinalIgnoreCase);
+            var home =
+                Directory.GetParent(
+                    Path.GetDirectoryName(javaPath)
+                    ?? string.Empty)?.FullName
+                ?? Path.GetDirectoryName(javaPath)
+                ?? string.Empty;
 
-            return new JavaInstallation(javaPath, home, version, is64Bit, source);
+            return new JavaInstallation(
+                javaPath,
+                home,
+                version,
+                is64Bit,
+                source);
         }
         catch (OperationCanceledException)
         {
-            await TerminateProcessAsync(process);
-            cancellationToken.ThrowIfCancellationRequested();
+            throw;
+        }
+        catch
+        {
             return null;
-        }
-        catch (Exception)
-        {
-            await TerminateProcessAsync(process);
-            return null;
-        }
-        finally
-        {
-            process?.Dispose();
-        }
-    }
-
-    private static async Task TerminateProcessAsync(Process? process)
-    {
-        if (process is null)
-            return;
-
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch (Exception ex) when (
-            ex is InvalidOperationException
-            or NotSupportedException
-            or System.ComponentModel.Win32Exception)
-        {
-            return;
-        }
-
-        try
-        {
-            if (process.HasExited)
-                return;
-
-            using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            await process.WaitForExitAsync(wait.Token);
-        }
-        catch (Exception ex) when (
-            ex is OperationCanceledException
-            or InvalidOperationException
-            or System.ComponentModel.Win32Exception)
-        {
-            // Best-effort reap after the process tree was terminated.
         }
     }
 

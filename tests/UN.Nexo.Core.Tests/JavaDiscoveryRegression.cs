@@ -23,6 +23,7 @@ internal static class JavaDiscoveryRegression
         try
         {
             await TestNormalProbeAsync(root);
+            await TestLargeOutputTailProbeAsync(root);
             await TestInternalTimeoutKillsProcessAsync(root);
             await TestCallerCancellationKillsAndPropagatesAsync(root);
         }
@@ -47,6 +48,46 @@ internal static class JavaDiscoveryRegression
         Require(result is not null, "Normal Java probe should return an installation.");
         Require(result!.Version == "21.0.1", "Normal Java probe should parse the version.");
         Require(result.Is64Bit, "Normal Java probe should detect 64-bit output.");
+    }
+
+    private static async Task TestLargeOutputTailProbeAsync(
+        string root)
+    {
+        var script =
+            Path.Combine(
+                root,
+                "java-large-output");
+        await File.WriteAllTextAsync(
+            script,
+            "#!/bin/sh\n"
+            + "i=0\n"
+            + "while [ $i -lt 2048 ]; do "
+            + "printf '0123456789abcdef0123456789abcdef'; "
+            + "i=$((i+1)); done\n"
+            + "echo 'openjdk version \"21.0.9\"' >&2\n"
+            + "echo 'OpenJDK 64-Bit Server VM' >&2\n"
+            + "exit 0\n");
+        MakeExecutable(script);
+
+        var service =
+            new JavaDiscoveryService(
+                probeTimeout:
+                    TimeSpan.FromSeconds(3));
+        var result =
+            await InvokeProbeAsync(
+                service,
+                script,
+                CancellationToken.None);
+
+        Require(
+            result is not null,
+            "Large-output Java probe should retain the valid tail.");
+        Require(
+            result!.Version == "21.0.9",
+            "Large-output Java probe should parse the version from the retained tail.");
+        Require(
+            result.Is64Bit,
+            "Large-output Java probe should parse architecture from the retained tail.");
     }
 
     private static async Task TestInternalTimeoutKillsProcessAsync(string root)
