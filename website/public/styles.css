@@ -48,19 +48,7 @@ img{max-width:100%}
   font-size:18px;
   font-weight:600;
 }
-.metro-logo{
-  width:30px;
-  height:30px;
-  display:grid;
-  grid-template-columns:1fr 1fr;
-  grid-template-rows:1fr 1fr;
-  gap:2px;
-  transform:skewY(-8deg);
-}
-.metro-logo i:nth-child(1){background:#00a4ef}
-.metro-logo i:nth-child(2){background:#7fba00}
-.metro-logo i:nth-child(3){background:#ffb900}
-.metro-logo i:nth-child(4){background:#f25022}
+.brand-icon{width:30px;height:30px;display:block;flex:0 0 30px}
 .topbar-inner nav{
   display:flex;
   gap:26px;
@@ -400,4 +388,57 @@ img{max-width:100%}
 @media(prefers-reduced-motion:reduce){
   html{scroll-behavior:auto}
   .tile{transition:none}
+}
+.compatibility-section{background:#f4f4f4;color:#191919}
+.compat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.compat-box{min-height:150px;padding:22px;color:#fff;display:flex;flex-direction:column;justify-content:flex-end}
+.compat-box strong{font-size:30px;font-weight:300;line-height:1}
+.compat-box span{margin-top:9px;font-size:12px;color:rgba(255,255,255,.84)}
+
+.why-section{background:#101010}
+.why-layout{display:grid;grid-template-columns:.82fr 1.18fr;gap:70px;align-items:start}
+.why-heading h2{margin:0;font-size:58px;font-weight:200;line-height:.98;letter-spacing:-.035em}
+.why-heading>p:last-child{color:#aaa;font-size:17px;max-width:430px}
+.why-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.why-tiles article{min-height:220px;padding:22px;background:#202020;display:flex;flex-direction:column}
+.why-tiles article:nth-child(1){border-top:6px solid #0078d7}
+.why-tiles article:nth-child(2){border-top:6px solid #6a36aa}
+.why-tiles article:nth-child(3){border-top:6px solid #00a4a6}
+.why-tiles article:nth-child(4){border-top:6px solid #b91d47}
+.why-tiles article>span{color:#777;font-size:12px}
+.why-tiles h3{margin:28px 0 9px;font-size:24px;font-weight:300}
+.why-tiles p{margin:0;color:#aaa;font-size:13px}
+
+.roadmap-section{background:#3b1772}
+.roadmap-list{display:grid;gap:4px}
+.roadmap-item{min-height:86px;display:grid;grid-template-columns:80px 1fr;align-items:center;padding:14px 20px;background:rgba(0,0,0,.18)}
+.roadmap-item b{font-size:28px;font-weight:200;color:#cdb7f2}
+.roadmap-item div{display:flex;flex-direction:column}
+.roadmap-item strong{font-size:17px;font-weight:400}
+.roadmap-item span{margin-top:4px;color:#d8cdea;font-size:12px}
+
+.faq-section{background:#fff;color:#191919}
+.faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.faq-grid details{background:#ececec;padding:0 20px}
+.faq-grid summary{cursor:pointer;list-style:none;padding:21px 28px 21px 0;font-size:19px;font-weight:400;position:relative}
+.faq-grid summary::-webkit-details-marker{display:none}
+.faq-grid summary:after{content:"+";position:absolute;right:0;top:17px;font-size:28px;font-weight:200;color:#666}
+.faq-grid details[open] summary:after{content:"−"}
+.faq-grid details p{margin:0;padding:0 0 22px;color:#555;font-size:14px;max-width:520px}
+
+.resources-section{background:#1f1f1f}
+.resource-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.resource-tile{min-height:145px;padding:20px;color:#fff;display:flex;flex-direction:column;justify-content:flex-end;position:relative}
+.resource-tile b{font-size:22px;font-weight:400}
+.resource-tile span{margin-top:5px;font-size:12px;color:rgba(255,255,255,.82)}
+.resource-tile em{position:absolute;right:18px;top:13px;font-style:normal;font-size:34px;font-weight:200;opacity:.8}
+
+@media(max-width:980px){
+  .why-layout{grid-template-columns:1fr}
+  .compat-grid,.resource-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:680px){
+  .compat-grid,.why-tiles,.faq-grid,.resource-grid{grid-template-columns:1fr}
+  .why-heading h2{font-size:42px}
+  .roadmap-item{grid-template-columns:54px 1fr;padding:12px 14px}
 }
