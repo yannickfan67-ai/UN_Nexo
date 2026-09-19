@@ -14,6 +14,7 @@ public sealed partial class RuntimeSettingsWindow : Window
     private readonly NexoPathService _paths;
     private readonly LauncherRuntimeSettingsService _settings;
     private readonly MinecraftRuntimeInspector _inspector;
+    private bool _settingsLoadFailed;
 
     public RuntimeSettingsWindow(MainWindowViewModel viewModel, NexoPathService paths)
     {
@@ -31,12 +32,28 @@ public sealed partial class RuntimeSettingsWindow : Window
     private async void OnOpened(object? sender, EventArgs e)
     {
         Opened -= OnOpened;
-        var settings = await _settings.LoadAsync();
-        MemoryBox.Value = settings.MemoryMb;
-        JvmArgumentsBox.Text = settings.ExtraJvmArguments;
+        string? loadFailure = null;
+        try
+        {
+            var settings = await _settings.LoadAsync();
+            _settingsLoadFailed = false;
+            MemoryBox.Value = settings.MemoryMb;
+            JvmArgumentsBox.Text = settings.ExtraJvmArguments;
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            _settingsLoadFailed = true;
+            loadFailure =
+                $"runtime-settings.json could not be loaded: {ex.Message} The existing file was preserved and Save is disabled until it is recovered.";
+        }
+
         UpdateMemoryRecommendation();
         await UpdateInstanceDiagnosticsAsync();
-        StatusText.Text = "Runtime settings apply to the next game launch.";
+        StatusText.Text = loadFailure
+            ?? "Runtime settings apply to the next game launch.";
     }
 
     private async void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -82,6 +99,13 @@ public sealed partial class RuntimeSettingsWindow : Window
 
     private async void OnSaveClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
+        if (_settingsLoadFailed)
+        {
+            StatusText.Text =
+                "Runtime settings were not saved because the existing file could not be loaded. Recover or explicitly reset runtime-settings.json first.";
+            return;
+        }
+
         try
         {
             var memory = (int)(MemoryBox.Value ?? 0);
