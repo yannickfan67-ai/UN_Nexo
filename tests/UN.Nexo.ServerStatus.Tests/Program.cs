@@ -196,6 +196,7 @@ internal static class Program
         var backendPort =
             ((IPEndPoint)listener.LocalEndpoint).Port;
         string? handshakeHost = null;
+        int? handshakePort = null;
 
         var server = Task.Run(async () =>
         {
@@ -207,6 +208,9 @@ internal static class Program
                 "SRV handshake packet id");
             _ = ReadVarInt(handshake, ref offset);
             handshakeHost = ReadString(handshake, ref offset);
+            if (offset > handshake.Length - 2)
+                throw new InvalidDataException("SRV handshake is missing the server port.");
+            handshakePort = (handshake[offset] << 8) | handshake[offset + 1];
             _ = await ReadPacketAsync(stream);
 
             await WriteStatusAsync(
@@ -241,6 +245,8 @@ internal static class Program
             "SRV query should use the logical hostname");
         Equal("play.example.test", handshakeHost,
             "SRV backend handshake must preserve the user hostname");
+        Equal(25565, handshakePort,
+            "SRV backend handshake must preserve the logical server port");
         Equal(ServerStatusState.Online, result.State,
             "SRV backend status");
         Equal("play.example.test:25565", result.Address,
