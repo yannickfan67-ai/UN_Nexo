@@ -61,8 +61,12 @@ public sealed record MinecraftServerTarget(
             }
             else
             {
-                // Multiple colons without brackets are treated as a raw IPv6 host using the default port.
+                // Multiple colons without brackets are only valid as a raw IPv6 literal.
                 host = text;
+                if (colonCount > 1
+                    && (!IPAddress.TryParse(host, out var address)
+                        || address.AddressFamily != AddressFamily.InterNetworkV6))
+                    throw new FormatException("Invalid IPv6 server address.");
             }
         }
 
