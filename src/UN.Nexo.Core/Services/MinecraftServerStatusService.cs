@@ -96,10 +96,9 @@ public sealed class MinecraftServerStatusService
                 token);
             await using var stream = client.GetStream();
 
-            var handshakeTarget = target with { Port = connectPort };
             await WriteHandshakeAsync(
                 stream,
-                handshakeTarget,
+                target,
                 token);
             await stream.WriteAsync(
                 new byte[] { 1, 0 },
