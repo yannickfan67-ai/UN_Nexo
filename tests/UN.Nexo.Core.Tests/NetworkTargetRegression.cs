@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
 
@@ -9,6 +10,8 @@ internal static class NetworkTargetRegression
 {
     internal static async Task RunAsync()
     {
+        TestMinecraftServerTargetParsing();
+
         var sources = new DownloadSourceService();
 
         var official = sources.GetCandidates(
@@ -48,6 +51,39 @@ internal static class NetworkTargetRegression
         await TestPrivateRedirectRejectedBeforeFollowAsync();
         await TestPrivateArtifactRejectedBeforeRequestAsync();
         await TestTrustedRedirectStillWorksAsync();
+    }
+
+    private static void TestMinecraftServerTargetParsing()
+    {
+        var rawIpv6 = MinecraftServerTarget.Parse("2001:db8::1");
+        Assert(rawIpv6.Host == "2001:db8::1"
+               && rawIpv6.Port == MinecraftServerTarget.DefaultPort
+               && !rawIpv6.HasExplicitPort,
+            "Valid unbracketed IPv6 should use the default port.");
+
+        var bracketedIpv6 = MinecraftServerTarget.Parse("[2001:db8::1]:25570");
+        Assert(bracketedIpv6.Host == "2001:db8::1"
+               && bracketedIpv6.Port == 25570
+               && bracketedIpv6.HasExplicitPort,
+            "Bracketed IPv6 with an explicit port should remain supported.");
+
+        var hostname = MinecraftServerTarget.Parse("play.example:25566");
+        Assert(hostname.Host == "play.example"
+               && hostname.Port == 25566
+               && hostname.HasExplicitPort,
+            "Normal hostname:port parsing should remain unchanged.");
+
+        foreach (var malformed in new[] { "not:an:ipv6", "example.com:25565:garbage" })
+        {
+            try
+            {
+                _ = MinecraftServerTarget.Parse(malformed);
+                throw new Exception($"Malformed multi-colon server target should be rejected: {malformed}");
+            }
+            catch (FormatException)
+            {
+            }
+        }
     }
 
     private static async Task TestPrivateRedirectRejectedBeforeFollowAsync()
