@@ -78,7 +78,8 @@ public sealed class RestrictedRegionService
         }
         catch (Exception ex) when (
             ex is HttpRequestException
-            or IOException)
+            or IOException
+            or InvalidDataException)
         {
             return RegionalAccessState.Unknown;
         }
