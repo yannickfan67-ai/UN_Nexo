@@ -38,6 +38,7 @@ public sealed class ModRecommendationService(
             modsDirectory,
             installedMods,
             cancellationToken);
+        var installedProjectIds = ValidateInstalledMatches(installed);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<ModProviderRecommendation>(limit);
@@ -48,7 +49,7 @@ public sealed class ModRecommendationService(
                     recommendation.Project.ProviderId,
                     _provider.ProviderId,
                     StringComparison.OrdinalIgnoreCase)
-                || installed.ContainsKey(
+                || installedProjectIds.Contains(
                     recommendation.Project.ProjectId)
                 || !seen.Add(
                     recommendation.Project.ProjectId))
@@ -62,5 +63,31 @@ public sealed class ModRecommendationService(
         }
 
         return result;
+    }
+
+    private HashSet<string> ValidateInstalledMatches(
+        IReadOnlyDictionary<string, ModProviderInstalledMatch> installed)
+    {
+        var projectIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (key, match) in installed)
+        {
+            if (!string.Equals(key, match.ProjectId, StringComparison.Ordinal)
+                || !string.Equals(
+                    match.ProviderId,
+                    _provider.ProviderId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    "The mod provider returned an inconsistent installed-mod identity.");
+            }
+
+            if (!projectIds.Add(match.ProjectId))
+            {
+                throw new InvalidDataException(
+                    "The mod provider returned a duplicate installed-mod identity.");
+            }
+        }
+
+        return projectIds;
     }
 }
