@@ -7,6 +7,7 @@ namespace UN.Nexo.Core.Launching;
 
 public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
 {
+    private const string QuickPlayMultiplayerOption = "--quickPlayMultiplayer";
     private static readonly IReadOnlyDictionary<string, bool> QuickPlayMultiplayerFeatures =
         new Dictionary<string, bool>(StringComparer.Ordinal)
         {
@@ -26,7 +27,7 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
         var arguments = plan.Arguments.ToList();
         if (quickPlay)
         {
-            arguments.Add("--quickPlayMultiplayer");
+            arguments.Add(QuickPlayMultiplayerOption);
             arguments.Add(target.Authority);
         }
         else
@@ -57,7 +58,7 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
         {
             if (item.ValueKind == JsonValueKind.String)
             {
-                if (ContainsQuickPlayArgument(item.GetString()))
+                if (IsQuickPlayArgument(item.GetString()))
                     return true;
                 continue;
             }
@@ -73,7 +74,7 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
 
             if (value.ValueKind == JsonValueKind.String)
             {
-                if (ContainsQuickPlayArgument(value.GetString()))
+                if (IsQuickPlayArgument(value.GetString()))
                     return true;
                 continue;
             }
@@ -89,7 +90,7 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
                     throw InvalidMetadata(
                         "arguments.game[].value[]",
                         "a string");
-                if (ContainsQuickPlayArgument(part.GetString()))
+                if (IsQuickPlayArgument(part.GetString()))
                     return true;
             }
         }
@@ -97,10 +98,11 @@ public sealed class MinecraftServerLaunchDecorator(NexoPathService paths)
         return false;
     }
 
-    private static bool ContainsQuickPlayArgument(string? value)
-        => value?.Contains(
-            "quickPlayMultiplayer",
-            StringComparison.Ordinal) == true;
+    private static bool IsQuickPlayArgument(string? value)
+        => string.Equals(
+            value,
+            QuickPlayMultiplayerOption,
+            StringComparison.Ordinal);
 
     private static InvalidDataException InvalidMetadata(string propertyName, string expected)
         => new($"Minecraft version metadata property '{propertyName}' must be {expected}.");
