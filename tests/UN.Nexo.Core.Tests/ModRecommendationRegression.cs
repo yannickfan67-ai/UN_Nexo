@@ -36,6 +36,54 @@ internal static class ModRecommendationRegression
             "Recommendation service must forward the selected loader.");
         Assert(provider.LastLimit >= 2,
             "Recommendation service may over-fetch to replace installed suggestions.");
+
+        await AssertInvalidMatchAsync(
+            new Dictionary<string, ModProviderInstalledMatch>
+            {
+                ["new-a"] = new(
+                    "fake",
+                    "installed",
+                    "v1",
+                    "1.0",
+                    "installed.jar",
+                    true)
+            },
+            "Recommendation service must reject installed-match key/project mismatches.");
+
+        await AssertInvalidMatchAsync(
+            new Dictionary<string, ModProviderInstalledMatch>
+            {
+                ["installed"] = new(
+                    "foreign",
+                    "installed",
+                    "v1",
+                    "1.0",
+                    "installed.jar",
+                    true)
+            },
+            "Recommendation service must reject installed matches from another provider.");
+    }
+
+    private static async Task AssertInvalidMatchAsync(
+        IReadOnlyDictionary<string, ModProviderInstalledMatch> matches,
+        string message)
+    {
+        try
+        {
+            await new ModRecommendationService(
+                new FakeRecommendationProvider(matches)).GetAsync(
+                "/tmp/mods",
+                [],
+                "1.21.4",
+                "fabric",
+                limit: 2);
+        }
+        catch (InvalidDataException)
+        {
+            return;
+        }
+
+        throw new Exception(message);
     }
 
     private static void Assert(bool condition, string message)
@@ -47,6 +95,24 @@ internal static class ModRecommendationRegression
     private sealed class FakeRecommendationProvider :
         IModRecommendationProvider
     {
+        private readonly IReadOnlyDictionary<string, ModProviderInstalledMatch> _matches;
+
+        public FakeRecommendationProvider(
+            IReadOnlyDictionary<string, ModProviderInstalledMatch>? matches = null)
+        {
+            _matches = matches
+                ?? new Dictionary<string, ModProviderInstalledMatch>
+                {
+                    ["installed"] = new(
+                        ProviderId,
+                        "installed",
+                        "v1",
+                        "1.0",
+                        "installed.jar",
+                        true)
+                };
+        }
+
         public string ProviderId => "fake";
         public string DisplayName => "Fake";
         public string LastMinecraftVersion { get; private set; } = string.Empty;
@@ -77,17 +143,7 @@ internal static class ModRecommendationRegression
                 string modsDirectory,
                 IReadOnlyList<InstalledMod> installedMods,
                 CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyDictionary<string, ModProviderInstalledMatch>>(
-                new Dictionary<string, ModProviderInstalledMatch>
-                {
-                    ["installed"] = new(
-                        ProviderId,
-                        "installed",
-                        "v1",
-                        "1.0",
-                        "installed.jar",
-                        true)
-                });
+            => Task.FromResult(_matches);
 
         public Task<IReadOnlyList<ModProviderProject>> SearchAsync(
             string query,
