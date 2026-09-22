@@ -54,18 +54,7 @@ public sealed class ModDependencyInstaller
                 entryDirectory,
                 cancellationToken);
 
-            if (!string.Equals(
-                    stagedInstall.Project.ProjectId,
-                    entry.Project.ProjectId,
-                    StringComparison.Ordinal)
-                || !string.Equals(
-                    stagedInstall.Version.VersionId,
-                    entry.Version.VersionId,
-                    StringComparison.Ordinal))
-            {
-                throw new InvalidDataException(
-                    "The provider staged a different project/version than the dependency plan requested.");
-            }
+            ValidateStagedIdentity(_provider.ProviderId, entry, stagedInstall);
 
             var validatedPath = stagingScope.ValidateStagedFile(
                 entryDirectory,
@@ -104,6 +93,59 @@ public sealed class ModDependencyInstaller
         }
 
         return new ModDependencyInstallResult(plan, results);
+    }
+
+    internal static void ValidateStagedIdentity(
+        string providerId,
+        ModDependencyPlanEntry entry,
+        ModProviderStagedInstall stagedInstall)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+            throw new ArgumentException("A provider id is required.", nameof(providerId));
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentNullException.ThrowIfNull(stagedInstall);
+
+        if (!string.Equals(
+                entry.Project.ProviderId,
+                providerId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                entry.Version.ProviderId,
+                providerId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                entry.Version.ProjectId,
+                entry.Project.ProjectId,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "The dependency plan contains inconsistent project/version/provider identity.");
+        }
+
+        if (!string.Equals(
+                stagedInstall.Project.ProviderId,
+                providerId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                stagedInstall.Version.ProviderId,
+                providerId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                stagedInstall.Project.ProjectId,
+                entry.Project.ProjectId,
+                StringComparison.Ordinal)
+            || !string.Equals(
+                stagedInstall.Version.ProjectId,
+                entry.Project.ProjectId,
+                StringComparison.Ordinal)
+            || !string.Equals(
+                stagedInstall.Version.VersionId,
+                entry.Version.VersionId,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "The provider staged a different project/version/provider identity than the dependency plan requested.");
+        }
     }
 
     internal static void ValidateInstalledIncompatibilities(
