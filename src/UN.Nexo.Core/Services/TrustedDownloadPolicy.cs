@@ -29,7 +29,7 @@ internal static class TrustedDownloadPolicy
         uri = UpgradeKnownHttpOrigin(uri);
         if (!IsTrustedUri(uri))
             throw new InvalidDataException(
-                $"{label} must use a trusted HTTPS Minecraft/Fabric download origin.");
+                $"{label} must use a trusted HTTPS Minecraft/Fabric download origin without a URI fragment.");
 
         return uri;
     }
@@ -38,6 +38,7 @@ internal static class TrustedDownloadPolicy
         => uri.Scheme == Uri.UriSchemeHttps
            && (uri.IsDefaultPort || uri.Port == 443)
            && string.IsNullOrEmpty(uri.UserInfo)
+           && string.IsNullOrEmpty(uri.Fragment)
            && TrustedHosts.Contains(uri.IdnHost);
 
     private static Uri UpgradeKnownHttpOrigin(Uri uri)
