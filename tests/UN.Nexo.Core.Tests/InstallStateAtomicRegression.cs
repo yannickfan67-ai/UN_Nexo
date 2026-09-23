@@ -11,6 +11,7 @@ internal static class InstallStateAtomicRegression
     internal static async Task RunAsync()
     {
         await TestCancelledAtomicWritePreservesDestinationAsync();
+        await TestLinkedAtomicParentIsRejectedAsync();
         await TestConcurrentAtomicWritesRemainCompleteAsync();
         await TestVanillaPrepareReplacesStateAtomicallyAsync();
     }
@@ -49,6 +50,67 @@ internal static class InstallStateAtomicRegression
         finally
         {
             TryDelete(root);
+        }
+    }
+
+    private static async Task TestLinkedAtomicParentIsRejectedAsync()
+    {
+        var root = NewRoot("linked-parent");
+        var outside = NewRoot("linked-parent-outside");
+        try
+        {
+            var linkedParent = Path.Combine(root, "linked");
+            var sentinel = Path.Combine(outside, "sentinel.txt");
+            await File.WriteAllTextAsync(
+                sentinel,
+                "outside-must-remain-unchanged");
+
+            try
+            {
+                Directory.CreateSymbolicLink(
+                    linkedParent,
+                    outside);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or PlatformNotSupportedException
+                or IOException)
+            {
+                Console.WriteLine(
+                    "SKIP atomic JSON linked-parent fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            var destination =
+                Path.Combine(linkedParent, "install-state.json");
+            try
+            {
+                await AtomicJsonFile.WriteAsync(
+                    destination,
+                    new { state = "prepared" });
+                throw new Exception(
+                    "Atomic JSON write unexpectedly followed a linked parent.");
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            Assert(
+                await File.ReadAllTextAsync(sentinel)
+                    == "outside-must-remain-unchanged",
+                "linked-parent rejection must preserve external sentinel bytes.");
+            Assert(
+                !File.Exists(Path.Combine(outside, "install-state.json")),
+                "linked-parent rejection must not publish JSON outside the trusted path.");
+            Assert(
+                !Directory.EnumerateFiles(outside, "*.tmp").Any(),
+                "linked-parent rejection must not create external temp files.");
+        }
+        finally
+        {
+            TryDelete(root);
+            TryDelete(outside);
         }
     }
 
