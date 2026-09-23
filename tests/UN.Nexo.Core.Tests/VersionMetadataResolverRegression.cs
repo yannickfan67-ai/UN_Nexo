@@ -11,6 +11,8 @@ internal static class VersionMetadataResolverRegression
         await TestWrongTypedIdsAsync();
         await TestWrongTypedInheritanceAsync();
         await TestWrongTypedLibraryNameAsync();
+        await TestOversizedMetadataRejectedAsync();
+        await TestLinkedVersionMetadataRejectedAsync();
         await TestNormalInheritanceAsync();
     }
 
@@ -123,6 +125,132 @@ internal static class VersionMetadataResolverRegression
         finally
         {
             TryDelete(root);
+        }
+    }
+
+    private static async Task TestOversizedMetadataRejectedAsync()
+    {
+        var root = NewRoot("oversized");
+        try
+        {
+            var versionRoot = Path.Combine(root, "versions", "huge");
+            Directory.CreateDirectory(versionRoot);
+            var path = Path.Combine(versionRoot, "huge.json");
+            await using (var stream = new FileStream(
+                path,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None))
+            {
+                stream.SetLength(
+                    MinecraftVersionMetadataResolver.MaxVersionMetadataBytes
+                    + 1);
+            }
+
+            await ExpectRejectedAsync(
+                () => new MinecraftVersionMetadataResolver()
+                    .ResolveAsync(root, "huge"),
+                "oversized launch metadata");
+
+            var childRoot = Path.Combine(root, "versions", "child");
+            Directory.CreateDirectory(childRoot);
+            await File.WriteAllTextAsync(
+                Path.Combine(childRoot, "child.json"),
+                "{\"id\":\"child\",\"inheritsFrom\":\"parent\",\"libraries\":[]}");
+            var parentRoot = Path.Combine(root, "versions", "parent");
+            Directory.CreateDirectory(parentRoot);
+            var parentPath = Path.Combine(parentRoot, "parent.json");
+            await using (var stream = new FileStream(
+                parentPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None))
+            {
+                stream.SetLength(
+                    MinecraftVersionMetadataResolver.MaxVersionMetadataBytes
+                    + 1);
+            }
+
+            await ExpectRejectedAsync(
+                () => new MinecraftVersionMetadataResolver()
+                    .ResolveAsync(root, "child"),
+                "oversized inherited parent");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static async Task TestLinkedVersionMetadataRejectedAsync()
+    {
+        var root = NewRoot("linked");
+        var outside = NewRoot("linked-outside");
+        try
+        {
+            Directory.CreateDirectory(
+                Path.Combine(root, "versions"));
+            var outsideVersion =
+                Path.Combine(outside, "test");
+            Directory.CreateDirectory(outsideVersion);
+            var outsideMetadata =
+                Path.Combine(outsideVersion, "test.json");
+            const string marker =
+                "{\"id\":\"test\",\"mainClass\":\"external.Marker\",\"libraries\":[]}";
+            await File.WriteAllTextAsync(
+                outsideMetadata,
+                marker);
+
+            var linkedVersion =
+                Path.Combine(root, "versions", "test");
+            try
+            {
+                Directory.CreateSymbolicLink(
+                    linkedVersion,
+                    outsideVersion);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or IOException
+                or PlatformNotSupportedException
+                or NotSupportedException)
+            {
+                Console.WriteLine(
+                    "SKIP linked version metadata fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            await ExpectRejectedAsync(
+                () => new MinecraftVersionMetadataResolver()
+                    .ResolveAsync(root, "test"),
+                "linked version directory");
+
+            Assert(
+                await File.ReadAllTextAsync(outsideMetadata) == marker,
+                "Rejected linked version metadata must not modify external bytes.");
+        }
+        finally
+        {
+            TryDelete(root);
+            TryDelete(outside);
+        }
+    }
+
+    private static async Task ExpectRejectedAsync(
+        Func<Task<ResolvedMinecraftVersion>> action,
+        string label)
+    {
+        try
+        {
+            using var _ = await action();
+            throw new Exception(label + " should be rejected.");
+        }
+        catch (InvalidDataException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
         }
     }
 
