@@ -64,30 +64,111 @@ internal static class RestrictedRegionRegression
 
     private static async Task AssertFallbackRequiresVerifiedMicrosoftAsync()
     {
-        using var client = new HttpClient(new StaticHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent("ip=203.0.113.5\nloc=CN\n")
-        }));
-        var service = new RestrictedRegionService(client);
-        var now = DateTimeOffset.UtcNow;
-
-        var neverVerified = new LauncherAccount("microsoft:1234567890abcdef1234567890abcdef", "microsoft", "NexoTester", "12345678-90ab-cdef-1234-567890abcdef", now)
+        var now = DateTimeOffset.Parse(
+            "2026-09-23T12:00:00Z",
+            System.Globalization.CultureInfo.InvariantCulture);
+        var baseAccount = new LauncherAccount(
+            "microsoft:1234567890abcdef1234567890abcdef",
+            "microsoft",
+            "NexoTester",
+            "12345678-90ab-cdef-1234-567890abcdef",
+            now)
         {
             AuthenticationId = "home.test"
         };
-        if (await service.CanUseOfflineFallbackAsync(neverVerified))
-            throw new InvalidOperationException("A Microsoft profile without a successful entitlement verification must not gain offline fallback.");
 
-        var verified = neverVerified with { EntitlementVerifiedAt = now };
-        if (!await service.CanUseOfflineFallbackAsync(verified))
-            throw new InvalidOperationException("A previously entitlement-verified Microsoft profile in CN should be eligible for restricted-region fallback.");
+        if (await CanFallbackAsync(baseAccount, "CN", now))
+            throw new InvalidOperationException(
+                "A Microsoft profile without entitlement evidence must not gain offline fallback.");
 
-        var offline = new LauncherAccount("offline:NexoTester", "offline", "NexoTester", "12345678-90ab-cdef-1234-567890abcdef", now)
+        var fresh = baseAccount with
+        {
+            EntitlementVerifiedAt = now - TimeSpan.FromDays(1)
+        };
+        if (!await CanFallbackAsync(fresh, "CN", now))
+            throw new InvalidOperationException(
+                "Fresh entitlement evidence in CN should allow restricted-region fallback.");
+
+        var boundary = baseAccount with
+        {
+            EntitlementVerifiedAt =
+                now - RestrictedRegionService.MaxEntitlementEvidenceAge
+        };
+        if (!await CanFallbackAsync(boundary, "RU", now))
+            throw new InvalidOperationException(
+                "Entitlement evidence exactly at the documented age boundary should remain eligible.");
+
+        var stale = baseAccount with
+        {
+            EntitlementVerifiedAt =
+                now
+                - RestrictedRegionService.MaxEntitlementEvidenceAge
+                - TimeSpan.FromSeconds(1)
+        };
+        if (await CanFallbackAsync(stale, "CN", now))
+            throw new InvalidOperationException(
+                "Stale entitlement evidence must require online re-verification.");
+
+        var future = baseAccount with
+        {
+            EntitlementVerifiedAt =
+                now
+                + RestrictedRegionService.MaxFutureClockSkew
+                + TimeSpan.FromSeconds(1)
+        };
+        if (await CanFallbackAsync(future, "CN", now))
+            throw new InvalidOperationException(
+                "Implausibly future entitlement evidence must be rejected.");
+
+        if (await CanFallbackAsync(fresh, "CA", now))
+            throw new InvalidOperationException(
+                "Fresh evidence outside a restricted region must remain ineligible.");
+        if (await CanFallbackAsync(fresh, "BAD", now))
+            throw new InvalidOperationException(
+                "Unknown regional state must remain ineligible.");
+
+        var offline = new LauncherAccount(
+            "offline:NexoTester",
+            "offline",
+            "NexoTester",
+            "12345678-90ab-cdef-1234-567890abcdef",
+            now)
         {
             EntitlementVerifiedAt = now
         };
-        if (await service.CanUseOfflineFallbackAsync(offline))
-            throw new InvalidOperationException("A generic offline profile must never qualify for restricted-region fallback.");
+        if (await CanFallbackAsync(offline, "CN", now))
+            throw new InvalidOperationException(
+                "A generic offline profile must never qualify for restricted-region fallback.");
+    }
+
+    private static async Task<bool> CanFallbackAsync(
+        LauncherAccount account,
+        string country,
+        DateTimeOffset now)
+    {
+        var body = country.Length == 2
+            ? $"ip=203.0.113.5\nloc={country}\n"
+            : "ip=203.0.113.5\n";
+        using var client = new HttpClient(
+            new StaticHandler(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        body,
+                        Encoding.UTF8,
+                        "text/plain")
+                }));
+        var service = new RestrictedRegionService(
+            client,
+            new FixedTimeProvider(now));
+        return await service.CanUseOfflineFallbackAsync(account);
+    }
+
+
+    private sealed class FixedTimeProvider(
+        DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class UnknownLengthContent(byte[] bytes) : HttpContent
