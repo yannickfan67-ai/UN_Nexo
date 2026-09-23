@@ -66,6 +66,20 @@ public sealed class MinecraftServerStatusService
                     var resolved = await _srvResolver.ResolveAsync(
                         target.Host,
                         token);
+                    if (resolved?.ServiceUnavailable == true)
+                    {
+                        return new ServerStatusResult(
+                            ServerStatusState.Offline,
+                            target.Authority,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            string.Empty,
+                            "DNS SRV explicitly marks the Minecraft service unavailable.");
+                    }
+
                     if (resolved is not null)
                     {
                         connectHost = resolved.Host;
