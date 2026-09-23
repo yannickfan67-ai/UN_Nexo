@@ -6,15 +6,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test-release:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '10.0.x'
       - name: Restore
@@ -42,8 +42,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '10.0.x'
       - name: Publish Windows x64 single-file build
@@ -59,7 +59,7 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -o publish/win-x64
           Copy-Item publish/win-x64/UN_Nexo.exe "release/UN_Nexo-$version-win-x64.exe"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-windows
           path: release/*
@@ -69,8 +69,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '10.0.x'
       - name: Publish Linux x64 build
@@ -87,7 +87,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ruby ruby-dev build-essential rpm xvfb
-          sudo gem install --no-document fpm
+          sudo gem install --no-document fpm -v 1.18.0
       - name: Build DEB and RPM packages
         shell: bash
         run: |
@@ -156,7 +156,7 @@ jobs:
           code=$?
           set -e
           if [ "$code" -ne 0 ] && [ "$code" -ne 124 ]; then cat package-smoke.log; exit "$code"; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-linux
           path: release/*
@@ -166,13 +166,32 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release:')
     needs: [test-release, build-windows, build-linux-packages]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: release-*
           path: release-assets
           merge-multiple: true
+      - name: Generate SHA-256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          mapfile -t assets < <(find . -maxdepth 1 -type f \
+            \( -name '*.exe' -o -name '*.deb' -o -name '*.rpm' \) \
+            -printf '%f\n' | LC_ALL=C sort)
+          if [ "${#assets[@]}" -ne 3 ]; then
+            printf 'Expected exactly 3 release assets, found %s:\n' "${#assets[@]}" >&2
+            printf '  %s\n' "${assets[@]}" >&2
+            exit 1
+          fi
+          sha256sum "${assets[@]}" > SHA256SUMS
+          sha256sum --check SHA256SUMS
       - name: Create or update GitHub pre-release
         shell: bash
         env:
@@ -181,55 +200,24 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '\r\n' < VERSION)"
           TAG="v${VERSION}"
-          printf '## UN_Nexo %s\n\n' "$VERSION" > RELEASE_NOTES.md
-          cat >> RELEASE_NOTES.md <<'EOF'
-          ### Instance management
-          - Adds safe instance rename directly from the Instances page while preserving the instance ID, game files, loader/version metadata and backups.
-          - Rename is serialized with both the per-instance operation lease and the persisted global instance-name gate, so create/rename operations cannot win a duplicate-name race.
-          - Valid install-state metadata has only its human-readable name synchronized during rename.
-          - Adds two-step instance deletion with backups preserved by default and an explicit “Also delete backups” option.
-          - Delete commits by moving the canonical instance to a managed tombstone, then removes the tree without following nested symlinks/junctions/reparse points.
-          - Optional backup deletion accepts only the physical managed instance-backup root; linked backup roots fail closed.
-
-          ### Loader and filesystem hardening
-          - Fabric/Quilt local profile paths now require physical managed version directories, reject linked profile files and enforce bounded local metadata.
-          - Fabric/Quilt library publication rejects linked Maven parents and bounds total artifact downloads before publication.
-          - Loader install-state rollback snapshots are capped, reject linked/reparse state files and restore through hardened atomic publication.
-          - Quilt, Forge and NeoForge publication boundaries are revalidated immediately before destructive or final filesystem mutations.
-          - Mod enable/disable/remove now require physical managed JAR entries at the mutation boundary and reject linked enabled/disabled targets.
-
-          ### Process and memory hardening
-          - Forge and NeoForge official-installer stdout/stderr are drained concurrently with fixed-size retained tails instead of unbounded ReadToEndAsync buffers.
-          - Java discovery and managed-runtime `java -version` probes use the same bounded process-capture primitive while preserving timeout and cancellation process-tree cleanup.
-          - Regression fixtures exercise noisy child processes, cancellation cleanup and linked/reparse filesystem replacements on Windows and Linux.
-
-          ### Packaging and validation
-          - Windows and Ubuntu run the complete regression matrix before merge.
-          - Pull requests publish a self-contained Windows x64 portable artifact and smoke-launch the Linux desktop under Xvfb.
-          - Release CI publishes the Windows single-file executable plus Linux DEB/RPM packages after the release regression suite succeeds.
-          - Windows executables and Linux desktop packages include the branded UN_Nexo application icon.
-
-          ### Microsoft account status
-          - UN_Nexo continues to use its own Microsoft public-client registration and the Microsoft -> Xbox Live -> XSTS -> Minecraft Services chain.
-          - Live authenticated Minecraft acceptance remains tracked in #22 until Minecraft Services authorizes the UN_Nexo AppID and a licensed real account completes acceptance testing.
-          - UN_Nexo does not substitute another launcher's Client ID.
-
-          ### Current limitations
-          - HTTP Range resume and per-instance runtime overrides are not included yet.
-          - Friend-to-friend room-code/P2P networking is not included yet.
-          - Mod management covers JAR mods through Modrinth/CurseForge; resource-pack and shader management are not included yet.
-          - Real Linux Mint/Cinnamon behavior remains an on-device acceptance check.
-
-          This is a development pre-release. Local/offline profiles do not replace Minecraft ownership or authenticated online play.
-          EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "UN_Nexo $TAG" --notes-file RELEASE_NOTES.md --prerelease
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_SHA="$(git rev-parse "${TAG}^{commit}")"
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "Refusing to replace $TAG assets: tag resolves to $TAG_SHA but this workflow is $GITHUB_SHA." >&2
+              echo "Bump VERSION and publish a new tag instead." >&2
+              exit 1
+            fi
+
+            # Same-commit retries are idempotent: preserve the original
+            # generated notes and restore only the expected asset set.
+            gh release edit "$TAG" --title "UN_Nexo $TAG" --prerelease
             gh release upload "$TAG" release-assets/* --clobber
           else
             gh release create "$TAG" release-assets/* \
               --target "$GITHUB_SHA" \
               --title "UN_Nexo $TAG" \
-              --notes-file RELEASE_NOTES.md \
+              --generate-notes \
               --prerelease
           fi
