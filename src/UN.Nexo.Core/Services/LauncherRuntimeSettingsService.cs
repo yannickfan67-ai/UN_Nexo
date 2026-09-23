@@ -27,9 +27,8 @@ public sealed class LauncherRuntimeSettingsService
         LauncherRuntimeSettings settings;
         try
         {
-            await using var stream = File.OpenRead(path);
-            settings = await JsonSerializer.DeserializeAsync<LauncherRuntimeSettings>(
-                           stream,
+            settings = await BoundedPersistedJson.DeserializeAsync<LauncherRuntimeSettings>(
+                           path,
                            _jsonOptions,
                            cancellationToken)
                        ?? throw new InvalidDataException(
