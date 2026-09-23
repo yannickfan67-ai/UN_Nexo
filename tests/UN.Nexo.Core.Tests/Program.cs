@@ -69,7 +69,8 @@ internal static class Program
             ("Manifest streaming fallback", TestManifestStreamingFallbackAsync),
             ("Version catalog schema and stall fallback", VersionCatalogRegression.RunAsync),
             ("Metadata response size bounds", MetadataSizeRegression.RunAsync),
-            ("Trusted download target policy", NetworkTargetRegression.RunAsync),\n            ("BMCLAPI legacy HTTP rewrite", DownloadSourceRegression.RunAsync),
+            ("Trusted download target policy", NetworkTargetRegression.RunAsync),
+            ("BMCLAPI legacy HTTP rewrite", DownloadSourceRegression.RunAsync),
             ("Modern 1.21.4 launch plan and Quick Play", () => TestLaunchPlanAsync("1.21.4", 21, modern: true)),
             ("Legacy 1.8.9 launch plan and direct connect", () => TestLaunchPlanAsync("1.8.9", 8, modern: false)),
             ("Legacy 1.5.2 launch plan and virtual assets", TestMinecraft152LaunchPlanAsync)
