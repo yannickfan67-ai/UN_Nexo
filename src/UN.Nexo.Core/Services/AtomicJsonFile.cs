@@ -34,11 +34,23 @@ internal static class AtomicJsonFile
         var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)
             ?? throw new InvalidOperationException("JSON destination has no parent directory.");
-        Directory.CreateDirectory(directory);
+        PhysicalPathGuard.EnsureDirectoryForFile(
+            fullPath,
+            "JSON destination");
+        PhysicalPathGuard.EnsureRegularFileOrMissing(
+            fullPath,
+            "JSON destination");
 
         var tempPath = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
+            PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                directory,
+                "JSON destination parent");
+            PhysicalPathGuard.EnsureRegularFileOrMissing(
+                tempPath,
+                "JSON temporary file");
+
             await using (var stream = new FileStream(
                              tempPath,
                              FileMode.CreateNew,
@@ -55,6 +67,16 @@ internal static class AtomicJsonFile
                 await stream.FlushAsync(cancellationToken);
             }
 
+            PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                directory,
+                "JSON destination parent");
+            PhysicalPathGuard.EnsureRegularFileOrMissing(
+                tempPath,
+                "JSON temporary file");
+            PhysicalPathGuard.EnsureRegularFileOrMissing(
+                fullPath,
+                "JSON destination");
+
             cancellationToken.ThrowIfCancellationRequested();
             await PublishWithRetryAsync(
                 tempPath,
@@ -65,12 +87,13 @@ internal static class AtomicJsonFile
         {
             try
             {
-                if (File.Exists(tempPath))
+                if (PhysicalPathGuard.CanSafelyDeleteRegularFile(tempPath))
                     File.Delete(tempPath);
             }
             catch
             {
-                // Best-effort cleanup. Never remove or truncate the destination.
+                // Best-effort cleanup. If parent provenance changed, leaving a
+                // launcher temp artifact is safer than following the new path.
             }
         }
     }
@@ -86,6 +109,19 @@ internal static class AtomicJsonFile
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
+                var directory = Path.GetDirectoryName(destinationPath)
+                    ?? throw new InvalidOperationException(
+                        "JSON destination has no parent directory.");
+                PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                    directory,
+                    "JSON destination parent");
+                PhysicalPathGuard.EnsureRegularFileOrMissing(
+                    tempPath,
+                    "JSON temporary file");
+                PhysicalPathGuard.EnsureRegularFileOrMissing(
+                    destinationPath,
+                    "JSON destination");
+
                 File.Move(tempPath, destinationPath, overwrite: true);
                 return;
             }
