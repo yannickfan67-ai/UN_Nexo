@@ -23,6 +23,20 @@ public sealed class DownloadSourceService
 
     public IReadOnlyList<string> GetCandidates(string originalUrl)
     {
+        if (SourceId == "bmclapi"
+            && Uri.TryCreate(originalUrl, UriKind.Absolute, out var parsedOriginal)
+            && parsedOriginal.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+        {
+            var legacyMirror = RewriteLegacyHttpToBmcl(parsedOriginal);
+            if (legacyMirror is not null)
+            {
+                var trustedLegacyMirror = TrustedDownloadPolicy
+                    .RequireTrustedUri(legacyMirror, "BMCLAPI mirror URL")
+                    .AbsoluteUri;
+                return [trustedLegacyMirror];
+            }
+        }
+
         var trustedOriginal = TrustedDownloadPolicy
             .RequireTrustedUri(originalUrl, "Minecraft download URL")
             .AbsoluteUri;
@@ -38,6 +52,29 @@ public sealed class DownloadSourceService
             .RequireTrustedUri(mirror, "BMCLAPI mirror URL")
             .AbsoluteUri;
         return [trustedMirror, trustedOriginal];
+    }
+
+    private static string? RewriteLegacyHttpToBmcl(Uri uri)
+    {
+        if (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !uri.IsDefaultPort)
+            return null;
+
+        var path = uri.PathAndQuery;
+        var replacement = uri.Host.ToLowerInvariant() switch
+        {
+            "resources.download.minecraft.net" => $"{BmclBase}/assets/",
+            "libraries.minecraft.net" => $"{BmclBase}/maven/",
+            "launchermeta.mojang.com" => $"{BmclBase}/",
+            "launcher.mojang.com" => $"{BmclBase}/",
+            _ => null
+        };
+
+        if (replacement is null)
+            return null;
+
+        return replacement + path.TrimStart('/');
     }
 
     private static string RewriteToBmcl(string url)
