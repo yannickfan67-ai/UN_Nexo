@@ -74,9 +74,54 @@ public sealed class MinecraftInstanceRepairService
             return BuildReport(instance, issues, null);
         }
 
-        // Resolve once through the shared trusted/bounded metadata path.
-        // The health check must not open the same child JSON first with a
-        // weaker policy, otherwise resolver hardening can be bypassed.
+        // Preserve the existing raw-child structural diagnosis, but route
+        // the read through exactly the same bounded + physical provenance
+        // primitive used by inheritance resolution.
+        try
+        {
+            var rawBytes =
+                await MinecraftVersionMetadataResolver
+                    .ReadInstalledMetadataBytesAsync(
+                        gameRoot,
+                        instance.VersionId,
+                        cancellationToken);
+            using var rawDocument =
+                JsonDocument.Parse(rawBytes);
+            if (!TryValidateVersionMetadata(
+                    rawDocument.RootElement,
+                    out var metadataError))
+            {
+                issues.Add(new InstanceHealthIssue(
+                    "version-metadata-invalid",
+                    "Version metadata",
+                    InstanceHealthLevel.Error,
+                    $"Version metadata is structurally invalid: {metadataError}",
+                    versionJsonPath,
+                    "Run Repair to replace the invalid version metadata."));
+                return BuildReport(instance, issues, null);
+            }
+        }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or JsonException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            issues.Add(new InstanceHealthIssue(
+                "version-metadata-corrupt",
+                "Version metadata",
+                InstanceHealthLevel.Error,
+                $"Version metadata cannot be read safely: {ex.Message}",
+                versionJsonPath,
+                "Run Repair to replace the damaged or untrusted metadata."));
+            await CheckJavaAndSystemAsync(
+                instance,
+                issues,
+                progress,
+                cancellationToken);
+            return BuildReport(instance, issues, null);
+        }
+
         ResolvedMinecraftVersion resolved;
         try
         {
