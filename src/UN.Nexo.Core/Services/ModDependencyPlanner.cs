@@ -22,10 +22,7 @@ public sealed class ModDependencyPlanner
         ArgumentNullException.ThrowIfNull(rootProject);
         ArgumentNullException.ThrowIfNull(rootVersion);
 
-        if (!string.Equals(rootProject.ProviderId, _provider.ProviderId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(rootVersion.ProviderId, _provider.ProviderId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(rootProject.ProjectId, rootVersion.ProjectId, StringComparison.Ordinal))
-            throw new InvalidDataException("The dependency root does not belong to this provider.");
+        ValidateNodeIdentity(rootProject, rootVersion);
 
         var version = RequireValue(minecraftVersion, nameof(minecraftVersion));
         var normalizedLoader = RequireValue(loader, nameof(loader));
@@ -39,8 +36,7 @@ public sealed class ModDependencyPlanner
 
         foreach (var edge in incompatibleEdges)
         {
-            if (selected.Values.Any(item =>
-                    MatchesIncompatibility(edge.Dependency, item.Version)))
+            if (selected.Values.Any(item => MatchesIncompatibility(edge.Dependency, item.Version)))
             {
                 throw new InvalidDataException(
                     $"Dependency conflict: '{edge.SourceTitle}' ({edge.SourceProjectId}) declares another project/version selected by this install plan as incompatible.");
@@ -54,26 +50,18 @@ public sealed class ModDependencyPlanner
                 .Select(group => group.First())
                 .ToArray(),
             incompatibleEdges
-                .GroupBy(item => (
-                    item.SourceProjectId,
-                    item.Dependency.ProjectId,
-                    item.Dependency.VersionId))
+                .GroupBy(item => (item.SourceProjectId, item.Dependency.ProjectId, item.Dependency.VersionId))
                 .Select(group => group.First())
                 .ToArray());
 
-        async Task VisitAsync(
-            ModProviderProject project,
-            ModProviderVersion candidateVersion,
-            bool isRoot)
+        async Task VisitAsync(ModProviderProject project, ModProviderVersion candidateVersion, bool isRoot)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ValidateNodeIdentity(project, candidateVersion);
 
             if (selected.TryGetValue(project.ProjectId, out var existing))
             {
-                if (!string.Equals(
-                        existing.Version.VersionId,
-                        candidateVersion.VersionId,
-                        StringComparison.Ordinal))
+                if (!string.Equals(existing.Version.VersionId, candidateVersion.VersionId, StringComparison.Ordinal))
                 {
                     throw new InvalidDataException(
                         $"Dependency conflict: project '{project.ProjectId}' requires multiple versions ('{existing.Version.VersionId}' and '{candidateVersion.VersionId}').");
@@ -82,12 +70,10 @@ public sealed class ModDependencyPlanner
             }
 
             if (!visiting.Add(project.ProjectId))
-                throw new InvalidDataException(
-                    $"Dependency cycle detected at project '{project.ProjectId}'.");
+                throw new InvalidDataException($"Dependency cycle detected at project '{project.ProjectId}'.");
 
             if (selected.Count + visiting.Count > MaxDependencyProjects)
-                throw new InvalidDataException(
-                    $"The dependency graph exceeds the {MaxDependencyProjects}-project safety limit.");
+                throw new InvalidDataException($"The dependency graph exceeds the {MaxDependencyProjects}-project safety limit.");
 
             try
             {
@@ -111,22 +97,36 @@ public sealed class ModDependencyPlanner
                                 ?? throw new InvalidDataException(
                                     $"Required dependency from '{project.Title}' has no compatible version for Minecraft {version} / {normalizedLoader}.");
 
+                            if (!string.Equals(
+                                    dependencyVersion.ProviderId,
+                                    _provider.ProviderId,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new InvalidDataException(
+                                    $"Required dependency version '{dependencyVersion.VersionId}' belongs to unexpected provider '{dependencyVersion.ProviderId}'.");
+                            }
+
+                            if (dependency.VersionId is not null
+                                && !string.Equals(
+                                    dependency.VersionId,
+                                    dependencyVersion.VersionId,
+                                    StringComparison.Ordinal))
+                            {
+                                throw new InvalidDataException(
+                                    $"Required dependency requested version '{dependency.VersionId}', but provider returned '{dependencyVersion.VersionId}'.");
+                            }
+
                             var dependencyProjectId = dependencyVersion.ProjectId;
                             if (dependency.ProjectId is not null
-                                && !string.Equals(
-                                    dependency.ProjectId,
-                                    dependencyProjectId,
-                                    StringComparison.Ordinal))
+                                && !string.Equals(dependency.ProjectId, dependencyProjectId, StringComparison.Ordinal))
                             {
                                 throw new InvalidDataException(
                                     $"Required dependency version '{dependencyVersion.VersionId}' belongs to unexpected project '{dependencyProjectId}'.");
                             }
 
                             if (visiting.Contains(dependencyProjectId))
-                            {
                                 throw new InvalidDataException(
                                     $"Dependency cycle detected: '{project.ProjectId}' -> '{dependencyProjectId}'.");
-                            }
 
                             if (selected.TryGetValue(dependencyProjectId, out var selectedDependency))
                             {
@@ -148,10 +148,7 @@ public sealed class ModDependencyPlanner
                                 ?? throw new InvalidDataException(
                                     $"Required dependency project '{dependencyProjectId}' could not be resolved.");
 
-                            await VisitAsync(
-                                dependencyProject,
-                                dependencyVersion,
-                                isRoot: false);
+                            await VisitAsync(dependencyProject, dependencyVersion, isRoot: false);
                             break;
                         }
                         case ModProviderDependencyType.Optional:
@@ -166,8 +163,7 @@ public sealed class ModDependencyPlanner
                         case ModProviderDependencyType.Embedded:
                             break;
                         default:
-                            throw new InvalidDataException(
-                                "Unknown provider dependency type.");
+                            throw new InvalidDataException("Unknown provider dependency type.");
                     }
                 }
 
@@ -182,24 +178,26 @@ public sealed class ModDependencyPlanner
         }
     }
 
-    private static bool MatchesIncompatibility(
-        ModProviderDependency dependency,
-        ModProviderVersion version)
+    private void ValidateNodeIdentity(ModProviderProject project, ModProviderVersion version)
+    {
+        if (!string.Equals(project.ProviderId, _provider.ProviderId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(version.ProviderId, _provider.ProviderId, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(project.ProjectId, version.ProjectId, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Dependency node identity mismatch for project '{project.ProjectId}' and version '{version.VersionId}'.");
+        }
+    }
+
+    private static bool MatchesIncompatibility(ModProviderDependency dependency, ModProviderVersion version)
     {
         var projectMatches = dependency.ProjectId is null
-            || string.Equals(
-                dependency.ProjectId,
-                version.ProjectId,
-                StringComparison.Ordinal);
+            || string.Equals(dependency.ProjectId, version.ProjectId, StringComparison.Ordinal);
         var versionMatches = dependency.VersionId is null
-            || string.Equals(
-                dependency.VersionId,
-                version.VersionId,
-                StringComparison.Ordinal);
+            || string.Equals(dependency.VersionId, version.VersionId, StringComparison.Ordinal);
         return projectMatches
                && versionMatches
-               && (dependency.ProjectId is not null
-                   || dependency.VersionId is not null);
+               && (dependency.ProjectId is not null || dependency.VersionId is not null);
     }
 
     private static string RequireValue(string value, string parameterName)
