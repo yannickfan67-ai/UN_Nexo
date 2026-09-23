@@ -13,13 +13,29 @@ internal static class AtomicJsonFile
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         var fullPath = Path.GetFullPath(path);
+        using var publishLease = await PathKeyedLock.AcquireAsync(
+            fullPath,
+            cancellationToken);
+        await WriteUnlockedAsync(
+            fullPath,
+            value,
+            options,
+            cancellationToken);
+    }
+
+    internal static async Task WriteUnlockedAsync<T>(
+        string path,
+        T value,
+        JsonSerializerOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        var fullPath = Path.GetFullPath(path);
         var directory = Path.GetDirectoryName(fullPath)
             ?? throw new InvalidOperationException("JSON destination has no parent directory.");
         Directory.CreateDirectory(directory);
 
-        using var publishLease = await PathKeyedLock.AcquireAsync(
-            fullPath,
-            cancellationToken);
         var tempPath = fullPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
