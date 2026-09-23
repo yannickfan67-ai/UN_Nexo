@@ -22,10 +22,7 @@ public sealed class ModDependencyPlanner
         ArgumentNullException.ThrowIfNull(rootProject);
         ArgumentNullException.ThrowIfNull(rootVersion);
 
-        if (!string.Equals(rootProject.ProviderId, _provider.ProviderId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(rootVersion.ProviderId, _provider.ProviderId, StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(rootProject.ProjectId, rootVersion.ProjectId, StringComparison.Ordinal))
-            throw new InvalidDataException("The dependency root does not belong to this provider.");
+        ValidateNodeIdentity(rootProject, rootVersion);
 
         var version = RequireValue(minecraftVersion, nameof(minecraftVersion));
         var normalizedLoader = RequireValue(loader, nameof(loader));
@@ -67,6 +64,7 @@ public sealed class ModDependencyPlanner
             bool isRoot)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            ValidateNodeIdentity(project, candidateVersion);
 
             if (selected.TryGetValue(project.ProjectId, out var existing))
             {
@@ -110,6 +108,25 @@ public sealed class ModDependencyPlanner
                                 cancellationToken)
                                 ?? throw new InvalidDataException(
                                     $"Required dependency from '{project.Title}' has no compatible version for Minecraft {version} / {normalizedLoader}.");
+
+                            if (!string.Equals(
+                                    dependencyVersion.ProviderId,
+                                    _provider.ProviderId,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                throw new InvalidDataException(
+                                    $"Required dependency version '{dependencyVersion.VersionId}' belongs to unexpected provider '{dependencyVersion.ProviderId}'.");
+                            }
+
+                            if (dependency.VersionId is not null
+                                && !string.Equals(
+                                    dependency.VersionId,
+                                    dependencyVersion.VersionId,
+                                    StringComparison.Ordinal))
+                            {
+                                throw new InvalidDataException(
+                                    $"Required dependency requested version '{dependency.VersionId}', but provider returned '{dependencyVersion.VersionId}'.");
+                            }
 
                             var dependencyProjectId = dependencyVersion.ProjectId;
                             if (dependency.ProjectId is not null
@@ -179,6 +196,28 @@ public sealed class ModDependencyPlanner
             {
                 visiting.Remove(project.ProjectId);
             }
+        }
+    }
+
+    private void ValidateNodeIdentity(
+        ModProviderProject project,
+        ModProviderVersion version)
+    {
+        if (!string.Equals(
+                project.ProviderId,
+                _provider.ProviderId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                version.ProviderId,
+                _provider.ProviderId,
+                StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(
+                project.ProjectId,
+                version.ProjectId,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                $"Dependency node identity mismatch for project '{project.ProjectId}' and version '{version.VersionId}'.");
         }
     }
 

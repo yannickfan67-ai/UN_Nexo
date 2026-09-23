@@ -8,6 +8,7 @@ internal static class ModDependencyRegression
     internal static async Task RunAsync()
     {
         await TestRecursivePlanAndVersionOnlyEdgeAsync();
+        await TestProviderIdentityEnforcementAsync();
         await TestCycleAndConflictRejectionAsync();
         await TestInstalledIncompatibilityRejectionAsync();
         await TestProviderCannotEscapeOwnedStagingAsync();
@@ -58,6 +59,138 @@ internal static class ModDependencyRegression
             plan.OptionalDependencies.Count == 1
             && plan.OptionalDependencies[0].ProjectId == "D",
             "Optional dependencies should be exposed without being auto-installed.");
+    }
+
+    private static async Task TestProviderIdentityEnforcementAsync()
+    {
+        {
+            var provider = new FakeProvider();
+            var required = provider.Add("DEP", "required-v1", []);
+            var wrong = provider.Version("DEP", "wrong-v2", []);
+            provider.AddVersion(wrong);
+            var root = provider.Add(
+                "ROOT",
+                "root-v1",
+                [
+                    new ModProviderDependency(
+                        "DEP",
+                        required.Version.VersionId,
+                        ModProviderDependencyType.Required)
+                ]);
+            provider.CompatibleOverride =
+                (_, _, _, _) => wrong;
+
+            await ExpectInvalidAsync(
+                () => new ModDependencyPlanner(provider).BuildAsync(
+                    root.Project,
+                    root.Version,
+                    "1.21.4",
+                    "fabric"),
+                "requested version");
+        }
+
+        {
+            var provider = new FakeProvider();
+            var required = provider.Add("DEP", "required-v1", []);
+            var root = provider.Add(
+                "ROOT",
+                "root-v1",
+                [
+                    new ModProviderDependency(
+                        null,
+                        required.Version.VersionId,
+                        ModProviderDependencyType.Required)
+                ]);
+            var wrong = provider.Version("DEP", "wrong-v2", []);
+            provider.CompatibleOverride =
+                (_, _, _, _) => wrong;
+
+            await ExpectInvalidAsync(
+                () => new ModDependencyPlanner(provider).BuildAsync(
+                    root.Project,
+                    root.Version,
+                    "1.21.4",
+                    "fabric"),
+                "requested version");
+        }
+
+        {
+            var provider = new FakeProvider();
+            var required = provider.Add("DEP", "required-v1", []);
+            var root = provider.Add(
+                "ROOT",
+                "root-v1",
+                [
+                    new ModProviderDependency(
+                        "DEP",
+                        required.Version.VersionId,
+                        ModProviderDependencyType.Required)
+                ]);
+            provider.ProjectOverride =
+                _ => provider.Project("OTHER");
+
+            await ExpectInvalidAsync(
+                () => new ModDependencyPlanner(provider).BuildAsync(
+                    root.Project,
+                    root.Version,
+                    "1.21.4",
+                    "fabric"),
+                "identity mismatch");
+        }
+
+        {
+            var provider = new FakeProvider();
+            var required = provider.Add("DEP", "required-v1", []);
+            var root = provider.Add(
+                "ROOT",
+                "root-v1",
+                [
+                    new ModProviderDependency(
+                        "DEP",
+                        required.Version.VersionId,
+                        ModProviderDependencyType.Required)
+                ]);
+            provider.ProjectOverride =
+                _ => provider.Project("DEP") with
+                {
+                    ProviderId = "foreign"
+                };
+
+            await ExpectInvalidAsync(
+                () => new ModDependencyPlanner(provider).BuildAsync(
+                    root.Project,
+                    root.Version,
+                    "1.21.4",
+                    "fabric"),
+                "identity mismatch");
+        }
+
+        {
+            var provider = new FakeProvider();
+            var required = provider.Add("DEP", "required-v1", []);
+            var root = provider.Add(
+                "ROOT",
+                "root-v1",
+                [
+                    new ModProviderDependency(
+                        "DEP",
+                        required.Version.VersionId,
+                        ModProviderDependencyType.Required)
+                ]);
+            provider.CompatibleOverride =
+                (_, _, _, _) => required.Version with
+                {
+                    ProviderId = "foreign"
+                };
+
+            await ExpectInvalidAsync(
+                () => new ModDependencyPlanner(provider).BuildAsync(
+                    root.Project,
+                    root.Version,
+                    "1.21.4",
+                    "fabric"),
+                "unexpected provider");
+        }
     }
 
     private static async Task TestCycleAndConflictRejectionAsync()
@@ -518,6 +651,15 @@ internal static class ModDependencyRegression
         public string ProviderId => "fake";
         public string DisplayName => "Fake";
 
+        public Func<string, ModProviderProject?>? ProjectOverride { get; set; }
+
+        public Func<
+            string?,
+            string?,
+            string,
+            string,
+            ModProviderVersion?>? CompatibleOverride { get; set; }
+
         public (ModProviderProject Project, ModProviderVersion Version) Add(
             string projectId,
             string versionId,
@@ -595,9 +737,11 @@ internal static class ModDependencyRegression
             string projectId,
             CancellationToken cancellationToken = default)
             => Task.FromResult(
-                _projects.TryGetValue(projectId, out var project)
-                    ? project
-                    : null);
+                ProjectOverride is not null
+                    ? ProjectOverride(projectId)
+                    : _projects.TryGetValue(projectId, out var project)
+                        ? project
+                        : null);
 
         public Task<ModProviderVersion?> GetLatestCompatibleVersionAsync(
             string projectId,
@@ -616,6 +760,14 @@ internal static class ModDependencyRegression
             string loader,
             CancellationToken cancellationToken = default)
         {
+            if (CompatibleOverride is not null)
+                return Task.FromResult(
+                    CompatibleOverride(
+                        projectId,
+                        versionId,
+                        minecraftVersion,
+                        loader));
+
             if (versionId is not null)
             {
                 return Task.FromResult(
