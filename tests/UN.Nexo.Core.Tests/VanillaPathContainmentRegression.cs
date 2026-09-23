@@ -122,7 +122,7 @@ internal static class VanillaPathContainmentRegression
 
                 try
                 {
-                    await installer.InstallAsync(instance, Version("1.21.4"));
+                    await installer.InstallAsync(instance, Version("1.21.4", handler.MetadataSha1));
                     throw new Exception($"Unsafe library path '{artifactPath}' should be rejected.");
                 }
                 catch (InvalidDataException ex)
@@ -174,7 +174,7 @@ internal static class VanillaPathContainmentRegression
                 "vanilla",
                 DateTimeOffset.UtcNow);
 
-            await installer.InstallAsync(instance, Version("1.21.4"));
+            await installer.InstallAsync(instance, Version("1.21.4", handler.MetadataSha1));
 
             var library = Path.Combine(
                 paths.GetInstanceGameDirectory(instance.Id),
@@ -193,14 +193,16 @@ internal static class VanillaPathContainmentRegression
         }
     }
 
-    private static MinecraftVersionInfo Version(string id)
+    private static MinecraftVersionInfo Version(
+        string id,
+        string sha1 = "0000000000000000000000000000000000000000")
         => new(
             id,
             "release",
             "https://piston-meta.mojang.com/path-test.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            sha1,
             0);
 
     private static string NewRoot(string suffix)
@@ -244,6 +246,20 @@ internal static class VanillaPathContainmentRegression
         public int RequestCount { get; private set; }
         public int MetadataRequests { get; private set; }
         public int ArtifactRequests { get; private set; }
+        public string MetadataSha1 => Convert.ToHexString(
+                SHA1.HashData(Encoding.UTF8.GetBytes(BuildMetadata())))
+            .ToLowerInvariant();
+
+        private string BuildMetadata()
+            => mode == PathFixtureMode.EmptyVersion
+                ? "{\"id\":\"1.21.4\",\"libraries\":[]}"
+                : "{\"id\":\"1.21.4\","
+                  + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+                  + "\"assetIndex\":{\"id\":\"path-assets\",\"url\":\"https://launchermeta.mojang.com/path-assets.json\"},"
+                  + "\"libraries\":[{\"name\":\"com.example:lib:1.0\","
+                  + "\"downloads\":{\"artifact\":{\"path\":"
+                  + System.Text.Json.JsonSerializer.Serialize(artifactPath)
+                  + ",\"url\":\"https://libraries.minecraft.net/path-test.jar\"}}}]}";
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -256,18 +272,9 @@ internal static class VanillaPathContainmentRegression
             if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
                 MetadataRequests++;
-                var json = mode == PathFixtureMode.EmptyVersion
-                    ? "{\"id\":\"1.21.4\",\"libraries\":[]}"
-                    : "{\"id\":\"1.21.4\","
-                      + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                      + "\"assetIndex\":{\"id\":\"path-assets\",\"url\":\"https://launchermeta.mojang.com/path-assets.json\"},"
-                      + "\"libraries\":[{\"name\":\"com.example:lib:1.0\","
-                      + "\"downloads\":{\"artifact\":{\"path\":"
-                      + System.Text.Json.JsonSerializer.Serialize(artifactPath)
-                      + ",\"url\":\"https://libraries.minecraft.net/path-test.jar\"}}}]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(json, Encoding.UTF8, "application/json")
+                    Content = new StringContent(BuildMetadata(), Encoding.UTF8, "application/json")
                 });
             }
 
