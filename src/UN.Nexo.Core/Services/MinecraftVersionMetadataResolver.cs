@@ -34,18 +34,9 @@ public sealed class MinecraftVersionMetadataResolver
         ValidateVersionId(launchVersionId);
 
         var physicalGameRoot = Path.GetFullPath(gameRoot);
-        PhysicalPathGuard.EnsureDirectoryChainPhysical(
-            physicalGameRoot,
-            "Minecraft game root");
-        var versionsRoot = Path.Combine(
-            physicalGameRoot,
-            "versions");
-        PhysicalPathGuard.EnsureDirectoryChainPhysical(
-            versionsRoot,
-            "Minecraft versions root");
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var resolved = await ResolveNodeAsync(
-            versionsRoot,
+            physicalGameRoot,
             launchVersionId,
             visited,
             0,
@@ -55,7 +46,7 @@ public sealed class MinecraftVersionMetadataResolver
     }
 
     private async Task<ResolvedNode> ResolveNodeAsync(
-        string versionsRoot,
+        string gameRoot,
         string versionId,
         HashSet<string> visited,
         int depth,
@@ -70,41 +61,10 @@ public sealed class MinecraftVersionMetadataResolver
 
         try
         {
-            var versionDirectory = Path.Combine(
-                versionsRoot,
-                versionId);
-            PhysicalPathGuard.EnsureDirectoryChainPhysical(
-                versionDirectory,
-                $"Minecraft version '{versionId}' directory");
-
-            var metadataPath = Path.Combine(
-                versionDirectory,
-                versionId + ".json");
-            if (!File.Exists(metadataPath))
-            {
-                throw new FileNotFoundException(
-                    $"Version metadata is missing: {metadataPath}",
-                    metadataPath);
-            }
-
-            PhysicalPathGuard.EnsureRegularFileOrMissing(
-                metadataPath,
-                $"Minecraft version '{versionId}' metadata");
-            var bytes = await BoundedLocalFile.ReadAllBytesAsync(
-                metadataPath,
-                MaxVersionMetadataBytes,
-                $"Minecraft version '{versionId}' metadata",
+            var bytes = await ReadInstalledMetadataBytesAsync(
+                gameRoot,
+                versionId,
                 cancellationToken);
-
-            // Re-establish provenance after the read as well; a path that was
-            // replaced while the file was being consumed must not be accepted
-            // as managed installed metadata.
-            PhysicalPathGuard.EnsureDirectoryChainPhysical(
-                versionDirectory,
-                $"Minecraft version '{versionId}' directory");
-            PhysicalPathGuard.EnsureRegularFileOrMissing(
-                metadataPath,
-                $"Minecraft version '{versionId}' metadata");
 
             JsonNode? node;
             try
@@ -144,7 +104,7 @@ public sealed class MinecraftVersionMetadataResolver
 
             ValidateVersionId(inheritsFrom);
             var parent = await ResolveNodeAsync(
-                versionsRoot,
+                gameRoot,
                 inheritsFrom,
                 visited,
                 depth + 1,
@@ -157,6 +117,64 @@ public sealed class MinecraftVersionMetadataResolver
         {
             visited.Remove(versionId);
         }
+    }
+
+    internal static async Task<byte[]> ReadInstalledMetadataBytesAsync(
+        string gameRoot,
+        string versionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(gameRoot))
+            throw new ArgumentException(
+                "Game root is required.",
+                nameof(gameRoot));
+        ValidateVersionId(versionId);
+
+        var physicalGameRoot = Path.GetFullPath(gameRoot);
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(
+            physicalGameRoot,
+            "Minecraft game root");
+
+        var versionsRoot = Path.Combine(
+            physicalGameRoot,
+            "versions");
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(
+            versionsRoot,
+            "Minecraft versions root");
+
+        var versionDirectory = Path.Combine(
+            versionsRoot,
+            versionId);
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(
+            versionDirectory,
+            $"Minecraft version '{versionId}' directory");
+
+        var metadataPath = Path.Combine(
+            versionDirectory,
+            versionId + ".json");
+        if (!File.Exists(metadataPath))
+        {
+            throw new FileNotFoundException(
+                $"Version metadata is missing: {metadataPath}",
+                metadataPath);
+        }
+
+        PhysicalPathGuard.EnsureRegularFileOrMissing(
+            metadataPath,
+            $"Minecraft version '{versionId}' metadata");
+        var bytes = await BoundedLocalFile.ReadAllBytesAsync(
+            metadataPath,
+            MaxVersionMetadataBytes,
+            $"Minecraft version '{versionId}' metadata",
+            cancellationToken);
+
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(
+            versionDirectory,
+            $"Minecraft version '{versionId}' directory");
+        PhysicalPathGuard.EnsureRegularFileOrMissing(
+            metadataPath,
+            $"Minecraft version '{versionId}' metadata");
+        return bytes;
     }
 
     private static JsonObject Merge(JsonObject parent, JsonObject child)
