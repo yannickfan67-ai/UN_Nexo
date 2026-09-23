@@ -9,7 +9,8 @@ namespace UN.Nexo.Core.Services;
 
 public sealed record MinecraftSrvEndpoint(
     string Host,
-    int Port);
+    int Port,
+    bool ServiceUnavailable = false);
 
 public interface IMinecraftSrvResolver
 {
@@ -20,7 +21,8 @@ public interface IMinecraftSrvResolver
 
 public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
 {
-    private const ushort SrvRecordType = 33;
+    internal const ushort SrvRecordType = 33;
+    private const int MaxDnsMessageBytes = ushort.MaxValue;
     private static readonly TimeSpan PerDnsServerTimeout =
         TimeSpan.FromMilliseconds(500);
 
@@ -46,14 +48,13 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         if (string.IsNullOrWhiteSpace(asciiHost))
             return null;
 
+        var queryName = "_minecraft._tcp." + asciiHost;
         byte[] query;
         ushort queryId;
         try
         {
             queryId = checked((ushort)Random.Shared.Next(ushort.MaxValue + 1));
-            query = BuildQuery(
-                queryId,
-                "_minecraft._tcp." + asciiHost);
+            query = BuildQuery(queryId, queryName);
         }
         catch (InvalidDataException)
         {
@@ -76,9 +77,18 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
                 udp.Connect(new IPEndPoint(server, 53));
                 await udp.SendAsync(query, query.Length);
                 var response = await udp.ReceiveAsync(linked.Token);
+
+                var responseBytes = response.Buffer;
+                if (IsTruncatedResponse(responseBytes, queryId))
+                    responseBytes = await QueryTcpAsync(
+                        server,
+                        query,
+                        linked.Token);
+
                 var records = ParseResponse(
-                    response.Buffer,
-                    queryId);
+                    responseBytes,
+                    queryId,
+                    queryName);
                 var selected = Select(records);
                 if (selected is not null)
                     return selected;
@@ -100,6 +110,88 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         }
 
         return null;
+    }
+
+    private static async Task<byte[]> QueryTcpAsync(
+        IPAddress server,
+        byte[] query,
+        CancellationToken cancellationToken)
+    {
+        using var client = new TcpClient(server.AddressFamily);
+        await client.ConnectAsync(
+            new IPEndPoint(server, 53),
+            cancellationToken);
+        await using var stream = client.GetStream();
+
+        Span<byte> prefix = stackalloc byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(
+            prefix,
+            checked((ushort)query.Length));
+        await stream.WriteAsync(
+            prefix.ToArray(),
+            cancellationToken);
+        await stream.WriteAsync(
+            query,
+            cancellationToken);
+        await stream.FlushAsync(cancellationToken);
+
+        var lengthBytes = new byte[2];
+        await ReadExactlyAsync(
+            stream,
+            lengthBytes,
+            cancellationToken);
+        var length =
+            BinaryPrimitives.ReadUInt16BigEndian(lengthBytes);
+        if (length is <= 0 or > MaxDnsMessageBytes)
+            throw new InvalidDataException(
+                "DNS-over-TCP response length is invalid.");
+
+        var response = new byte[length];
+        await ReadExactlyAsync(
+            stream,
+            response,
+            cancellationToken);
+        return response;
+    }
+
+    private static async Task ReadExactlyAsync(
+        Stream stream,
+        Memory<byte> buffer,
+        CancellationToken cancellationToken)
+    {
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var count = await stream.ReadAsync(
+                buffer[read..],
+                cancellationToken);
+            if (count == 0)
+                throw new EndOfStreamException(
+                    "DNS-over-TCP response ended early.");
+            read += count;
+        }
+    }
+
+    internal static bool IsTruncatedResponse(
+        ReadOnlySpan<byte> response,
+        ushort expectedId)
+    {
+        if (response.Length < 4)
+            throw new InvalidDataException(
+                "DNS SRV response is truncated.");
+
+        var id = BinaryPrimitives.ReadUInt16BigEndian(response);
+        if (id != expectedId)
+            throw new InvalidDataException(
+                "DNS SRV response id does not match the query.");
+
+        var flags =
+            BinaryPrimitives.ReadUInt16BigEndian(response[2..]);
+        if ((flags & 0x8000) == 0)
+            throw new InvalidDataException(
+                "DNS SRV response is not marked as a response.");
+
+        return (flags & 0x0200) != 0;
     }
 
     private static IReadOnlyList<IPAddress> GetDnsServers()
@@ -128,7 +220,7 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         }
     }
 
-    private static byte[] BuildQuery(
+    internal static byte[] BuildQuery(
         ushort queryId,
         string name)
     {
@@ -172,9 +264,10 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         return stream.ToArray();
     }
 
-    private static IReadOnlyList<SrvRecord> ParseResponse(
+    internal static IReadOnlyList<SrvRecord> ParseResponse(
         byte[] response,
-        ushort expectedId)
+        ushort expectedId,
+        string expectedName)
     {
         if (response.Length < 12)
             throw new InvalidDataException(
@@ -190,6 +283,9 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         if ((flags & 0x8000) == 0)
             throw new InvalidDataException(
                 "DNS SRV response is not marked as a response.");
+        if ((flags & 0x0200) != 0)
+            throw new InvalidDataException(
+                "Truncated DNS SRV response requires TCP retry.");
         if ((flags & 0x000F) != 0)
             return [];
 
@@ -198,18 +294,29 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         var answerCount =
             BinaryPrimitives.ReadUInt16BigEndian(data[6..]);
 
+        if (questionCount != 1)
+            throw new InvalidDataException(
+                "DNS SRV response must contain exactly one question.");
+
         var offset = 12;
-        for (var index = 0; index < questionCount; index++)
-        {
-            _ = ReadName(data, ref offset);
-            RequireRemaining(data, offset, 4);
-            offset += 4;
-        }
+        var questionName = ReadName(data, ref offset);
+        RequireRemaining(data, offset, 4);
+        var questionType =
+            BinaryPrimitives.ReadUInt16BigEndian(data[offset..]);
+        var questionClass =
+            BinaryPrimitives.ReadUInt16BigEndian(data[(offset + 2)..]);
+        offset += 4;
+
+        if (!DnsNameEquals(questionName, expectedName)
+            || questionType != SrvRecordType
+            || questionClass != 1)
+            throw new InvalidDataException(
+                "DNS SRV response question does not match the query.");
 
         var records = new List<SrvRecord>();
         for (var index = 0; index < answerCount; index++)
         {
-            _ = ReadName(data, ref offset);
+            var owner = ReadName(data, ref offset);
             RequireRemaining(data, offset, 10);
 
             var type =
@@ -223,12 +330,16 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
                     data[(offset + 8)..]);
             offset += 10;
             RequireRemaining(data, offset, dataLength);
-            var recordEnd = offset + dataLength;
+            var recordEnd = checked(offset + dataLength);
 
             if (type == SrvRecordType
                 && recordClass == 1
-                && dataLength >= 7)
+                && DnsNameEquals(owner, expectedName))
             {
+                if (dataLength < 7)
+                    throw new InvalidDataException(
+                        "DNS SRV RDATA is too short.");
+
                 var priority =
                     BinaryPrimitives.ReadUInt16BigEndian(
                         data[offset..]);
@@ -238,20 +349,31 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
                 var port =
                     BinaryPrimitives.ReadUInt16BigEndian(
                         data[(offset + 4)..]);
+
                 var targetOffset = offset + 6;
                 var target = ReadName(
                     data,
-                    ref targetOffset).TrimEnd('.');
+                    ref targetOffset,
+                    recordEnd);
+                if (targetOffset != recordEnd)
+                    throw new InvalidDataException(
+                        "DNS SRV target does not consume its RDATA.");
 
-                if (targetOffset <= recordEnd
-                    && port > 0
-                    && !string.IsNullOrWhiteSpace(target))
+                if (string.IsNullOrEmpty(target))
                 {
                     records.Add(new SrvRecord(
                         priority,
                         weight,
                         port,
-                        target));
+                        "."));
+                }
+                else if (port > 0)
+                {
+                    records.Add(new SrvRecord(
+                        priority,
+                        weight,
+                        port,
+                        target.TrimEnd('.')));
                 }
             }
 
@@ -261,8 +383,9 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         return records;
     }
 
-    private static MinecraftSrvEndpoint? Select(
-        IReadOnlyList<SrvRecord> records)
+    internal static MinecraftSrvEndpoint? Select(
+        IReadOnlyList<SrvRecord> records,
+        Func<long, long>? chooseInclusive = null)
     {
         if (records.Count == 0)
             return null;
@@ -271,25 +394,44 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         var eligible = records
             .Where(record => record.Priority == priority)
             .ToArray();
-        var totalWeight = eligible.Sum(record => (int)record.Weight);
+
+        if (eligible.Any(record =>
+                string.Equals(record.Target, ".", StringComparison.Ordinal)))
+            return new MinecraftSrvEndpoint(
+                ".",
+                0,
+                ServiceUnavailable: true);
+
+        var ordered = eligible
+            .OrderBy(record => record.Weight == 0 ? 0 : 1)
+            .ThenBy(record => record.Target, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(record => record.Port)
+            .ToArray();
+
+        var totalWeight =
+            ordered.Sum(record => (long)record.Weight);
 
         SrvRecord selected;
-        if (totalWeight <= 0)
+        if (totalWeight == 0)
         {
-            selected = eligible
-                .OrderBy(record => record.Target, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(record => record.Port)
-                .First();
+            selected = ordered[0];
         }
         else
         {
-            var choice = Random.Shared.Next(totalWeight);
-            var running = 0;
-            selected = eligible[^1];
-            foreach (var record in eligible)
+            var choice = chooseInclusive is null
+                ? Random.Shared.NextInt64(totalWeight + 1)
+                : chooseInclusive(totalWeight);
+            if (choice < 0 || choice > totalWeight)
+                throw new ArgumentOutOfRangeException(
+                    nameof(chooseInclusive),
+                    "SRV weight selector returned an out-of-range value.");
+
+            long running = 0;
+            selected = ordered[^1];
+            foreach (var record in ordered)
             {
                 running += record.Weight;
-                if (choice < running)
+                if (running >= choice)
                 {
                     selected = record;
                     break;
@@ -302,18 +444,38 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
             selected.Port);
     }
 
-    private static string ReadName(
+    private static bool DnsNameEquals(
+        string left,
+        string right)
+        => string.Equals(
+            left.TrimEnd('.'),
+            right.TrimEnd('.'),
+            StringComparison.OrdinalIgnoreCase);
+
+    internal static string ReadName(
         ReadOnlySpan<byte> data,
-        ref int offset)
+        ref int offset,
+        int inlineEnd = -1)
     {
         var labels = new List<string>();
         var cursor = offset;
         var jumped = false;
         var jumps = 0;
+        var localEnd = inlineEnd < 0
+            ? data.Length
+            : inlineEnd;
+
+        if (localEnd < 0 || localEnd > data.Length)
+            throw new InvalidDataException(
+                "DNS name boundary is invalid.");
 
         while (true)
         {
-            RequireRemaining(data, cursor, 1);
+            RequireRemainingWithin(
+                data,
+                cursor,
+                1,
+                jumped ? data.Length : localEnd);
             var length = data[cursor++];
 
             if (length == 0)
@@ -325,7 +487,11 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
 
             if ((length & 0xC0) == 0xC0)
             {
-                RequireRemaining(data, cursor, 1);
+                RequireRemainingWithin(
+                    data,
+                    cursor,
+                    1,
+                    jumped ? data.Length : localEnd);
                 var pointer =
                     ((length & 0x3F) << 8)
                     | data[cursor++];
@@ -347,7 +513,11 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
                 throw new InvalidDataException(
                     "DNS label length is invalid.");
 
-            RequireRemaining(data, cursor, length);
+            RequireRemainingWithin(
+                data,
+                cursor,
+                length,
+                jumped ? data.Length : localEnd);
             labels.Add(
                 Encoding.ASCII.GetString(
                     data.Slice(cursor, length)));
@@ -361,15 +531,28 @@ public sealed class MinecraftSrvResolver : IMinecraftSrvResolver
         ReadOnlySpan<byte> data,
         int offset,
         int count)
+        => RequireRemainingWithin(
+            data,
+            offset,
+            count,
+            data.Length);
+
+    private static void RequireRemainingWithin(
+        ReadOnlySpan<byte> data,
+        int offset,
+        int count,
+        int endExclusive)
     {
-        if (offset < 0
+        if (endExclusive < 0
+            || endExclusive > data.Length
+            || offset < 0
             || count < 0
-            || offset > data.Length - count)
+            || offset > endExclusive - count)
             throw new InvalidDataException(
                 "DNS SRV response is truncated.");
     }
 
-    private sealed record SrvRecord(
+    internal sealed record SrvRecord(
         ushort Priority,
         ushort Weight,
         ushort Port,
