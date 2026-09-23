@@ -109,13 +109,15 @@ public sealed partial class AccountStoreService
 
         try
         {
-            await using var stream = File.OpenRead(path);
-            var accounts = await JsonSerializer.DeserializeAsync<List<LauncherAccount?>>(
-                               stream,
+            var accounts = await BoundedPersistedJson.DeserializeAsync<List<LauncherAccount?>>(
+                               path,
                                _jsonOptions,
                                cancellationToken)
                            ?? throw new InvalidDataException(
                                "Existing account store contains a null root. The original accounts.json was preserved.");
+            if (accounts.Count > BoundedPersistedJson.MaxStoreEntries)
+                throw new InvalidDataException(
+                    $"Account store exceeds the {BoundedPersistedJson.MaxStoreEntries}-entry safety limit. The original accounts.json was preserved.");
             return ValidateAccounts(accounts);
         }
         catch (JsonException ex)
