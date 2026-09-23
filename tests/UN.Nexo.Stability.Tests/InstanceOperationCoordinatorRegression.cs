@@ -15,6 +15,7 @@ internal static class InstanceOperationCoordinatorRegression
         await TestSameInstanceServicesSerializeAndReuseAsync();
         await TestCancellationIsInstanceLocalAsync();
         await TestLifecycleWaitsForSharedLeaseAsync();
+        await TestLinkedLockDirectoryIsRejectedAsync();
         await TestLinkedLockSidecarIsRejectedAsync();
     }
 
@@ -266,6 +267,70 @@ internal static class InstanceOperationCoordinatorRegression
         finally
         {
             TryDelete(root);
+        }
+    }
+
+    private static async Task TestLinkedLockDirectoryIsRejectedAsync()
+    {
+        var root = NewRoot("linked-lock-directory");
+        var outsideRoot = NewRoot("linked-lock-directory-target");
+        try
+        {
+            var paths = new NexoPathService(root);
+            paths.EnsureDirectories();
+            var instance = Instance("linked-lock-directory");
+
+            var locksRoot = Path.Combine(
+                paths.GetDataRoot(),
+                "locks");
+            Directory.CreateDirectory(locksRoot);
+            var linkedInstances = Path.Combine(
+                locksRoot,
+                "instances");
+
+            try
+            {
+                Directory.CreateSymbolicLink(
+                    linkedInstances,
+                    outsideRoot);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or PlatformNotSupportedException
+                or IOException)
+            {
+                Console.WriteLine(
+                    "SKIP instance linked lock-directory fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            var coordinator =
+                new InstanceOperationCoordinator(paths);
+            try
+            {
+                await using var lease =
+                    await coordinator.AcquireAsync(
+                        instance.Id,
+                        "linked-lock-directory-test");
+                throw new Exception(
+                    "Linked instance lock directory unexpectedly acquired.");
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
+            Assert(
+                !File.Exists(
+                    Path.Combine(
+                        outsideRoot,
+                        instance.Id + ".lock")),
+                "Rejected linked lock directory must not create an external sidecar.");
+        }
+        finally
+        {
+            TryDelete(root);
+            TryDelete(outsideRoot);
         }
     }
 

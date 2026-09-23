@@ -65,9 +65,8 @@ public sealed class ServerStoreService
         if (!File.Exists(path)) return [];
         try
         {
-            await using var stream = File.OpenRead(path);
-            var items = await JsonSerializer.DeserializeAsync<List<ServerFavorite?>>(
-                            stream,
+            var items = await BoundedPersistedJson.DeserializeAsync<List<ServerFavorite?>>(
+                            path,
                             _json,
                             cancellationToken)
                         ?? throw new InvalidDataException(
@@ -85,6 +84,10 @@ public sealed class ServerStoreService
     private static IReadOnlyList<ServerFavorite> ValidateFavorites(
         IReadOnlyList<ServerFavorite?> items)
     {
+        if (items.Count > BoundedPersistedJson.MaxStoreEntries)
+            throw new InvalidDataException(
+                $"Server favorite store exceeds the {BoundedPersistedJson.MaxStoreEntries}-entry safety limit.");
+
         var result = new List<ServerFavorite>(items.Count);
         var ids = new HashSet<string>(StringComparer.Ordinal);
 
@@ -139,22 +142,16 @@ public sealed class ServerStoreService
         return result;
     }
 
-    private async Task SaveUnlockedAsync(IReadOnlyList<ServerFavorite> items, CancellationToken cancellationToken)
+    private async Task SaveUnlockedAsync(
+        IReadOnlyList<ServerFavorite> items,
+        CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
-        var path = GetPath();
-        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            await using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-            {
-                await JsonSerializer.SerializeAsync(stream, items, _json, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temp, path, overwrite: true);
-        }
-        catch { TryDeleteFile(temp); throw; }
+        await AtomicJsonFile.WriteUnlockedAsync(
+            GetPath(),
+            items,
+            _json,
+            cancellationToken);
     }
 
     private string GetPath() => Path.Combine(_paths.GetDataRoot(), "servers.json");

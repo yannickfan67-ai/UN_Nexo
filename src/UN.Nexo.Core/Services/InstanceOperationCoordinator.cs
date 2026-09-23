@@ -37,13 +37,17 @@ public sealed class InstanceOperationCoordinator
         CrossProcessFileLock.Lease? crossProcessLease = null;
         try
         {
+            var dataRoot = _paths.EnsureDataRootPhysical();
             var lockDirectory = Path.Combine(
-                _paths.GetDataRoot(),
+                dataRoot,
                 "locks",
                 "instances");
             var lockPath = Path.Combine(
                 lockDirectory,
                 instanceId + ".lock");
+            PhysicalPathGuard.EnsureDirectoryForFile(
+                lockPath,
+                "Instance operation lock");
 
             crossProcessLease = await CrossProcessFileLock.AcquireAsync(
                 lockPath,

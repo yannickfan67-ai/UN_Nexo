@@ -27,9 +27,8 @@ public sealed class LauncherRuntimeSettingsService
         LauncherRuntimeSettings settings;
         try
         {
-            await using var stream = File.OpenRead(path);
-            settings = await JsonSerializer.DeserializeAsync<LauncherRuntimeSettings>(
-                           stream,
+            settings = await BoundedPersistedJson.DeserializeAsync<LauncherRuntimeSettings>(
+                           path,
                            _jsonOptions,
                            cancellationToken)
                        ?? throw new InvalidDataException(
@@ -57,39 +56,24 @@ public sealed class LauncherRuntimeSettingsService
 
     // SaveAsync accepts a complete snapshot. Publication is serialized across Nexo processes;
     // callers still own snapshot freshness, so a later complete snapshot intentionally wins.
-    public async Task SaveAsync(LauncherRuntimeSettings settings, CancellationToken cancellationToken = default)
+    // SaveAsync accepts a complete snapshot. Publication is serialized across Nexo processes;
+    // callers still own snapshot freshness, so a later complete snapshot intentionally wins.
+    public async Task SaveAsync(
+        LauncherRuntimeSettings settings,
+        CancellationToken cancellationToken = default)
     {
         RuntimeLaunchOptions.Validate(settings);
         _paths.EnsureDirectories();
         var path = GetSettingsPath();
-        await using var saveLease = await PersistedStoreMutationLock.AcquireAsync(path, cancellationToken);
-        string? temporary = null;
-        try
-        {
-            temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            await using (var stream = new FileStream(
-                temporary,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                16 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan))
-            {
-                await JsonSerializer.SerializeAsync(stream, settings, _jsonOptions, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, path, overwrite: true);
-            temporary = null;
-        }
-        finally
-        {
-            if (temporary is not null)
-            {
-                try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
-            }
-        }
+        await using var saveLease =
+            await PersistedStoreMutationLock.AcquireAsync(
+                path,
+                cancellationToken);
+        await AtomicJsonFile.WriteUnlockedAsync(
+            path,
+            settings,
+            _jsonOptions,
+            cancellationToken);
     }
 
     private string GetSettingsPath() => Path.Combine(_paths.GetDataRoot(), "runtime-settings.json");

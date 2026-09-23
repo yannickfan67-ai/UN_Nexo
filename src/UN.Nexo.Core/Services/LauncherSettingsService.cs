@@ -22,9 +22,8 @@ public sealed class LauncherSettingsService
 
         try
         {
-            await using var stream = File.OpenRead(path);
-            return await JsonSerializer.DeserializeAsync<LauncherSettings>(
-                       stream,
+            return await BoundedPersistedJson.DeserializeAsync<LauncherSettings>(
+                       path,
                        _jsonOptions,
                        cancellationToken)
                    ?? throw new InvalidDataException(
@@ -40,42 +39,24 @@ public sealed class LauncherSettingsService
 
     // SaveAsync accepts a complete snapshot. Publication is serialized across Nexo processes;
     // callers still own snapshot freshness, so a later complete snapshot intentionally wins.
-    public async Task SaveAsync(LauncherSettings settings, CancellationToken cancellationToken = default)
+    // SaveAsync accepts a complete snapshot. Publication is serialized across Nexo processes;
+    // callers still own snapshot freshness, so a later complete snapshot intentionally wins.
+    public async Task SaveAsync(
+        LauncherSettings settings,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
         _paths.EnsureDirectories();
         var path = GetSettingsPath();
-        await using var writeLease = await PersistedStoreMutationLock.AcquireAsync(path, cancellationToken);
-        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            await using (var stream = new FileStream(
-                             temporary,
-                             FileMode.CreateNew,
-                             FileAccess.Write,
-                             FileShare.None,
-                             16 * 1024,
-                             FileOptions.Asynchronous | FileOptions.WriteThrough))
-            {
-                await JsonSerializer.SerializeAsync(stream, settings, _jsonOptions, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, path, overwrite: true);
-        }
-        finally
-        {
-            try
-            {
-                if (File.Exists(temporary))
-                    File.Delete(temporary);
-            }
-            catch
-            {
-                // Best-effort temporary-file cleanup only.
-            }
-        }
+        await using var writeLease =
+            await PersistedStoreMutationLock.AcquireAsync(
+                path,
+                cancellationToken);
+        await AtomicJsonFile.WriteUnlockedAsync(
+            path,
+            settings,
+            _jsonOptions,
+            cancellationToken);
     }
 
     private string GetSettingsPath() => Path.Combine(_paths.GetDataRoot(), "settings.json");

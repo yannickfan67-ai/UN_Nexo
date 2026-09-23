@@ -109,9 +109,8 @@ public sealed partial class AccountStoreService
 
         try
         {
-            await using var stream = File.OpenRead(path);
-            var accounts = await JsonSerializer.DeserializeAsync<List<LauncherAccount?>>(
-                               stream,
+            var accounts = await BoundedPersistedJson.DeserializeAsync<List<LauncherAccount?>>(
+                               path,
                                _jsonOptions,
                                cancellationToken)
                            ?? throw new InvalidDataException(
@@ -129,6 +128,10 @@ public sealed partial class AccountStoreService
     private static IReadOnlyList<LauncherAccount> ValidateAccounts(
         IReadOnlyList<LauncherAccount?> accounts)
     {
+        if (accounts.Count > BoundedPersistedJson.MaxStoreEntries)
+            throw new InvalidDataException(
+                $"Account store exceeds the {BoundedPersistedJson.MaxStoreEntries}-entry safety limit.");
+
         var result = new List<LauncherAccount>(accounts.Count);
         var ids = new HashSet<string>(StringComparer.Ordinal);
 
@@ -190,33 +193,16 @@ public sealed partial class AccountStoreService
         return result;
     }
 
-    private async Task SaveAtomicAsync(IReadOnlyList<LauncherAccount> accounts, CancellationToken cancellationToken)
+    private async Task SaveAtomicAsync(
+        IReadOnlyList<LauncherAccount> accounts,
+        CancellationToken cancellationToken)
     {
         _paths.EnsureDirectories();
-        var path = GetAccountsPath();
-        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try
-        {
-            await using (var stream = new FileStream(
-                temp,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None,
-                16 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan))
-            {
-                await JsonSerializer.SerializeAsync(stream, accounts, _jsonOptions, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temp, path, overwrite: true);
-        }
-        catch
-        {
-            TryDeleteFile(temp);
-            throw;
-        }
+        await AtomicJsonFile.WriteUnlockedAsync(
+            GetAccountsPath(),
+            accounts,
+            _jsonOptions,
+            cancellationToken);
     }
 
     private string GetAccountsPath() => Path.Combine(_paths.GetDataRoot(), "accounts.json");

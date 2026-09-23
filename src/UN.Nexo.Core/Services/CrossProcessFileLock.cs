@@ -19,11 +19,16 @@ internal static class CrossProcessFileLock
         var fullPath = Path.GetFullPath(lockPath);
         var directory = Path.GetDirectoryName(fullPath)
             ?? throw new InvalidOperationException("Lock path has no parent directory.");
-        Directory.CreateDirectory(directory);
+        PhysicalPathGuard.EnsureDirectoryForFile(
+            fullPath,
+            "Cross-process lock");
 
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                directory,
+                "Cross-process lock parent");
             RejectLinkedLockPath(fullPath);
 
             FileStream? stream = null;
@@ -37,8 +42,11 @@ internal static class CrossProcessFileLock
                     4096,
                     FileOptions.Asynchronous);
 
-                // Re-check after open so a link inserted between the first check
-                // and open cannot be accepted as a normal lock sidecar.
+                // Re-check both the parent chain and final entry after open so
+                // replacements at the mutation boundary fail closed.
+                PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                    directory,
+                    "Cross-process lock parent");
                 RejectLinkedLockPath(fullPath);
                 return new Lease(stream);
             }
