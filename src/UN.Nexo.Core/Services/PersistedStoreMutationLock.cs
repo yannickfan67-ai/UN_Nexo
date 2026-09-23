@@ -17,9 +17,11 @@ internal static class PersistedStoreMutationLock
         ArgumentException.ThrowIfNullOrWhiteSpace(storePath);
 
         var fullPath = Path.GetFullPath(storePath);
-        var directory = Path.GetDirectoryName(fullPath)
+        _ = Path.GetDirectoryName(fullPath)
             ?? throw new InvalidOperationException("Persisted store path has no parent directory.");
-        Directory.CreateDirectory(directory);
+        PhysicalPathGuard.EnsureDirectoryForFile(
+            fullPath,
+            "Persisted store");
 
         var processLease = await PathKeyedLock.AcquireAsync(
             fullPath,
