@@ -12,6 +12,7 @@ internal static class PersistedStoreRegression
     internal static async Task RunAsync()
     {
         await TestSettingsStoresAsync();
+        await TestPersistedStoreBoundsAsync();
         await TestAccountStoreAsync();
         await TestServerStoreAsync();
         await TestStoreLockRejectsLinkedSidecarAsync();
@@ -120,6 +121,121 @@ internal static class PersistedStoreRegression
                 nullRuntime,
                 await File.ReadAllBytesAsync(runtimePath),
                 "null runtime-settings load must preserve original bytes");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestPersistedStoreBoundsAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-persisted-store-bounds-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var paths = new NexoPathService(root);
+            var accounts = new AccountStoreService(paths);
+            var servers = new ServerStoreService(paths);
+            var settings = new LauncherSettingsService(paths);
+            var runtime = new LauncherRuntimeSettingsService(paths);
+
+            var oversized = new byte[BoundedPersistedJson.MaxStoreBytes + 1];
+            Array.Fill(oversized, (byte)' ');
+
+            var fixtures = new (string Path, Func<Task> Load)[]
+            {
+                (
+                    Path.Combine(root, "accounts.json"),
+                    async () => { _ = await accounts.GetAllAsync(); }
+                ),
+                (
+                    Path.Combine(root, "servers.json"),
+                    async () => { _ = await servers.GetAllAsync(); }
+                ),
+                (
+                    Path.Combine(root, "settings.json"),
+                    async () => { _ = await settings.LoadAsync(); }
+                ),
+                (
+                    Path.Combine(root, "runtime-settings.json"),
+                    async () => { _ = await runtime.LoadAsync(); }
+                )
+            };
+
+            foreach (var fixture in fixtures)
+            {
+                await File.WriteAllBytesAsync(
+                    fixture.Path,
+                    oversized);
+                await ThrowsAsync<InvalidDataException>(
+                    fixture.Load,
+                    Path.GetFileName(fixture.Path)
+                    + " must reject oversized persisted JSON before deserialization");
+                EqualBytes(
+                    oversized,
+                    await File.ReadAllBytesAsync(fixture.Path),
+                    Path.GetFileName(fixture.Path)
+                    + " oversized rejection must preserve original bytes");
+            }
+
+            var created = DateTimeOffset.Parse(
+                "2026-01-01T00:00:00Z",
+                System.Globalization.CultureInfo.InvariantCulture);
+            var tooManyAccounts = Enumerable.Range(
+                    0,
+                    BoundedPersistedJson.MaxStoreEntries + 1)
+                .Select(index => new LauncherAccount(
+                    "offline:p" + index.ToString("D4"),
+                    "offline",
+                    "P" + index.ToString("D4"),
+                    Guid.NewGuid().ToString("D"),
+                    created))
+                .ToArray();
+            var accountPath = Path.Combine(root, "accounts.json");
+            await File.WriteAllBytesAsync(
+                accountPath,
+                JsonSerializer.SerializeToUtf8Bytes(
+                    tooManyAccounts,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var accountBefore =
+                await File.ReadAllBytesAsync(accountPath);
+            await ThrowsAsync<InvalidDataException>(
+                () => accounts.GetAllAsync(),
+                "account store must reject excessive entry counts");
+            EqualBytes(
+                accountBefore,
+                await File.ReadAllBytesAsync(accountPath),
+                "entry-count rejection must preserve account bytes");
+
+            var tooManyServers = Enumerable.Range(
+                    0,
+                    BoundedPersistedJson.MaxStoreEntries + 1)
+                .Select(index => new ServerFavorite(
+                    "server-" + index.ToString("D4"),
+                    "Server " + index.ToString("D4"),
+                    "server" + index.ToString("D4") + ".example:25565",
+                    created))
+                .ToArray();
+            var serverPath = Path.Combine(root, "servers.json");
+            await File.WriteAllBytesAsync(
+                serverPath,
+                JsonSerializer.SerializeToUtf8Bytes(
+                    tooManyServers,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+            var serverBefore =
+                await File.ReadAllBytesAsync(serverPath);
+            await ThrowsAsync<InvalidDataException>(
+                () => servers.GetAllAsync(),
+                "server store must reject excessive entry counts");
+            EqualBytes(
+                serverBefore,
+                await File.ReadAllBytesAsync(serverPath),
+                "entry-count rejection must preserve server bytes");
         }
         finally
         {
