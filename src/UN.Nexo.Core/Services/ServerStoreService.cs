@@ -65,13 +65,15 @@ public sealed class ServerStoreService
         if (!File.Exists(path)) return [];
         try
         {
-            await using var stream = File.OpenRead(path);
-            var items = await JsonSerializer.DeserializeAsync<List<ServerFavorite?>>(
-                            stream,
+            var items = await BoundedPersistedJson.DeserializeAsync<List<ServerFavorite?>>(
+                            path,
                             _json,
                             cancellationToken)
                         ?? throw new InvalidDataException(
                             "Existing server favorite store contains a null root. The original servers.json was preserved.");
+            if (items.Count > BoundedPersistedJson.MaxStoreEntries)
+                throw new InvalidDataException(
+                    $"Server favorite store exceeds the {BoundedPersistedJson.MaxStoreEntries}-entry safety limit. The original servers.json was preserved.");
             return ValidateFavorites(items);
         }
         catch (JsonException ex)
