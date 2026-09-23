@@ -316,7 +316,7 @@ internal static class QuiltLoaderRegression
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    handler.MetadataSha1,
                     0);
 
             try
