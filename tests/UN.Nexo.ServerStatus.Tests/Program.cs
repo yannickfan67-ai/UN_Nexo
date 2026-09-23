@@ -18,6 +18,8 @@ internal static class Program
             await TestPingTimeoutKeepsStatusAsync();
             await TestTimeoutAsync();
             await TestSrvResolutionAsync();
+            await SrvProtocolRegression.RunAsync();
+            await StatusProtocolRegression.RunAsync();
             TestProtocolCompatibility();
             await TestFavoriteMigrationAndInstanceLinkAsync();
             Console.WriteLine("PASS server status regressions");
