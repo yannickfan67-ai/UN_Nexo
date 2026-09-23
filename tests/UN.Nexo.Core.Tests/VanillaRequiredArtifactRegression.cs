@@ -22,6 +22,7 @@ internal static class VanillaRequiredArtifactRegression
         await TestMavenFallbackAndLoggingAsync();
         await TestLoggingBadShaRejectedAsync();
         await TestShaCacheIntegrityAsync();
+        await TestVersionMetadataIntegrityRequiredAsync();
         await TestHashlessSizeValidationAsync();
         await TestMalformedShaRejectedBeforeArtifactRequestAsync();
     }
@@ -275,6 +276,78 @@ internal static class VanillaRequiredArtifactRegression
                 Version(metadata));
             Assert(handler.ClientRequests == 1,
                 "Valid SHA-1 client cache should be reused.");
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static async Task TestVersionMetadataIntegrityRequiredAsync()
+    {
+        var root = NewRoot();
+        try
+        {
+            var client = Encoding.UTF8.GetBytes("client");
+            var assets = Encoding.UTF8.GetBytes("{\"objects\":{}}");
+            var metadata = BuildMetadata(
+                client,
+                assets,
+                Sha1(client));
+            var handler = new RoutingHandler(
+                metadata,
+                client,
+                assets);
+            using var http = new HttpClient(handler);
+            var paths = new NexoPathService(root);
+            var instance = Instance();
+            var service = new MinecraftVanillaInstallService(
+                http,
+                paths,
+                new DownloadSourceService());
+
+            try
+            {
+                await service.InstallAsync(
+                    instance,
+                    Version(metadata) with { Sha1 = string.Empty });
+                throw new Exception(
+                    "Version metadata without a catalog SHA-1 unexpectedly downloaded.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                handler.Requests.Count == 0,
+                "Missing version-metadata SHA-1 must fail before the first HTTP request.");
+
+            try
+            {
+                await service.InstallAsync(
+                    instance,
+                    Version(metadata) with
+                    {
+                        Sha1 = new string('0', 40)
+                    });
+                throw new Exception(
+                    "Version metadata with a mismatched catalog SHA-1 unexpectedly prepared.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+
+            Assert(
+                handler.Requests.Count(path =>
+                    path.EndsWith(
+                        "/version.json",
+                        StringComparison.Ordinal)) == 1,
+                "Mismatched version metadata should be requested once and rejected by SHA-1.");
+            Assert(
+                !File.Exists(Path.Combine(
+                    paths.GetInstanceDirectory(instance.Id),
+                    "install-state.json")),
+                "Unverified version metadata must not publish prepared state.");
         }
         finally
         {
@@ -536,7 +609,7 @@ internal static class VanillaRequiredArtifactRegression
             "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            Sha1(Encoding.UTF8.GetBytes(metadata)),
             0);
 
     private static string ClientPath(
