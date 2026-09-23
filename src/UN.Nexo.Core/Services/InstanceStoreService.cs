@@ -5,7 +5,7 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class InstanceStoreService
 {
-    private const long MaxInstanceMetadataBytes = 64 * 1024;
+    internal const long MaxInstanceMetadataBytes = 64 * 1024;
     private readonly NexoPathService _paths;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
