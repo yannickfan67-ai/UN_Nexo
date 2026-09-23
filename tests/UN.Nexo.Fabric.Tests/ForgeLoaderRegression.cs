@@ -201,7 +201,7 @@ internal static class ForgeLoaderRegression
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    handler.MetadataSha1,
                     0);
 
             await service.PrepareAsync(
@@ -483,8 +483,37 @@ internal static class ForgeLoaderRegression
         byte[] installerBytes,
         string installerSha1) : HttpMessageHandler
     {
+        private const string Metadata =
+            """
+            {
+              "id":"1.21.4",
+              "mainClass":"net.minecraft.client.main.Main",
+              "javaVersion":{"majorVersion":21},
+              "libraries":[],
+              "arguments":{
+                "jvm":["-cp","${classpath}"],
+                "game":["--username","${auth_player_name}"]
+              },
+              "downloads":{
+                "client":{
+                  "url":"https://piston-data.mojang.com/client.jar",
+                  "size":6
+                }
+              },
+              "assetIndex":{
+                "id":"forge-assets",
+                "url":"https://launchermeta.mojang.com/forge-assets.json"
+              }
+            }
+            """;
+
         public int InstallerRequests { get; private set; }
         public int ChecksumRequests { get; private set; }
+        public string MetadataSha1
+            => Convert.ToHexString(
+                    SHA1.HashData(
+                        Encoding.UTF8.GetBytes(Metadata)))
+                .ToLowerInvariant();
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -548,29 +577,7 @@ internal static class ForgeLoaderRegression
                     "piston-meta.mojang.com",
                     StringComparison.OrdinalIgnoreCase))
             {
-                return Json(
-                    """
-                    {
-                      "id":"1.21.4",
-                      "mainClass":"net.minecraft.client.main.Main",
-                      "javaVersion":{"majorVersion":21},
-                      "libraries":[],
-                      "arguments":{
-                        "jvm":["-cp","${classpath}"],
-                        "game":["--username","${auth_player_name}"]
-                      },
-                      "downloads":{
-                        "client":{
-                          "url":"https://piston-data.mojang.com/client.jar",
-                          "size":6
-                        }
-                      },
-                      "assetIndex":{
-                        "id":"forge-assets",
-                        "url":"https://launchermeta.mojang.com/forge-assets.json"
-                      }
-                    }
-                    """);
+                return Json(Metadata);
             }
 
             if (uri.Host.Equals(
