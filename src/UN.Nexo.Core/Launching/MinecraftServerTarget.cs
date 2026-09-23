@@ -71,8 +71,31 @@ public sealed record MinecraftServerTarget(
         }
 
         host = host.Trim();
-        if (host.Length == 0 || host.Length > 253 || host.Any(char.IsWhiteSpace))
+        if (host.Length == 0 || host.Any(char.IsWhiteSpace))
             throw new FormatException("Invalid server host.");
+
+        if (IPAddress.TryParse(host, out var parsedAddress))
+        {
+            host = parsedAddress.ToString();
+        }
+        else
+        {
+            try
+            {
+                host = new IdnMapping().GetAscii(host.TrimEnd('.'));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new FormatException("Invalid internationalized server host.", ex);
+            }
+
+            if (host.Length is < 1 or > 253
+                || host.Split('.').Any(label => label.Length is < 1 or > 63))
+                throw new FormatException("Invalid DNS server host.");
+        }
+
+        if (System.Text.Encoding.UTF8.GetByteCount(host) > 255)
+            throw new FormatException("Server host exceeds the Minecraft handshake limit.");
 
         return new MinecraftServerTarget(
             host,
