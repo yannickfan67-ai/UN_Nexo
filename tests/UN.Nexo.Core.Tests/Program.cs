@@ -558,7 +558,7 @@ internal static class Program
                 "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
-                string.Empty,
+                handler.MetadataSha1,
                 0);
 
             await installer.InstallAsync(instance, version);
