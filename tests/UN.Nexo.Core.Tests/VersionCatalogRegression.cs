@@ -12,7 +12,7 @@ internal static class VersionCatalogRegression
         + "\"url\":\"https://metadata.example.test/1.21.4.json\","
         + "\"releaseTime\":\"2026-01-01T00:00:00Z\","
         + "\"time\":\"2026-01-01T00:00:00Z\","
-        + "\"sha1\":\"abcdef\",\"complianceLevel\":1}]}";
+        + "\"sha1\":\"0123456789abcdef0123456789abcdef01234567\",\"complianceLevel\":1}]}";
 
     internal static async Task RunAsync()
     {
@@ -87,7 +87,12 @@ internal static class VersionCatalogRegression
             "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"not-a-date\",\"time\":\"2026-01-01T00:00:00Z\"}]}",
             "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":{},\"complianceLevel\":1}]}",
             "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"complianceLevel\":\"1\"}]}",
-            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"complianceLevel\":999999999999999999999}]}"
+            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"complianceLevel\":999999999999999999999}]}",
+            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\"}]}",
+            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"sha1\":\"\"}]}",
+            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"sha1\":\"abcd\"}]}",
+            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"sha1\":\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\"}]}",
+            "{\"latest\":{\"release\":\"x\",\"snapshot\":\"y\"},\"versions\":[{\"id\":\"v\",\"type\":\"release\",\"url\":\"https://example.test/v.json\",\"releaseTime\":\"2026-01-01T00:00:00Z\",\"time\":\"2026-01-01T00:00:00Z\",\"sha1\":\"0123456789abcdef0123456789abcdef012345678\"}]}"
         };
 
         foreach (var invalid in malformed)
