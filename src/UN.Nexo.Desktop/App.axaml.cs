@@ -72,23 +72,35 @@ public sealed partial class App : Application
             LauncherStartupTrace.Failure("splash fade-in", ex);
         }
 
-        var completed = await Task.WhenAny(initializationTask, Task.Delay(SplashInitializationLimit));
-        if (completed == initializationTask)
+        var completed = await Task.WhenAny(
+            initializationTask,
+            Task.Delay(SplashInitializationLimit));
+        var initializationPending = completed != initializationTask;
+
+        if (!initializationPending)
         {
             try
             {
                 await initializationTask;
-                LauncherStartupTrace.Write($"[startup] MainWindow initialization completed in {started.ElapsedMilliseconds} ms");
+                LauncherStartupTrace.Write(
+                    $"[startup] MainWindow initialization completed in {started.ElapsedMilliseconds} ms");
             }
             catch (Exception ex)
             {
-                LauncherStartupTrace.Failure("MainWindow initialization", ex);
+                LauncherStartupTrace.Failure(
+                    "MainWindow initialization",
+                    ex);
+                main.ReportInitializationFailure(ex);
             }
         }
         else
         {
-            LauncherStartupTrace.Write($"[startup] MainWindow initialization exceeded {SplashInitializationLimit.TotalSeconds:0} s · continuing to UI");
-            _ = ObserveLateInitializationAsync(initializationTask);
+            // The splash deadline is only a visibility deadline. The main
+            // window may be shown, but it must not accept state-dependent
+            // input until the single-flight initialization task is observed.
+            main.IsEnabled = false;
+            LauncherStartupTrace.Write(
+                $"[startup] MainWindow initialization exceeded {SplashInitializationLimit.TotalSeconds:0} s · showing disabled UI until ready");
         }
 
         var remaining = TimeSpan.FromMilliseconds(620) - started.Elapsed;
@@ -105,6 +117,31 @@ public sealed partial class App : Application
             await splash.FadeOutAndCloseAsync();
             LauncherStartupTrace.Write("[startup] Splash closed");
             await main.RevealAsync();
+
+            if (initializationPending)
+            {
+                try
+                {
+                    await initializationTask;
+                    LauncherStartupTrace.Write(
+                        $"[startup] Deferred MainWindow initialization completed in {started.ElapsedMilliseconds} ms");
+                }
+                catch (Exception ex)
+                {
+                    LauncherStartupTrace.Failure(
+                        "deferred MainWindow initialization",
+                        ex);
+                    main.ReportInitializationFailure(ex);
+                }
+                finally
+                {
+                    // Initialization has reached a terminal state and its
+                    // task has been observed, so interaction can safely resume.
+                    if (desktop.MainWindow == main)
+                        main.IsEnabled = true;
+                }
+            }
+
             LauncherStartupTrace.Complete();
         }
         catch (Exception ex)
@@ -114,16 +151,4 @@ public sealed partial class App : Application
         }
     }
 
-    private static async Task ObserveLateInitializationAsync(Task initializationTask)
-    {
-        try
-        {
-            await initializationTask;
-            LauncherStartupTrace.Write("[startup] Deferred MainWindow initialization completed");
-        }
-        catch (Exception ex)
-        {
-            LauncherStartupTrace.Failure("deferred MainWindow initialization", ex);
-        }
-    }
 }
