@@ -22,6 +22,7 @@ public sealed class ResolvedMinecraftVersion : IDisposable
 public sealed class MinecraftVersionMetadataResolver
 {
     private const int MaxInheritanceDepth = 8;
+    internal const long MaxVersionMetadataBytes = 8L * 1024 * 1024;
 
     public async Task<ResolvedMinecraftVersion> ResolveAsync(
         string gameRoot,
@@ -32,7 +33,16 @@ public sealed class MinecraftVersionMetadataResolver
             throw new ArgumentException("Game root is required.", nameof(gameRoot));
         ValidateVersionId(launchVersionId);
 
-        var versionsRoot = Path.Combine(Path.GetFullPath(gameRoot), "versions");
+        var physicalGameRoot = Path.GetFullPath(gameRoot);
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(
+            physicalGameRoot,
+            "Minecraft game root");
+        var versionsRoot = Path.Combine(
+            physicalGameRoot,
+            "versions");
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(
+            versionsRoot,
+            "Minecraft versions root");
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var resolved = await ResolveNodeAsync(
             versionsRoot,
@@ -60,21 +70,60 @@ public sealed class MinecraftVersionMetadataResolver
 
         try
         {
-            var metadataPath = Path.Combine(versionsRoot, versionId, versionId + ".json");
-            if (!File.Exists(metadataPath))
-                throw new FileNotFoundException($"Version metadata is missing: {metadataPath}", metadataPath);
+            var versionDirectory = Path.Combine(
+                versionsRoot,
+                versionId);
+            PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                versionDirectory,
+                $"Minecraft version '{versionId}' directory");
 
-            await using var stream = new FileStream(
+            var metadataPath = Path.Combine(
+                versionDirectory,
+                versionId + ".json");
+            if (!File.Exists(metadataPath))
+            {
+                throw new FileNotFoundException(
+                    $"Version metadata is missing: {metadataPath}",
+                    metadataPath);
+            }
+
+            PhysicalPathGuard.EnsureRegularFileOrMissing(
                 metadataPath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.Read,
-                64 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-            var node = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken)
-                ?? throw new InvalidDataException($"Version metadata is empty: {versionId}");
+                $"Minecraft version '{versionId}' metadata");
+            var bytes = await BoundedLocalFile.ReadAllBytesAsync(
+                metadataPath,
+                MaxVersionMetadataBytes,
+                $"Minecraft version '{versionId}' metadata",
+                cancellationToken);
+
+            // Re-establish provenance after the read as well; a path that was
+            // replaced while the file was being consumed must not be accepted
+            // as managed installed metadata.
+            PhysicalPathGuard.EnsureDirectoryChainPhysical(
+                versionDirectory,
+                $"Minecraft version '{versionId}' directory");
+            PhysicalPathGuard.EnsureRegularFileOrMissing(
+                metadataPath,
+                $"Minecraft version '{versionId}' metadata");
+
+            JsonNode? node;
+            try
+            {
+                node = JsonNode.Parse(bytes);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException(
+                    $"Version metadata is malformed: {versionId}",
+                    ex);
+            }
+
+            if (node is null)
+                throw new InvalidDataException(
+                    $"Version metadata is empty: {versionId}");
             if (node is not JsonObject child)
-                throw new InvalidDataException($"Version metadata root must be an object: {versionId}");
+                throw new InvalidDataException(
+                    $"Version metadata root must be an object: {versionId}");
 
             var declaredId = RequireStringProperty(
                 child,
