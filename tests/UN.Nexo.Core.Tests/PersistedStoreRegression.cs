@@ -14,6 +14,7 @@ internal static class PersistedStoreRegression
         await TestSettingsStoresAsync();
         await TestAccountStoreAsync();
         await TestServerStoreAsync();
+        await TestBoundedPersistedStoresAsync();
         await TestStoreLockRejectsLinkedSidecarAsync();
         await TestServerStoreCrossProcessAsync();
     }
@@ -280,6 +281,96 @@ internal static class PersistedStoreRegression
             await File.WriteAllBytesAsync(path, validBytes);
             Equal(1, (await store.GetAllAsync()).Count,
                 "healthy server store should remain usable after corruption fixtures");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestBoundedPersistedStoresAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-bounded-store-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var paths = new NexoPathService(root);
+            var accounts = new AccountStoreService(paths);
+            var servers = new ServerStoreService(paths);
+            var settings = new LauncherSettingsService(paths);
+            var runtime = new LauncherRuntimeSettingsService(paths);
+
+            var fixtures = new (string FileName, Func<Task> Read)[]
+            {
+                ("accounts.json", async () => { _ = await accounts.GetAllAsync(); }),
+                ("servers.json", async () => { _ = await servers.GetAllAsync(); }),
+                ("settings.json", async () => { _ = await settings.LoadAsync(); }),
+                ("runtime-settings.json", async () => { _ = await runtime.LoadAsync(); })
+            };
+
+            foreach (var fixture in fixtures)
+            {
+                var path = Path.Combine(root, fixture.FileName);
+                await using (var stream = new FileStream(
+                    path,
+                    FileMode.Create,
+                    FileAccess.Write,
+                    FileShare.Read))
+                {
+                    stream.SetLength(BoundedPersistedJson.MaxStoreBytes + 1);
+                }
+
+                var beforeLength = new FileInfo(path).Length;
+                await ThrowsAsync<InvalidDataException>(
+                    fixture.Read,
+                    fixture.FileName + " must reject oversized persisted JSON before deserialization");
+                Equal(beforeLength, new FileInfo(path).Length,
+                    fixture.FileName + " rejection must preserve the original file");
+            }
+
+            var tooManyAccounts = Enumerable.Range(
+                    0,
+                    BoundedPersistedJson.MaxStoreEntries + 1)
+                .Select(index => new LauncherAccount(
+                    "offline:p" + index,
+                    "offline",
+                    "P" + index.ToString("D4"),
+                    Guid.NewGuid().ToString("D"),
+                    DateTimeOffset.UtcNow))
+                .ToArray();
+            var accountsPath = Path.Combine(root, "accounts.json");
+            await File.WriteAllTextAsync(
+                accountsPath,
+                JsonSerializer.Serialize(tooManyAccounts));
+            var accountsBefore = await File.ReadAllBytesAsync(accountsPath);
+            await ThrowsAsync<InvalidDataException>(
+                () => accounts.GetAllAsync(),
+                "account store must enforce the entry-count ceiling");
+            EqualBytes(accountsBefore, await File.ReadAllBytesAsync(accountsPath),
+                "entry-count rejection must preserve accounts.json");
+
+            var tooManyServers = Enumerable.Range(
+                    0,
+                    BoundedPersistedJson.MaxStoreEntries + 1)
+                .Select(index => new ServerFavorite(
+                    "server-" + index,
+                    "Server " + index,
+                    "example.com:25565",
+                    DateTimeOffset.UtcNow))
+                .ToArray();
+            var serversPath = Path.Combine(root, "servers.json");
+            await File.WriteAllTextAsync(
+                serversPath,
+                JsonSerializer.Serialize(tooManyServers));
+            var serversBefore = await File.ReadAllBytesAsync(serversPath);
+            await ThrowsAsync<InvalidDataException>(
+                () => servers.GetAllAsync(),
+                "server store must enforce the entry-count ceiling");
+            EqualBytes(serversBefore, await File.ReadAllBytesAsync(serversPath),
+                "entry-count rejection must preserve servers.json");
         }
         finally
         {
