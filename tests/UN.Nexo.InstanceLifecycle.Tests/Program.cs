@@ -36,6 +36,11 @@ internal static class Program
 
             await TestCloneWithoutWorldsAsync(lifecycle, paths, source);
             await TestCloneWithWorldsAsync(lifecycle, paths, source);
+            await TestConcurrentCloneNameGateAsync(
+                lifecycle,
+                store,
+                paths,
+                source);
             await TestInvalidInstallStateCloneAsync(lifecycle, paths);
             await TestFabricCloneMetadataAsync(lifecycle, paths);
             source = await TestRenameAsync(lifecycle, store, paths, source);
@@ -105,6 +110,119 @@ internal static class Program
         await File.WriteAllTextAsync(clonedLevel, "clone-only-change");
         var sourceLevel = Path.Combine(paths.GetInstanceGameDirectory(source.Id), "saves", "World A", "level.dat");
         Require(await File.ReadAllTextAsync(sourceLevel) == "original-A", "Clone must be independent from source files.");
+    }
+
+    private static async Task TestConcurrentCloneNameGateAsync(
+        InstanceLifecycleService lifecycle,
+        InstanceStoreService store,
+        NexoPathService paths,
+        GameInstance source)
+    {
+        var secondSource = await store.CreateAsync(
+            "Second clone source",
+            "1.21.4");
+        var secondGame =
+            paths.GetInstanceGameDirectory(secondSource.Id);
+        Directory.CreateDirectory(secondGame);
+        await File.WriteAllTextAsync(
+            Path.Combine(secondGame, "options.txt"),
+            "fov:80");
+
+        var instancesRoot =
+            paths.EnsureInstancesRootPhysical();
+        var gateSidecar = Path.Combine(
+            instancesRoot,
+            ".instance-name-gate.lock");
+        await using var heldGate = new FileStream(
+            gateSidecar,
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None,
+            4096,
+            FileOptions.Asynchronous);
+
+        const string targetName = "Concurrent Clone Name";
+        var first = CaptureCloneAsync(
+            lifecycle.CloneAsync(
+                source,
+                targetName,
+                includeWorlds: false));
+        var second = CaptureCloneAsync(
+            lifecycle.CloneAsync(
+                secondSource,
+                targetName.ToUpperInvariant(),
+                includeWorlds: false));
+
+        var stagingParent = Path.Combine(
+            paths.GetDataRoot(),
+            ".staging",
+            "clones");
+        using var stagedTimeout =
+            new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while ((!Directory.Exists(stagingParent)
+                || Directory.EnumerateDirectories(
+                        stagingParent,
+                        "*.tmp",
+                        SearchOption.TopDirectoryOnly)
+                    .Count() < 2)
+               && !stagedTimeout.IsCancellationRequested)
+        {
+            await Task.Delay(
+                25,
+                stagedTimeout.Token);
+        }
+
+        Require(
+            Directory.Exists(stagingParent)
+            && Directory.EnumerateDirectories(
+                    stagingParent,
+                    "*.tmp",
+                    SearchOption.TopDirectoryOnly)
+                .Count() >= 2,
+            "Both differently sourced clones should stage before the name gate is released.");
+
+        await heldGate.DisposeAsync();
+
+        var results = await Task.WhenAll(first, second);
+        Require(
+            results.Count(result => result.Instance is not null) == 1,
+            "Exactly one same-name concurrent clone should publish.");
+        Require(
+            results.Count(result =>
+                result.Error is InvalidOperationException) == 1,
+            "The losing same-name clone should fail the final uniqueness check.");
+
+        var loaded = await store.GetAllAsync();
+        Require(
+            loaded.Count(item =>
+                item.Name.Equals(
+                    targetName,
+                    StringComparison.OrdinalIgnoreCase)) == 1,
+            "The instance store must contain exactly one case-insensitive clone name.");
+
+        if (Directory.Exists(stagingParent))
+        {
+            Require(
+                !Directory.EnumerateDirectories(
+                        stagingParent,
+                        "*.tmp",
+                        SearchOption.TopDirectoryOnly)
+                    .Any(),
+                "A failed clone uniqueness re-check must clean its trusted staging directory.");
+        }
+    }
+
+    private static async Task<(GameInstance? Instance, Exception? Error)>
+        CaptureCloneAsync(Task<GameInstance> task)
+    {
+        try
+        {
+            return (await task, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, ex);
+        }
     }
 
     private static async Task TestInvalidInstallStateCloneAsync(
