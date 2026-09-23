@@ -24,156 +24,61 @@ public sealed class MinecraftVersionMetadataResolver
     private const int MaxInheritanceDepth = 8;
     internal const long MaxVersionMetadataBytes = 8L * 1024 * 1024;
 
-    public async Task<ResolvedMinecraftVersion> ResolveAsync(
-        string gameRoot,
-        string launchVersionId,
-        CancellationToken cancellationToken = default)
+    public async Task<ResolvedMinecraftVersion> ResolveAsync(string gameRoot, string launchVersionId, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(gameRoot))
-            throw new ArgumentException("Game root is required.", nameof(gameRoot));
+        if (string.IsNullOrWhiteSpace(gameRoot)) throw new ArgumentException("Game root is required.", nameof(gameRoot));
         ValidateVersionId(launchVersionId);
-
         var physicalGameRoot = Path.GetFullPath(gameRoot);
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        var resolved = await ResolveNodeAsync(
-            physicalGameRoot,
-            launchVersionId,
-            visited,
-            0,
-            cancellationToken);
+        var resolved = await ResolveNodeAsync(physicalGameRoot, launchVersionId, visited, 0, cancellationToken);
         var document = JsonDocument.Parse(resolved.Metadata.ToJsonString());
         return new ResolvedMinecraftVersion(document, launchVersionId, resolved.ClientVersionId);
     }
 
-    private async Task<ResolvedNode> ResolveNodeAsync(
-        string gameRoot,
-        string versionId,
-        HashSet<string> visited,
-        int depth,
-        CancellationToken cancellationToken)
+    private async Task<ResolvedNode> ResolveNodeAsync(string gameRoot, string versionId, HashSet<string> visited, int depth, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ValidateVersionId(versionId);
-        if (depth > MaxInheritanceDepth)
-            throw new InvalidDataException("Minecraft version inheritance is too deep.");
-        if (!visited.Add(versionId))
-            throw new InvalidDataException($"Minecraft version inheritance loop detected at {versionId}.");
-
+        if (depth > MaxInheritanceDepth) throw new InvalidDataException("Minecraft version inheritance is too deep.");
+        if (!visited.Add(versionId)) throw new InvalidDataException($"Minecraft version inheritance loop detected at {versionId}.");
         try
         {
-            var bytes = await ReadInstalledMetadataBytesAsync(
-                gameRoot,
-                versionId,
-                cancellationToken);
-
+            var bytes = await ReadInstalledMetadataBytesAsync(gameRoot, versionId, cancellationToken);
             JsonNode? node;
-            try
-            {
-                node = JsonNode.Parse(bytes);
-            }
-            catch (JsonException ex)
-            {
-                throw new InvalidDataException(
-                    $"Version metadata is malformed: {versionId}",
-                    ex);
-            }
-
-            if (node is null)
-                throw new InvalidDataException(
-                    $"Version metadata is empty: {versionId}");
-            if (node is not JsonObject child)
-                throw new InvalidDataException(
-                    $"Version metadata root must be an object: {versionId}");
-
-            var declaredId = RequireStringProperty(
-                child,
-                "id",
-                versionId);
-            if (!string.Equals(declaredId, versionId, StringComparison.Ordinal))
-                throw new InvalidDataException($"Version metadata id '{declaredId}' does not match directory '{versionId}'.");
-
-            var inheritsFrom = OptionalStringProperty(
-                child,
-                "inheritsFrom",
-                versionId);
-            if (string.IsNullOrWhiteSpace(inheritsFrom))
-            {
-                var clientVersion = HasClientDownload(child) ? versionId : versionId;
-                return new ResolvedNode((JsonObject)child.DeepClone(), clientVersion);
-            }
-
+            try { node = JsonNode.Parse(bytes); }
+            catch (JsonException ex) { throw new InvalidDataException($"Version metadata is malformed: {versionId}", ex); }
+            if (node is null) throw new InvalidDataException($"Version metadata is empty: {versionId}");
+            if (node is not JsonObject child) throw new InvalidDataException($"Version metadata root must be an object: {versionId}");
+            var declaredId = RequireStringProperty(child, "id", versionId);
+            if (!string.Equals(declaredId, versionId, StringComparison.Ordinal)) throw new InvalidDataException($"Version metadata id '{declaredId}' does not match directory '{versionId}'.");
+            var inheritsFrom = OptionalStringProperty(child, "inheritsFrom", versionId);
+            if (string.IsNullOrWhiteSpace(inheritsFrom)) return new ResolvedNode((JsonObject)child.DeepClone(), versionId);
             ValidateVersionId(inheritsFrom);
-            var parent = await ResolveNodeAsync(
-                gameRoot,
-                inheritsFrom,
-                visited,
-                depth + 1,
-                cancellationToken);
+            var parent = await ResolveNodeAsync(gameRoot, inheritsFrom, visited, depth + 1, cancellationToken);
             var merged = Merge(parent.Metadata, child);
             var clientVersionId = HasClientDownload(child) ? versionId : parent.ClientVersionId;
             return new ResolvedNode(merged, clientVersionId);
         }
-        finally
-        {
-            visited.Remove(versionId);
-        }
+        finally { visited.Remove(versionId); }
     }
 
-    internal static async Task<byte[]> ReadInstalledMetadataBytesAsync(
-        string gameRoot,
-        string versionId,
-        CancellationToken cancellationToken = default)
+    internal static async Task<byte[]> ReadInstalledMetadataBytesAsync(string gameRoot, string versionId, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(gameRoot))
-            throw new ArgumentException(
-                "Game root is required.",
-                nameof(gameRoot));
+        if (string.IsNullOrWhiteSpace(gameRoot)) throw new ArgumentException("Game root is required.", nameof(gameRoot));
         ValidateVersionId(versionId);
-
         var physicalGameRoot = Path.GetFullPath(gameRoot);
-        PhysicalPathGuard.EnsureDirectoryChainPhysical(
-            physicalGameRoot,
-            "Minecraft game root");
-
-        var versionsRoot = Path.Combine(
-            physicalGameRoot,
-            "versions");
-        PhysicalPathGuard.EnsureDirectoryChainPhysical(
-            versionsRoot,
-            "Minecraft versions root");
-
-        var versionDirectory = Path.Combine(
-            versionsRoot,
-            versionId);
-        PhysicalPathGuard.EnsureDirectoryChainPhysical(
-            versionDirectory,
-            $"Minecraft version '{versionId}' directory");
-
-        var metadataPath = Path.Combine(
-            versionDirectory,
-            versionId + ".json");
-        if (!File.Exists(metadataPath))
-        {
-            throw new FileNotFoundException(
-                $"Version metadata is missing: {metadataPath}",
-                metadataPath);
-        }
-
-        PhysicalPathGuard.EnsureRegularFileOrMissing(
-            metadataPath,
-            $"Minecraft version '{versionId}' metadata");
-        var bytes = await BoundedLocalFile.ReadAllBytesAsync(
-            metadataPath,
-            MaxVersionMetadataBytes,
-            $"Minecraft version '{versionId}' metadata",
-            cancellationToken);
-
-        PhysicalPathGuard.EnsureDirectoryChainPhysical(
-            versionDirectory,
-            $"Minecraft version '{versionId}' directory");
-        PhysicalPathGuard.EnsureRegularFileOrMissing(
-            metadataPath,
-            $"Minecraft version '{versionId}' metadata");
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(physicalGameRoot, "Minecraft game root");
+        var versionsRoot = Path.Combine(physicalGameRoot, "versions");
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(versionsRoot, "Minecraft versions root");
+        var versionDirectory = Path.Combine(versionsRoot, versionId);
+        var metadataPath = Path.Combine(versionDirectory, versionId + ".json");
+        if (!Directory.Exists(versionDirectory) || !File.Exists(metadataPath))
+            throw new FileNotFoundException($"Version metadata is missing: {metadataPath}", metadataPath);
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(versionDirectory, $"Minecraft version '{versionId}' directory");
+        PhysicalPathGuard.EnsureRegularFileOrMissing(metadataPath, $"Minecraft version '{versionId}' metadata");
+        var bytes = await BoundedLocalFile.ReadAllBytesAsync(metadataPath, MaxVersionMetadataBytes, $"Minecraft version '{versionId}' metadata", cancellationToken);
+        PhysicalPathGuard.EnsureDirectoryChainPhysical(versionDirectory, $"Minecraft version '{versionId}' directory");
+        PhysicalPathGuard.EnsureRegularFileOrMissing(metadataPath, $"Minecraft version '{versionId}' metadata");
         return bytes;
     }
 
@@ -182,24 +87,10 @@ public sealed class MinecraftVersionMetadataResolver
         var result = (JsonObject)parent.DeepClone();
         foreach (var property in child)
         {
-            if (property.Key.Equals("libraries", StringComparison.Ordinal)
-                && property.Value is JsonArray childLibraries)
-            {
-                result[property.Key] = MergeLibraries(
-                    result[property.Key] as JsonArray,
-                    childLibraries);
-                continue;
-            }
-
-            if (property.Key.Equals("arguments", StringComparison.Ordinal)
-                && property.Value is JsonObject childArguments)
-            {
-                result[property.Key] = MergeArguments(
-                    result[property.Key] as JsonObject,
-                    childArguments);
-                continue;
-            }
-
+            if (property.Key.Equals("libraries", StringComparison.Ordinal) && property.Value is JsonArray childLibraries)
+            { result[property.Key] = MergeLibraries(result[property.Key] as JsonArray, childLibraries); continue; }
+            if (property.Key.Equals("arguments", StringComparison.Ordinal) && property.Value is JsonObject childArguments)
+            { result[property.Key] = MergeArguments(result[property.Key] as JsonObject, childArguments); continue; }
             result[property.Key] = property.Value?.DeepClone();
         }
         return result;
@@ -209,36 +100,19 @@ public sealed class MinecraftVersionMetadataResolver
     {
         var items = new List<JsonNode?>();
         var indexes = new Dictionary<string, int>(StringComparer.Ordinal);
-
         void Add(JsonNode? value, bool replace)
         {
             var clone = value?.DeepClone();
-            var name = clone is JsonObject obj
-                ? OptionalStringProperty(obj, "name", "library entry")
-                : null;
-            var key = string.IsNullOrWhiteSpace(name)
-                ? null
-                : MavenArtifactPath.InheritanceIdentity(name);
-            if (!string.IsNullOrWhiteSpace(key) && indexes.TryGetValue(key, out var index))
-            {
-                if (replace)
-                    items[index] = clone;
-                return;
-            }
-            if (!string.IsNullOrWhiteSpace(key))
-                indexes[key] = items.Count;
+            var name = clone is JsonObject obj ? OptionalStringProperty(obj, "name", "library entry") : null;
+            var key = string.IsNullOrWhiteSpace(name) ? null : MavenArtifactPath.InheritanceIdentity(name);
+            if (!string.IsNullOrWhiteSpace(key) && indexes.TryGetValue(key, out var index)) { if (replace) items[index] = clone; return; }
+            if (!string.IsNullOrWhiteSpace(key)) indexes[key] = items.Count;
             items.Add(clone);
         }
-
-        if (parent is not null)
-            foreach (var item in parent)
-                Add(item, replace: false);
-        foreach (var item in child)
-            Add(item, replace: true);
-
+        if (parent is not null) foreach (var item in parent) Add(item, false);
+        foreach (var item in child) Add(item, true);
         var result = new JsonArray();
-        foreach (var item in items)
-            result.Add(item);
+        foreach (var item in items) result.Add(item);
         return result;
     }
 
@@ -247,79 +121,38 @@ public sealed class MinecraftVersionMetadataResolver
         var result = parent is null ? new JsonObject() : (JsonObject)parent.DeepClone();
         foreach (var property in child)
         {
-            if ((property.Key.Equals("game", StringComparison.Ordinal)
-                 || property.Key.Equals("jvm", StringComparison.Ordinal))
-                && property.Value is JsonArray childArray)
+            if ((property.Key.Equals("game", StringComparison.Ordinal) || property.Key.Equals("jvm", StringComparison.Ordinal)) && property.Value is JsonArray childArray)
             {
                 var combined = new JsonArray();
-                if (result[property.Key] is JsonArray parentArray)
-                    foreach (var item in parentArray)
-                        combined.Add(item?.DeepClone());
-                foreach (var item in childArray)
-                    combined.Add(item?.DeepClone());
+                if (result[property.Key] is JsonArray parentArray) foreach (var item in parentArray) combined.Add(item?.DeepClone());
+                foreach (var item in childArray) combined.Add(item?.DeepClone());
                 result[property.Key] = combined;
             }
-            else
-            {
-                result[property.Key] = property.Value?.DeepClone();
-            }
+            else result[property.Key] = property.Value?.DeepClone();
         }
         return result;
     }
 
-    private static string RequireStringProperty(
-        JsonObject metadata,
-        string propertyName,
-        string context)
+    private static string RequireStringProperty(JsonObject metadata, string propertyName, string context)
     {
-        if (!metadata.TryGetPropertyValue(propertyName, out var node)
-            || node is null)
-            throw InvalidTypedProperty(context, propertyName, "a string");
-
-        if (node is JsonValue value
-            && value.TryGetValue<string>(out var text)
-            && text is not null)
-            return text;
-
+        if (!metadata.TryGetPropertyValue(propertyName, out var node) || node is null) throw InvalidTypedProperty(context, propertyName, "a string");
+        if (node is JsonValue value && value.TryGetValue<string>(out var text) && text is not null) return text;
         throw InvalidTypedProperty(context, propertyName, "a string");
     }
 
-    private static string? OptionalStringProperty(
-        JsonObject metadata,
-        string propertyName,
-        string context)
+    private static string? OptionalStringProperty(JsonObject metadata, string propertyName, string context)
     {
-        if (!metadata.TryGetPropertyValue(propertyName, out var node)
-            || node is null)
-            return null;
-
-        if (node is JsonValue value
-            && value.TryGetValue<string>(out var text))
-            return text;
-
+        if (!metadata.TryGetPropertyValue(propertyName, out var node) || node is null) return null;
+        if (node is JsonValue value && value.TryGetValue<string>(out var text)) return text;
         throw InvalidTypedProperty(context, propertyName, "a string");
     }
 
-    private static InvalidDataException InvalidTypedProperty(
-        string context,
-        string propertyName,
-        string expected)
-        => new($"Version metadata '{context}' property '{propertyName}' must be {expected}.");
-
-    private static bool HasClientDownload(JsonObject metadata)
-        => metadata["downloads"] is JsonObject downloads
-           && downloads["client"] is JsonObject;
-
+    private static InvalidDataException InvalidTypedProperty(string context, string propertyName, string expected) => new($"Version metadata '{context}' property '{propertyName}' must be {expected}.");
+    private static bool HasClientDownload(JsonObject metadata) => metadata["downloads"] is JsonObject downloads && downloads["client"] is JsonObject;
     private static void ValidateVersionId(string value)
     {
-        if (string.IsNullOrWhiteSpace(value)
-            || value is "." or ".."
-            || Path.IsPathRooted(value)
-            || value.Contains('/')
-            || value.Contains('\\')
-            || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        if (string.IsNullOrWhiteSpace(value) || value is "." or ".." || Path.IsPathRooted(value) || value.Contains('/') || value.Contains('\\') || value.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             throw new InvalidDataException($"Unsafe Minecraft version id: {value}");
     }
-
     private sealed record ResolvedNode(JsonObject Metadata, string ClientVersionId);
 }
