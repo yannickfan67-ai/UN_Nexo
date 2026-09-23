@@ -15,6 +15,7 @@ internal static class PersistedStoreRegression
         await TestPersistedStoreBoundsAsync();
         await TestAccountStoreAsync();
         await TestServerStoreAsync();
+        await TestStoreLockRejectsLinkedParentAsync();
         await TestStoreLockRejectsLinkedSidecarAsync();
         await TestServerStoreCrossProcessAsync();
     }
@@ -400,6 +401,67 @@ internal static class PersistedStoreRegression
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestStoreLockRejectsLinkedParentAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-store-lock-parent-tests",
+            Guid.NewGuid().ToString("N"));
+        var outsideRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-store-lock-parent-targets",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(outsideRoot);
+
+        try
+        {
+            var linkedParent = Path.Combine(root, "linked");
+            try
+            {
+                Directory.CreateSymbolicLink(
+                    linkedParent,
+                    outsideRoot);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or PlatformNotSupportedException
+                or IOException)
+            {
+                Console.WriteLine(
+                    "SKIP persisted-store linked-parent fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            var storePath = Path.Combine(
+                linkedParent,
+                "servers.json");
+
+            await ThrowsAsync<UnauthorizedAccessException>(
+                async () =>
+                {
+                    await using var lease =
+                        await PersistedStoreMutationLock.AcquireAsync(
+                            storePath);
+                },
+                "linked persisted-store parent must be rejected");
+
+            Equal(
+                false,
+                File.Exists(
+                    Path.Combine(
+                        outsideRoot,
+                        "servers.json.lock")),
+                "linked parent must not receive an external lock sidecar");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+            try { Directory.Delete(outsideRoot, recursive: true); } catch { }
         }
     }
 
