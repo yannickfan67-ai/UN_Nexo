@@ -18,11 +18,21 @@ public sealed class RestrictedRegionService
     private static readonly HashSet<string> RestrictedCountryCodes =
         new(StringComparer.Ordinal) { "CN", "RU" };
 
-    private readonly HttpClient _httpClient;
+    internal static readonly TimeSpan MaxEntitlementEvidenceAge =
+        TimeSpan.FromDays(30);
+    internal static readonly TimeSpan MaxFutureClockSkew =
+        TimeSpan.FromMinutes(5);
 
-    public RestrictedRegionService(HttpClient httpClient)
+    private readonly HttpClient _httpClient;
+    private readonly TimeProvider _timeProvider;
+
+    public RestrictedRegionService(
+        HttpClient httpClient,
+        TimeProvider? timeProvider = null)
     {
-        _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        _httpClient = httpClient
+            ?? throw new ArgumentNullException(nameof(httpClient));
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<RegionalAccessState> DetectAsync(
@@ -90,7 +100,13 @@ public sealed class RestrictedRegionService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(account);
-        if (!account.IsMicrosoft || account.EntitlementVerifiedAt is null)
+        if (!account.IsMicrosoft
+            || account.EntitlementVerifiedAt is not { } verifiedAt)
+            return false;
+
+        var now = _timeProvider.GetUtcNow();
+        if (verifiedAt > now + MaxFutureClockSkew
+            || verifiedAt < now - MaxEntitlementEvidenceAge)
             return false;
 
         return await DetectAsync(cancellationToken)
