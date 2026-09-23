@@ -37,9 +37,10 @@ internal static class DownloadSourceRegression
             "non-default legacy port");
 
         service.SetSource("official");
-        Throws<InvalidDataException>(
-            () => service.GetCandidates("http://libraries.minecraft.net/file.jar"),
-            "official mode must remain HTTPS-only");
+        Equal(
+            "https://libraries.minecraft.net/file.jar",
+            service.GetCandidates("http://libraries.minecraft.net/file.jar").Single(),
+            "official mode must upgrade allowlisted legacy HTTP input before any request");
 
         var modern = service.GetCandidates("https://libraries.minecraft.net/com/example/test.jar");
         Equal("https://libraries.minecraft.net/com/example/test.jar", modern.Single(), "official HTTPS URL");
