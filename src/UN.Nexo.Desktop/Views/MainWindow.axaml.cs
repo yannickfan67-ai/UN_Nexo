@@ -154,6 +154,12 @@ public sealed partial class MainWindow : Window
         return _initializationTask;
     }
 
+    internal void ReportInitializationFailure(Exception exception)
+    {
+        _viewModel.LauncherStatus =
+            $"Startup initialization failed: {exception.Message}";
+    }
+
     public async Task RevealAsync()
     {
         LauncherStartupTrace.Write("[startup] MainWindow reveal animation begin");
