@@ -92,10 +92,38 @@ public sealed class InstanceLifecycleService
             await RewriteInstallStateAsync(stagingRoot, clone, cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
-            _paths.EnsureInstancesRootPhysical();
+
+            // Staging/copy can be expensive, so only hold the global name gate
+            // across the final uniqueness re-check and publication boundary.
+            var instancesRoot = _paths.EnsureInstancesRootPhysical();
+            var nameGatePath = Path.Combine(
+                instancesRoot,
+                ".instance-name-gate");
+            await using var nameLease =
+                await PersistedStoreMutationLock.AcquireAsync(
+                    nameGatePath,
+                    cancellationToken);
+
+            var currentInstances =
+                await new InstanceStoreService(_paths)
+                    .GetAllAsync(cancellationToken);
+            if (currentInstances.Any(item =>
+                    item.Name.Equals(
+                        normalizedName,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException(
+                    $"An instance named '{normalizedName}' already exists.");
+            }
+
             var finalDestinationRoot = _paths.GetInstanceDirectory(newId);
-            if (Directory.Exists(finalDestinationRoot) || File.Exists(finalDestinationRoot))
-                throw new IOException("The clone destination changed before publication.");
+            if (Directory.Exists(finalDestinationRoot)
+                || File.Exists(finalDestinationRoot))
+            {
+                throw new IOException(
+                    "The clone destination changed before publication.");
+            }
+
             _paths.EnsureInstancesRootPhysical();
             Directory.Move(stagingRoot, finalDestinationRoot);
             return clone;
