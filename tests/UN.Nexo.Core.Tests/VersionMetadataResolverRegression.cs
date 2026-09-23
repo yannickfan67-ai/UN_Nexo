@@ -13,6 +13,7 @@ internal static class VersionMetadataResolverRegression
         await TestWrongTypedLibraryNameAsync();
         await TestOversizedMetadataRejectedAsync();
         await TestLinkedVersionMetadataRejectedAsync();
+        await TestLinkedMetadataFileRejectedAsync();
         await TestNormalInheritanceAsync();
     }
 
@@ -229,6 +230,58 @@ internal static class VersionMetadataResolverRegression
             Assert(
                 await File.ReadAllTextAsync(outsideMetadata) == marker,
                 "Rejected linked version metadata must not modify external bytes.");
+        }
+        finally
+        {
+            TryDelete(root);
+            TryDelete(outside);
+        }
+    }
+
+    private static async Task TestLinkedMetadataFileRejectedAsync()
+    {
+        var root = NewRoot("linked-file");
+        var outside = NewRoot("linked-file-outside");
+        try
+        {
+            var versionRoot =
+                Path.Combine(root, "versions", "filelink");
+            Directory.CreateDirectory(versionRoot);
+            var outsidePath =
+                Path.Combine(outside, "outside.json");
+            const string marker =
+                "{\"id\":\"filelink\",\"mainClass\":\"external.File\",\"libraries\":[]}";
+            await File.WriteAllTextAsync(
+                outsidePath,
+                marker);
+
+            var linkedPath =
+                Path.Combine(versionRoot, "filelink.json");
+            try
+            {
+                File.CreateSymbolicLink(
+                    linkedPath,
+                    outsidePath);
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or IOException
+                or PlatformNotSupportedException
+                or NotSupportedException)
+            {
+                Console.WriteLine(
+                    "SKIP linked metadata-file fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            await ExpectRejectedAsync(
+                () => new MinecraftVersionMetadataResolver()
+                    .ResolveAsync(root, "filelink"),
+                "linked metadata file");
+            Assert(
+                await File.ReadAllTextAsync(outsidePath) == marker,
+                "Rejected linked metadata file must not alter its external target.");
         }
         finally
         {
