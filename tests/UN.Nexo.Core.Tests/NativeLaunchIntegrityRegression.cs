@@ -27,7 +27,7 @@ internal static class NativeLaunchIntegrityRegression
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
 
             var extracted = Path.Combine(
                 fixture.NativesRoot,
@@ -78,7 +78,7 @@ internal static class NativeLaunchIntegrityRegression
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
         }
         finally
         {
@@ -103,7 +103,7 @@ internal static class NativeLaunchIntegrityRegression
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
             throw new Exception(
                 label + " unexpectedly remained launchable.");
         }
@@ -277,17 +277,14 @@ internal static class NativeLaunchIntegrityRegression
             "21.0.8",
             true,
             "native integrity");
-        var account = new LauncherAccount(
-            "offline:native-integrity",
-            "offline",
-            "NativeUser",
-            Guid.NewGuid().ToString("D"),
-            DateTimeOffset.UtcNow);
+        var identity = TestMicrosoftIdentity.Create("NativeUser");
+        var account = identity.Account;
 
         return new Fixture(
             paths,
             instance,
             account,
+            identity.Credentials,
             java,
             nativesRoot,
             nativeArchive);
@@ -328,6 +325,7 @@ internal static class NativeLaunchIntegrityRegression
         NexoPathService Paths,
         GameInstance Instance,
         LauncherAccount Account,
+        MinecraftLaunchCredentials Credentials,
         JavaInstallation Java,
         string NativesRoot,
         string NativeArchive);
