@@ -260,11 +260,21 @@ internal static class PersistedStoreRegression
             var empty = await store.GetAllAsync();
             Equal(0, empty.Count, "missing account store should be empty");
 
-            var created = await store.CreateOfflineAsync("Player123");
-            Equal("offline", created.Type, "offline account type");
+            var created = await store.UpsertMicrosoftAsync(
+                "Player123",
+                Guid.NewGuid().ToString("D"),
+                "test-home-account");
+            Equal("microsoft", created.Type, "Microsoft account type");
             var validBytes = await File.ReadAllBytesAsync(path);
             var validJson = Encoding.UTF8.GetString(validBytes);
-            Equal(1, (await store.GetAllAsync()).Count, "valid account should load");
+            Equal(1, (await store.GetAllAsync()).Count, "valid Microsoft account should load");
+
+            await File.WriteAllTextAsync(
+                path,
+                "[{\"id\":\"offline:legacy\",\"type\":\"offline\",\"displayName\":\"LegacyUser\",\"uuid\":\"00000000-0000-0000-0000-000000000001\",\"createdAt\":\"2026-01-01T00:00:00Z\"}]");
+            Equal(0, (await store.GetAllAsync()).Count,
+                "legacy offline profiles should be ignored after offline support removal");
+            await File.WriteAllBytesAsync(path, validBytes);
 
             foreach (var fixture in new[]
             {
@@ -283,7 +293,7 @@ internal static class PersistedStoreRegression
                     "semantic account corruption must fail as InvalidDataException");
                 var before = await File.ReadAllBytesAsync(path);
                 await ThrowsAsync<InvalidDataException>(
-                    () => store.CreateOfflineAsync("Another123"),
+                    () => store.UpsertMicrosoftAsync("Another123", Guid.NewGuid().ToString("D"), "test-home-other"),
                     "account mutation must reject semantic corruption");
                 EqualBytes(before, await File.ReadAllBytesAsync(path),
                     "failed account mutation must preserve original bytes");
@@ -297,7 +307,7 @@ internal static class PersistedStoreRegression
             EqualBytes(malformedBefore, await File.ReadAllBytesAsync(path),
                 "failed account read must preserve malformed source bytes");
             await ThrowsAsync<InvalidDataException>(
-                () => store.CreateOfflineAsync("Another123"),
+                () => store.UpsertMicrosoftAsync("Another123", Guid.NewGuid().ToString("D"), "test-home-other"),
                 "account mutation should reject malformed JSON through the same store contract");
             EqualBytes(malformedBefore, await File.ReadAllBytesAsync(path),
                 "failed account mutation must preserve malformed source bytes");
