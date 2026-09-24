@@ -36,12 +36,9 @@ internal static class LaunchMetadataRegression
             await File.WriteAllBytesAsync(javaPath, [1]);
 
             var java = new JavaInstallation(javaPath, root, "21.0.1", true, "test");
-            var account = new LauncherAccount(
-                "shape-account",
-                "offline",
-                "ShapeUser",
-                Guid.NewGuid().ToString(),
-                DateTimeOffset.UtcNow);
+            var identity = TestMicrosoftIdentity.Create("ShapeUser");
+            var account = identity.Account;
+            var credentials = identity.Credentials;
             var builder = new MinecraftLaunchPlanBuilder(paths);
 
             const string validMetadata = """
@@ -70,7 +67,7 @@ internal static class LaunchMetadataRegression
                 await File.WriteAllTextAsync(indexPath, index);
                 try
                 {
-                    await builder.BuildAsync(instance, account, [java]);
+                    await builder.BuildAsync(instance, account, [java], credentials);
                     throw new Exception($"Malformed launch fixture '{label}' should be rejected.");
                 }
                 catch (InvalidDataException)
@@ -170,7 +167,7 @@ internal static class LaunchMetadataRegression
 
             await File.WriteAllTextAsync(metadataPath, baseMetadata);
             await File.WriteAllTextAsync(indexPath, validIndex);
-            var plan = await builder.BuildAsync(instance, account, [java]);
+            var plan = await builder.BuildAsync(instance, account, [java], credentials);
             if (!plan.Arguments.Contains("net.minecraft.client.main.Main", StringComparer.Ordinal))
                 throw new Exception("Valid launch metadata should still build a launch plan.");
         }
