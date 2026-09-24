@@ -269,7 +269,7 @@ internal static class RuleArchitectureRegression
                     instance,
                     account,
                     [],
-                    credentials: null,
+                    credentials: identity.Credentials,
                     architecture: Architecture.Arm64);
                 throw new Exception(
                     "ARM64 launch without compatible Java unexpectedly succeeded.");
