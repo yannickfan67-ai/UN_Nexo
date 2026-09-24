@@ -467,5 +467,6 @@ public partial class MainWindowViewModel
            || status.StartsWith("Wait for file preparation", StringComparison.OrdinalIgnoreCase)
            || status.StartsWith("Scanning environment", StringComparison.OrdinalIgnoreCase)
            || status.StartsWith("Create or select an instance", StringComparison.OrdinalIgnoreCase)
-           || status.StartsWith("Select an offline profile", StringComparison.OrdinalIgnoreCase);
+           || status.StartsWith("Select a profile", StringComparison.OrdinalIgnoreCase)
+           || status.StartsWith("Only authenticated Microsoft profiles", StringComparison.OrdinalIgnoreCase);
 }
