@@ -118,18 +118,15 @@ internal static class VanillaRequiredArtifactRegression
                 "21.0.8",
                 true,
                 "test");
-            var account = new LauncherAccount(
-                "offline:required-artifacts",
-                "offline",
-                "ArtifactUser",
-                Guid.NewGuid().ToString("D"),
-                DateTimeOffset.UtcNow);
+            var identity = TestMicrosoftIdentity.Create("ArtifactUser");
+            var account = identity.Account;
 
             var plan = await new MinecraftLaunchPlanBuilder(paths)
                 .BuildAsync(
                     instance,
                     account,
-                    [java]);
+                    [java],
+                    identity.Credentials);
             Assert(plan.Arguments.Any(argument =>
                     argument.Contains(
                         "-Dlog4j.configurationFile=",
@@ -150,7 +147,8 @@ internal static class VanillaRequiredArtifactRegression
                     .BuildAsync(
                         instance,
                         account,
-                        [java]);
+                        [java],
+                    identity.Credentials);
                 throw new Exception(
                     "Corrupted logging configuration unexpectedly remained launchable.");
             }
