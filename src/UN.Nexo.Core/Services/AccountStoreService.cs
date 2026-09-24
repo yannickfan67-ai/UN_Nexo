@@ -133,6 +133,9 @@ public sealed partial class AccountStoreService
 
             var normalizedUuid = parsedUuid.ToString("D");
             var type = account.Type?.Trim();
+            if (string.Equals(type, "offline", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             if (!string.Equals(type, "microsoft", StringComparison.OrdinalIgnoreCase)
                 || !account.Id.StartsWith("microsoft:", StringComparison.OrdinalIgnoreCase)
                 || string.IsNullOrWhiteSpace(account.AuthenticationId)
