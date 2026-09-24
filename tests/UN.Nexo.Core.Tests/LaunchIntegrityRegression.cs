@@ -11,6 +11,8 @@ internal static class LaunchIntegrityRegression
 {
     internal static async Task RunAsync()
     {
+        await TestOversizedLocalAssetIndexRejectedAsync();
+
         var root = Path.Combine(
             Path.GetTempPath(),
             "un-nexo-launch-integrity-tests",
@@ -122,6 +124,153 @@ internal static class LaunchIntegrityRegression
             {
                 if (Directory.Exists(root))
                     Directory.Delete(root, recursive: true);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private static async Task TestOversizedLocalAssetIndexRejectedAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-local-asset-index-limit",
+            Guid.NewGuid().ToString("N"));
+        try
+        {
+            var paths = new NexoPathService(root);
+            var instance = new GameInstance(
+                Guid.NewGuid().ToString("N"),
+                "Oversized asset index",
+                "asset-limit",
+                "vanilla",
+                DateTimeOffset.UtcNow);
+            var account = new LauncherAccount(
+                "offline:assetlimit",
+                "offline",
+                "AssetLimit",
+                Guid.NewGuid().ToString("D"),
+                DateTimeOffset.UtcNow);
+
+            var gameRoot =
+                paths.GetInstanceGameDirectory(instance.Id);
+            var versionRoot = Path.Combine(
+                gameRoot,
+                "versions",
+                instance.VersionId);
+            var indexesRoot = Path.Combine(
+                gameRoot,
+                "assets",
+                "indexes");
+            Directory.CreateDirectory(versionRoot);
+            Directory.CreateDirectory(indexesRoot);
+
+            var clientBytes =
+                Encoding.UTF8.GetBytes("client");
+            await File.WriteAllBytesAsync(
+                Path.Combine(
+                    versionRoot,
+                    instance.VersionId + ".jar"),
+                clientBytes);
+            var metadata = JsonSerializer.Serialize(new
+            {
+                id = instance.VersionId,
+                type = "release",
+                mainClass = "net.minecraft.client.main.Main",
+                javaVersion = new
+                {
+                    majorVersion = 21
+                },
+                downloads = new
+                {
+                    client = new
+                    {
+                        size = clientBytes.LongLength,
+                        sha1 = Sha1(clientBytes)
+                    }
+                },
+                assetIndex = new
+                {
+                    id = "oversized-assets"
+                },
+                libraries = Array.Empty<object>(),
+                arguments = new
+                {
+                    jvm = Array.Empty<string>(),
+                    game = Array.Empty<string>()
+                }
+            });
+            await File.WriteAllTextAsync(
+                Path.Combine(
+                    versionRoot,
+                    instance.VersionId + ".json"),
+                metadata);
+
+            var indexPath = Path.Combine(
+                indexesRoot,
+                "oversized-assets.json");
+            await using (var stream = new FileStream(
+                indexPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None))
+            {
+                stream.SetLength(
+                    MinecraftLaunchPlanBuilder.MaxLocalAssetIndexBytes
+                    + 1);
+            }
+
+            var javaPath = Path.Combine(
+                root,
+                OperatingSystem.IsWindows()
+                    ? "java.exe"
+                    : "java");
+            await File.WriteAllBytesAsync(
+                javaPath,
+                [1]);
+            var java = new JavaInstallation(
+                javaPath,
+                root,
+                "21.0.1",
+                true,
+                "test");
+
+            try
+            {
+                _ = await new MinecraftLaunchPlanBuilder(paths)
+                    .BuildAsync(
+                        instance,
+                        account,
+                        [java]);
+                throw new Exception(
+                    "Oversized local asset index unexpectedly reached launch planning.");
+            }
+            catch (InvalidDataException ex)
+            {
+                Assert(
+                    ex.Message.Contains(
+                        "asset index",
+                        StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains(
+                        "safety limit",
+                        StringComparison.OrdinalIgnoreCase),
+                    "Oversized asset-index rejection should identify the bounded local metadata path.");
+            }
+
+            Assert(
+                new FileInfo(indexPath).Length
+                    == MinecraftLaunchPlanBuilder.MaxLocalAssetIndexBytes + 1,
+                "Launch validation must preserve the oversized local asset index.");
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(root))
+                    Directory.Delete(
+                        root,
+                        recursive: true);
             }
             catch
             {

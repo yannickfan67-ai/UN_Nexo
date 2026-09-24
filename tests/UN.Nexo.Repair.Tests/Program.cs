@@ -134,6 +134,10 @@ internal static class Program
                 new MinecraftRuntimeInspector(paths),
                 new JavaRuntimeProvisionService(client, paths));
 
+            await TestVersionMetadataReadGuardsAsync(
+                service,
+                paths);
+
             var report = await service.CheckAsync(instance);
             Require(report.Issues.Any(item => item.Code == "client-corrupt"), "corrupt client should be detected");
             Require(report.Issues.Any(item => item.Code == "libraries-damaged"), "missing library should be detected");
@@ -526,6 +530,129 @@ internal static class Program
         finally
         {
             try { Directory.Delete(temp, recursive: true); } catch { }
+        }
+    }
+
+    private static async Task TestVersionMetadataReadGuardsAsync(
+        MinecraftInstanceRepairService service,
+        NexoPathService paths)
+    {
+        var oversized = new GameInstance(
+            Guid.NewGuid().ToString("N"),
+            "Oversized metadata",
+            "oversized-metadata",
+            "vanilla",
+            DateTimeOffset.UtcNow);
+        var oversizedRoot = Path.Combine(
+            paths.GetInstanceGameDirectory(oversized.Id),
+            "versions",
+            oversized.VersionId);
+        Directory.CreateDirectory(oversizedRoot);
+        var oversizedPath = Path.Combine(
+            oversizedRoot,
+            oversized.VersionId + ".json");
+        await using (var stream = new FileStream(
+            oversizedPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None))
+        {
+            stream.SetLength(8L * 1024 * 1024 + 1);
+        }
+
+        var oversizedReport =
+            await service.CheckAsync(oversized);
+        Require(
+            oversizedReport.Issues.Any(item =>
+                item.Code == "version-metadata-corrupt"),
+            "Repair health check must reject oversized version metadata through the bounded resolver read.");
+
+        var linked = new GameInstance(
+            Guid.NewGuid().ToString("N"),
+            "Linked metadata",
+            "linked-metadata",
+            "vanilla",
+            DateTimeOffset.UtcNow);
+        var versionsRoot = Path.Combine(
+            paths.GetInstanceGameDirectory(linked.Id),
+            "versions");
+        Directory.CreateDirectory(versionsRoot);
+        var outsideRoot = Path.Combine(
+            Path.GetTempPath(),
+            "un-nexo-repair-linked-metadata-"
+            + Guid.NewGuid().ToString("N"));
+        var outsideVersion = Path.Combine(
+            outsideRoot,
+            linked.VersionId);
+        Directory.CreateDirectory(outsideVersion);
+        var outsidePath = Path.Combine(
+            outsideVersion,
+            linked.VersionId + ".json");
+        const string externalMarker =
+            "{\"id\":\"linked-metadata\",\"downloads\":{},\"libraries\":[]}";
+        await File.WriteAllTextAsync(
+            outsidePath,
+            externalMarker);
+
+        var linkedRoot = Path.Combine(
+            versionsRoot,
+            linked.VersionId);
+        var linkedCreated = false;
+        try
+        {
+            try
+            {
+                Directory.CreateSymbolicLink(
+                    linkedRoot,
+                    outsideVersion);
+                linkedCreated = true;
+            }
+            catch (Exception ex) when (
+                ex is UnauthorizedAccessException
+                or IOException
+                or PlatformNotSupportedException
+                or NotSupportedException)
+            {
+                Console.WriteLine(
+                    "SKIP repair linked metadata fixture: "
+                    + ex.GetType().Name);
+                return;
+            }
+
+            var linkedReport =
+                await service.CheckAsync(linked);
+            Require(
+                linkedReport.Issues.Any(item =>
+                    item.Code == "version-metadata-corrupt"),
+                "Repair health check must reject linked version metadata before parsing external contents.");
+            Require(
+                await File.ReadAllTextAsync(outsidePath)
+                    == externalMarker,
+                "Rejected external version metadata must remain unchanged.");
+        }
+        finally
+        {
+            if (linkedCreated)
+            {
+                try
+                {
+                    Directory.Delete(linkedRoot);
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                if (Directory.Exists(outsideRoot))
+                    Directory.Delete(
+                        outsideRoot,
+                        recursive: true);
+            }
+            catch
+            {
+            }
         }
     }
 

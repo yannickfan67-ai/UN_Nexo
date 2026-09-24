@@ -5,6 +5,7 @@ namespace UN.Nexo.Core.Services;
 
 public sealed class InstanceStoreService
 {
+    internal const long MaxInstanceMetadataBytes = 64 * 1024;
     private readonly NexoPathService _paths;
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
@@ -52,13 +53,28 @@ public sealed class InstanceStoreService
 
             try
             {
-                await using var stream = File.OpenRead(metadataPath);
-                var instance = await JsonSerializer.DeserializeAsync<GameInstance>(stream, _jsonOptions, cancellationToken);
+                PhysicalPathGuard.EnsureRegularFileOrMissing(
+                    metadataPath,
+                    "Instance metadata");
+                var bytes = await BoundedLocalFile.ReadAllBytesAsync(
+                    metadataPath,
+                    MaxInstanceMetadataBytes,
+                    "Instance metadata",
+                    cancellationToken);
+                var instance = JsonSerializer.Deserialize<GameInstance>(
+                    bytes,
+                    _jsonOptions);
                 if (instance is not null
-                    && string.Equals(instance.Id, directoryId, idComparison))
+                    && string.Equals(
+                        instance.Id,
+                        directoryId,
+                        idComparison))
+                {
                     result.Add(instance);
+                }
             }
             catch (JsonException) { }
+            catch (InvalidDataException) { }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
         }
