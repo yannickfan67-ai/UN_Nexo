@@ -4,6 +4,7 @@ using System.Text;
 using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
+using UN.Nexo.Fabric.Tests;
 
 if (args.Length == 5 && args[0] == "--hold-instance-lease")
 {
@@ -302,15 +303,10 @@ static async Task RunInheritedLaunchRegressionAsync(string root)
     var javaPath = Path.Combine(root, OperatingSystem.IsWindows() ? "java.exe" : "java");
     await File.WriteAllBytesAsync(javaPath, [4]);
     var java = new JavaInstallation(javaPath, root, "17.0.12", true, "test");
-    var account = new LauncherAccount(
-        "offline-test",
-        "offline",
-        "FabricUser",
-        Guid.NewGuid().ToString(),
-        DateTimeOffset.UtcNow);
+    var identity = TestMicrosoftIdentity.Create("FabricUser");
 
     var plan = await new MinecraftLaunchPlanBuilder(paths)
-        .BuildAsync(instance, account, [java]);
+        .BuildAsync(instance, identity.Account, [java], identity.Credentials);
     Assert(plan.Arguments.Contains("net.fabricmc.loader.impl.launch.knot.KnotClient"),
         "Launch plan should use Fabric KnotClient.");
     Assert(plan.Arguments.Contains("-Dfabric.test=true"),
