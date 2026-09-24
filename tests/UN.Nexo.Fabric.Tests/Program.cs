@@ -102,7 +102,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
                 "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
-                string.Empty,
+                handler.MetadataSha1,
                 0);
 
             try
@@ -175,7 +175,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
             "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            handler.MetadataSha1,
             0);
 
         await service.PrepareAsync(instance, baseVersion);
@@ -391,7 +391,17 @@ static void Assert(bool condition, string message)
 
 sealed class FabricPrepareHandler(byte[] artifactBytes) : HttpMessageHandler
 {
+    private const string Metadata =
+        "{\"id\":\"1.21.4\",\"libraries\":[],"
+        + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+        + "\"assetIndex\":{\"id\":\"fabric-base-assets\","
+        + "\"url\":\"https://launchermeta.mojang.com/fabric-base-assets.json\"}}";
+
     public int RequestCount { get; private set; }
+    public string MetadataSha1
+        => Convert.ToHexString(
+                SHA1.HashData(Encoding.UTF8.GetBytes(Metadata)))
+            .ToLowerInvariant();
 
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
@@ -406,15 +416,10 @@ sealed class FabricPrepareHandler(byte[] artifactBytes) : HttpMessageHandler
                 "/version.json",
                 StringComparison.OrdinalIgnoreCase))
         {
-            const string json =
-                "{\"id\":\"1.21.4\",\"libraries\":[],"
-                + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                + "\"assetIndex\":{\"id\":\"fabric-base-assets\","
-                + "\"url\":\"https://launchermeta.mojang.com/fabric-base-assets.json\"}}";
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
-                    json,
+                    Metadata,
                     Encoding.UTF8,
                     "application/json")
             });

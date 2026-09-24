@@ -90,7 +90,7 @@ internal static class QuiltLoaderRegression
                 "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
-                string.Empty,
+                handler.MetadataSha1,
                 0);
 
             await service.PrepareAsync(
@@ -316,7 +316,7 @@ internal static class QuiltLoaderRegression
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    handler.MetadataSha1,
                     0);
 
             try
@@ -690,7 +690,29 @@ internal static class QuiltLoaderRegression
         QuiltLibraryMode libraryMode =
             QuiltLibraryMode.Valid) : HttpMessageHandler
     {
+        private const string Metadata =
+            "{"
+            + "\"id\":\"1.21.4\","
+            + "\"mainClass\":\"net.minecraft.client.main.Main\","
+            + "\"javaVersion\":{\"majorVersion\":21},"
+            + "\"libraries\":[],"
+            + "\"arguments\":{"
+            + "\"jvm\":[\"-cp\",\"${classpath}\"],"
+            + "\"game\":[\"--username\",\"${auth_player_name}\"]},"
+            + "\"downloads\":{\"client\":{"
+            + "\"url\":\"https://piston-data.mojang.com/client.jar\","
+            + "\"size\":6}},"
+            + "\"assetIndex\":{"
+            + "\"id\":\"quilt-assets\","
+            + "\"url\":\"https://launchermeta.mojang.com/quilt-assets.json\"}"
+            + "}";
+
         public List<string> RequestedPaths { get; } = [];
+        public string MetadataSha1
+            => Convert.ToHexString(
+                    SHA1.HashData(
+                        Encoding.UTF8.GetBytes(Metadata)))
+                .ToLowerInvariant();
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -741,22 +763,7 @@ internal static class QuiltLoaderRegression
                     "piston-meta.mojang.com",
                     StringComparison.OrdinalIgnoreCase))
             {
-                return Json(
-                    "{"
-                    + "\"id\":\"1.21.4\","
-                    + "\"mainClass\":\"net.minecraft.client.main.Main\","
-                    + "\"javaVersion\":{\"majorVersion\":21},"
-                    + "\"libraries\":[],"
-                    + "\"arguments\":{"
-                    + "\"jvm\":[\"-cp\",\"${classpath}\"],"
-                    + "\"game\":[\"--username\",\"${auth_player_name}\"]},"
-                    + "\"downloads\":{\"client\":{"
-                    + "\"url\":\"https://piston-data.mojang.com/client.jar\","
-                    + "\"size\":6}},"
-                    + "\"assetIndex\":{"
-                    + "\"id\":\"quilt-assets\","
-                    + "\"url\":\"https://launchermeta.mojang.com/quilt-assets.json\"}"
-                    + "}");
+                return Json(Metadata);
             }
 
             if (uri.Host.Equals(

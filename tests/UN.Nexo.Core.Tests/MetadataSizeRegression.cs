@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using UN.Nexo.Core.Models;
 using UN.Nexo.Core.Services;
@@ -142,7 +143,8 @@ internal static class MetadataSizeRegression
         try
         {
             var oversized = new DeclaredLengthContent(AssetIndexLimit + 1L);
-            using var client = new HttpClient(new AssetLimitHandler(oversized));
+            var handler = new AssetLimitHandler(oversized);
+            using var client = new HttpClient(handler);
             var paths = new NexoPathService(root);
             var service = new MinecraftVanillaInstallService(
                 client,
@@ -152,7 +154,9 @@ internal static class MetadataSizeRegression
             var instance = Instance("asset-index-limit");
 
             await ExpectInvalidDataAsync(
-                () => service.InstallAsync(instance, Version(instance.VersionId)),
+                () => service.InstallAsync(
+                    instance,
+                    Version(instance.VersionId, handler.MetadataSha1)),
                 "Declared oversized asset index");
 
             Assert(!oversized.ReadAttempted,
@@ -195,7 +199,11 @@ internal static class MetadataSizeRegression
                 TimeSpan.FromSeconds(2));
             var instance = Instance("version-near-limit");
 
-            await service.InstallAsync(instance, Version(instance.VersionId));
+            await service.InstallAsync(
+                instance,
+                Version(
+                    instance.VersionId,
+                    Sha1(Encoding.UTF8.GetBytes(body))));
 
             Assert(File.Exists(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json")),
                 "Just-under-limit version metadata should still prepare successfully.");
@@ -214,15 +222,21 @@ internal static class MetadataSizeRegression
             "vanilla",
             DateTimeOffset.UtcNow);
 
-    private static MinecraftVersionInfo Version(string id)
+    private static MinecraftVersionInfo Version(
+        string id,
+        string sha1 = "0000000000000000000000000000000000000000")
         => new(
             id,
             "release",
             "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            sha1,
             0);
+
+    private static string Sha1(byte[] bytes)
+        => Convert.ToHexString(SHA1.HashData(bytes))
+            .ToLowerInvariant();
 
     private static string NewRoot()
     {
@@ -304,6 +318,15 @@ internal static class MetadataSizeRegression
 
     private sealed class AssetLimitHandler(DeclaredLengthContent oversized) : HttpMessageHandler
     {
+        private const string Metadata =
+            "{\"id\":\"asset-index-limit\",\"libraries\":[],"
+            + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+            + "\"assetIndex\":{\"id\":\"limit-assets\","
+            + "\"url\":\"https://launchermeta.mojang.com/index.json\"}}";
+
+        public string MetadataSha1
+            => Sha1(Encoding.UTF8.GetBytes(Metadata));
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
@@ -311,13 +334,8 @@ internal static class MetadataSizeRegression
             var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
             if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
-                const string metadata =
-                    "{\"id\":\"asset-index-limit\",\"libraries\":[],"
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                    + "\"assetIndex\":{\"id\":\"limit-assets\","
-                    + "\"url\":\"https://launchermeta.mojang.com/index.json\"}}";
                 return Task.FromResult(Response(
-                    new StringContent(metadata, Encoding.UTF8, "application/json")));
+                    new StringContent(Metadata, Encoding.UTF8, "application/json")));
             }
 
             if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
