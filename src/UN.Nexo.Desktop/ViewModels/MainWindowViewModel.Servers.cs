@@ -8,7 +8,7 @@ public partial class MainWindowViewModel
     {
         if (!CanPlay || SelectedInstance is null || SelectedAccount is null)
         {
-            GameStatus = "Server launch needs a selected instance and local profile.";
+            GameStatus = "Server launch needs a selected instance and authenticated Microsoft profile.";
             LauncherStatus = GameStatus;
             return;
         }
@@ -46,8 +46,19 @@ public partial class MainWindowViewModel
                 "play-server",
                 cancellation.Token);
 
+            GameStatus = $"Refreshing Microsoft session for {account.DisplayName}…";
+            LauncherStatus = GameStatus;
+            var session = await _microsoftAuth.AcquireSessionAsync(
+                account,
+                cancellation.Token);
+            ReplaceAccountInList(account, session.Account);
+
             var plan = await _launchBuilder.BuildAsync(
-                instance, account, JavaInstallations.ToArray(), cancellation.Token);
+                instance,
+                session.Account,
+                JavaInstallations.ToArray(),
+                session.Credentials,
+                cancellation.Token);
             plan = await new MinecraftServerLaunchDecorator(_paths).ApplyAsync(
                 plan, instance, target, cancellation.Token);
 
