@@ -158,15 +158,11 @@ internal static class QuiltLoaderRegression
                     ? "java.exe"
                     : "java");
             await File.WriteAllBytesAsync(javaPath, [1]);
+            var identity = TestMicrosoftIdentity.Create("QuiltTester");
             var plan = await new MinecraftLaunchPlanBuilder(paths)
                 .BuildAsync(
                     instance,
-                    new LauncherAccount(
-                        "quilt-test",
-                        "offline",
-                        "QuiltTester",
-                        Guid.NewGuid().ToString(),
-                        DateTimeOffset.UtcNow),
+                    identity.Account,
                     [
                         new JavaInstallation(
                             javaPath,
@@ -174,7 +170,8 @@ internal static class QuiltLoaderRegression
                             "21.0.8",
                             true,
                             "test")
-                    ]);
+                    ],
+                    identity.Credentials);
 
             Assert(
                 plan.Arguments.Contains(

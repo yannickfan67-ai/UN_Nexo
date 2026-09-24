@@ -240,16 +240,12 @@ internal static class ForgeLoaderRegression
                     .SequenceEqual(installerBytes),
                 "Cached Forge installer bytes changed.");
 
+            var identity = TestMicrosoftIdentity.Create("ForgeTester");
             var plan =
                 await new MinecraftLaunchPlanBuilder(paths)
                     .BuildAsync(
                         instance,
-                        new LauncherAccount(
-                            "forge-test",
-                            "offline",
-                            "ForgeTester",
-                            Guid.NewGuid().ToString(),
-                            DateTimeOffset.UtcNow),
+                        identity.Account,
                         [
                             new JavaInstallation(
                                 javaPath,
@@ -257,7 +253,8 @@ internal static class ForgeLoaderRegression
                                 "21.0.8",
                                 true,
                                 "test")
-                        ]);
+                        ],
+                        identity.Credentials);
 
             Assert(
                 plan.Arguments.Contains(

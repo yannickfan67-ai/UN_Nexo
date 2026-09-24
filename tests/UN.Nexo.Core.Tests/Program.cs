@@ -44,8 +44,6 @@ internal static class Program
             ("Compatible mod recommendation filtering", ModRecommendationRegression.RunAsync),
             ("Mod dependency planning and atomic publication", ModDependencyRegression.RunAsync),
             ("Microsoft account authentication", MicrosoftAuthRegression.RunAsync),
-            ("Restricted-region offline fallback policy", RestrictedRegionRegression.RunAsync),
-            ("Explicit offline test launch switch", LauncherLaunchModeRegression.RunAsync),
             ("Persisted account and server store validation", PersistedStoreRegression.RunAsync),
             ("Instance name uniqueness", InstanceNameUniquenessRegression.RunAsync),
             ("Asset-index id path containment", TestAssetIndexIdContainmentAsync),
@@ -879,7 +877,9 @@ internal static class Program
             var instance = new GameInstance(
                     Guid.NewGuid().ToString("N"), $"Minecraft {version}", version, "vanilla", DateTimeOffset.UtcNow);
             var accountUuid = Guid.NewGuid();
-            var account = new LauncherAccount("local-test", "offline", "NexoTester", accountUuid.ToString(), DateTimeOffset.UtcNow);
+            var identity = TestMicrosoftIdentity.Create("NexoTester", accountUuid);
+            var account = identity.Account;
+            var credentials = identity.Credentials;
             var instanceRoot = paths.GetInstanceDirectory(instance.Id);
             var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
             var versionRoot = Path.Combine(gameRoot, "versions", version);
@@ -938,7 +938,7 @@ internal static class Program
                 new JavaInstallation(java8, temp, "1.8.0_442", true, "test")
             };
 
-            var plan = await new MinecraftLaunchPlanBuilder(paths).BuildAsync(instance, account, installations);
+            var plan = await new MinecraftLaunchPlanBuilder(paths).BuildAsync(instance, account, installations, credentials);
             Equal(expectedJava == 21 ? java21 : java8, plan.JavaPath, "required Java selection");
             Equal(gameRoot, plan.WorkingDirectory, "instance working directory");
             Contains(plan.Arguments, "NexoTester", "username substitution");
@@ -1020,7 +1020,8 @@ internal static class Program
             var paths = new NexoPathService(temp);
             var instance = new GameInstance(
                     Guid.NewGuid().ToString("N"), "Minecraft 1.5.2", version, "vanilla", DateTimeOffset.UtcNow);
-            var account = new LauncherAccount("local-152", "offline", "LegacyTester", Guid.NewGuid().ToString(), DateTimeOffset.UtcNow);
+            var identity = TestMicrosoftIdentity.Create("LegacyTester");
+            var account = identity.Account;
             var instanceRoot = paths.GetInstanceDirectory(instance.Id);
             var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
             var versionRoot = Path.Combine(gameRoot, "versions", version);
@@ -1075,12 +1076,13 @@ internal static class Program
             var plan = await new MinecraftLaunchPlanBuilder(paths).BuildAsync(
                 instance,
                 account,
-                [new JavaInstallation(java8, temp, "1.8.0_442", true, "test")]);
+                [new JavaInstallation(java8, temp, "1.8.0_442", true, "test")],
+                identity.Credentials);
 
             Equal(java8, plan.JavaPath, "Minecraft 1.5.2 should default to Java 8");
             Contains(plan.Arguments, "net.minecraft.launchwrapper.Launch", "1.5.2 launchwrapper main class");
             Contains(plan.Arguments, "LegacyTester", "1.5.2 username argument");
-            Contains(plan.Arguments, "0", "1.5.2 offline session argument");
+            ContainsPrefix(plan.Arguments, "token:", "1.5.2 authenticated session argument");
             Contains(plan.Arguments, gameRoot, "1.5.2 game directory");
             var virtualAssets = Path.Combine(assetsRoot, "virtual", "legacy");
             Contains(plan.Arguments, virtualAssets, "1.5.2 legacy virtual assets argument");

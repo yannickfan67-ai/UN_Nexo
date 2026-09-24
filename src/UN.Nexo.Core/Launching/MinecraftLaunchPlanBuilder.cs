@@ -16,13 +16,6 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         GameInstance instance,
         LauncherAccount account,
         IEnumerable<JavaInstallation> installations,
-        CancellationToken cancellationToken = default)
-        => BuildAsync(instance, account, installations, credentials: null, cancellationToken);
-
-    public Task<MinecraftLaunchPlan> BuildAsync(
-        GameInstance instance,
-        LauncherAccount account,
-        IEnumerable<JavaInstallation> installations,
         MinecraftLaunchCredentials? credentials,
         CancellationToken cancellationToken = default)
         => BuildForArchitectureAsync(
@@ -59,47 +52,31 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
         string clientId;
         string xuid;
 
-        if (account.IsOffline)
-        {
-            if (!Regex.IsMatch(account.DisplayName, "^[A-Za-z0-9_]{3,16}$")
-                || !Guid.TryParse(account.Uuid, out uuid))
-                throw new InvalidDataException("The selected offline profile is invalid.");
+        if (!account.IsMicrosoft)
+            throw new InvalidDataException(
+                "Minecraft launch requires an authenticated Microsoft profile.");
 
-            playerName = account.DisplayName;
-            authAccessToken = "0";
-            authSession = "0";
-            userType = "legacy";
-            clientId = "0";
-            xuid = "0";
-        }
-        else if (account.IsMicrosoft)
-        {
-            if (credentials is null
-                || !string.Equals(credentials.AccountId, account.Id, StringComparison.Ordinal)
-                || !string.Equals(credentials.PlayerName, account.DisplayName, StringComparison.Ordinal)
-                || !Guid.TryParse(account.Uuid, out uuid)
-                || !Guid.TryParse(credentials.Uuid, out var credentialUuid)
-                || credentialUuid != uuid
-                || string.IsNullOrWhiteSpace(credentials.AccessToken)
-                || !string.Equals(
-                    credentials.ClientId,
-                    MsalMicrosoftAccessTokenProvider.ClientId,
-                    StringComparison.Ordinal)
-                || string.IsNullOrWhiteSpace(credentials.Xuid))
-                throw new InvalidDataException(
-                    "The selected Microsoft profile does not have valid Minecraft launch credentials.");
+        if (credentials is null
+            || !string.Equals(credentials.AccountId, account.Id, StringComparison.Ordinal)
+            || !string.Equals(credentials.PlayerName, account.DisplayName, StringComparison.Ordinal)
+            || !Guid.TryParse(account.Uuid, out uuid)
+            || !Guid.TryParse(credentials.Uuid, out var credentialUuid)
+            || credentialUuid != uuid
+            || string.IsNullOrWhiteSpace(credentials.AccessToken)
+            || !string.Equals(
+                credentials.ClientId,
+                MsalMicrosoftAccessTokenProvider.ClientId,
+                StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(credentials.Xuid))
+            throw new InvalidDataException(
+                "The selected Microsoft profile does not have valid Minecraft launch credentials.");
 
-            playerName = credentials.PlayerName;
-            authAccessToken = credentials.AccessToken;
-            authSession = $"token:{credentials.AccessToken}:{uuid:N}";
-            userType = "msa";
-            clientId = credentials.ClientId;
-            xuid = credentials.Xuid;
-        }
-        else
-        {
-            throw new InvalidDataException($"Unsupported launcher account type '{account.Type}'.");
-        }
+        playerName = credentials.PlayerName;
+        authAccessToken = credentials.AccessToken;
+        authSession = $"token:{credentials.AccessToken}:{uuid:N}";
+        userType = "msa";
+        clientId = credentials.ClientId;
+        xuid = credentials.Xuid;
 
         if (architecture is not (Architecture.X64 or Architecture.Arm64))
             throw new PlatformNotSupportedException(

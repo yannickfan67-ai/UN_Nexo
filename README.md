@@ -34,7 +34,7 @@ The current development line includes:
 - Explicit user cancellation remains cancellation and is not silently converted into a source retry
 - Same-instance Prepare, Repair, Play, Backup/Restore and mod mutations share one operation coordinator, including cooperating Nexo processes
 - Persistent account/server stores, instance-name creation and settings publication are serialized across Nexo processes to avoid lost updates
-- Offline local profiles plus Microsoft account profiles, kept as distinct account types
+- Microsoft account profiles backed by Minecraft entitlement/profile verification; offline launcher profiles are not supported
 - Java discovery through `JAVA_HOME`, `PATH` and common platform install locations
 - Automatic exact-major Java selection from Minecraft version metadata
 - Automatic SHA-256-verified Eclipse Temurin runtime acquisition when a required Java major is missing

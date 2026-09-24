@@ -154,12 +154,8 @@ internal static class RuleArchitectureRegression
                 "arm64-fixture",
                 "vanilla",
                 DateTimeOffset.UtcNow);
-            var account = new LauncherAccount(
-                "offline:armtester",
-                "offline",
-                "ArmTester",
-                Guid.NewGuid().ToString("D"),
-                DateTimeOffset.UtcNow);
+            var identity = TestMicrosoftIdentity.Create("ArmTester");
+            var account = identity.Account;
 
             var instanceRoot = paths.GetInstanceDirectory(instance.Id);
             var gameRoot = paths.GetInstanceGameDirectory(instance.Id);
@@ -247,7 +243,7 @@ internal static class RuleArchitectureRegression
                     "21.0.8",
                     true,
                     "manual ARM64 fixture")],
-                credentials: null,
+                credentials: identity.Credentials,
                 architecture: Architecture.Arm64);
 
             Assert(plan.JavaPath == java21,
@@ -273,7 +269,7 @@ internal static class RuleArchitectureRegression
                     instance,
                     account,
                     [],
-                    credentials: null,
+                    credentials: identity.Credentials,
                     architecture: Architecture.Arm64);
                 throw new Exception(
                     "ARM64 launch without compatible Java unexpectedly succeeded.");
@@ -298,7 +294,7 @@ internal static class RuleArchitectureRegression
                         "21.0.8",
                         true,
                         "fixture")],
-                    credentials: null,
+                    credentials: identity.Credentials,
                     architecture: Architecture.X86);
                 throw new Exception(
                     "Unsupported x86 launch unexpectedly succeeded.");

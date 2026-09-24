@@ -6,7 +6,7 @@ UN_Nexo is an independent open-source Minecraft: Java Edition launcher. It is no
 
 ## Data kept on your device
 
-UN_Nexo stores launcher configuration, instance metadata, offline profiles, and Microsoft Minecraft profile metadata in its local application data directory.
+UN_Nexo stores launcher configuration, instance metadata, and Microsoft Minecraft profile metadata in its local application data directory. Offline launcher profiles are not supported.
 
 For a Microsoft profile, the local `accounts.json` entry contains the Minecraft display name, Minecraft UUID, creation time, account type, and a non-secret MSAL home-account identifier. It does not contain Microsoft passwords, access tokens, refresh tokens, Xbox tokens, XSTS tokens, or Minecraft access tokens.
 
