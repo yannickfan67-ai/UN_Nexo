@@ -179,15 +179,10 @@ internal static class NeoForgeLoaderRegression
                 (await File.ReadAllBytesAsync(cachedInstaller)).SequenceEqual(installerBytes),
                 "Cached NeoForge installer bytes changed.");
 
-            var account = new LauncherAccount(
-                "neoforge-test",
-                "offline",
-                "NeoForgeTester",
-                Guid.NewGuid().ToString(),
-                DateTimeOffset.UtcNow);
+            var identity = TestMicrosoftIdentity.Create("NeoForgeTester");
             var java = new JavaInstallation(javaPath, root, "21.0.8", true, "test");
             var plan = await new MinecraftLaunchPlanBuilder(paths)
-                .BuildAsync(instance, account, [java]);
+                .BuildAsync(instance, identity.Account, [java], identity.Credentials);
 
             Assert(plan.Arguments.Contains("cpw.mods.bootstraplauncher.BootstrapLauncher"),
                 "NeoForge launch plan must use the installer-generated main class.");
