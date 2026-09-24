@@ -23,7 +23,7 @@ internal static class LaunchIntegrityRegression
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
 
             await AssertSameSizeCorruptionRejectedAsync(
                 fixture.ClientPath,
@@ -31,7 +31,7 @@ internal static class LaunchIntegrityRegression
                 () => builder.BuildAsync(
                     fixture.Instance,
                     fixture.Account,
-                    [fixture.Java]),
+                    [fixture.Java], fixture.Credentials),
                 "same-size corrupted client JAR");
 
             await AssertSameSizeCorruptionRejectedAsync(
@@ -40,7 +40,7 @@ internal static class LaunchIntegrityRegression
                 () => builder.BuildAsync(
                     fixture.Instance,
                     fixture.Account,
-                    [fixture.Java]),
+                    [fixture.Java], fixture.Credentials),
                 "same-size corrupted library JAR");
 
             await AssertSameSizeCorruptionRejectedAsync(
@@ -49,13 +49,13 @@ internal static class LaunchIntegrityRegression
                 () => builder.BuildAsync(
                     fixture.Instance,
                     fixture.Account,
-                    [fixture.Java]),
+                    [fixture.Java], fixture.Credentials),
                 "same-size corrupted authoritative asset object");
 
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
 
             var virtualPath = Path.Combine(
                 fixture.GameRoot,
@@ -91,7 +91,7 @@ internal static class LaunchIntegrityRegression
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
 
             var repairedVirtual = await File.ReadAllBytesAsync(virtualPath);
             var repairedResource = await File.ReadAllBytesAsync(resourcePath);
@@ -105,7 +105,7 @@ internal static class LaunchIntegrityRegression
             _ = await builder.BuildAsync(
                 fixture.Instance,
                 fixture.Account,
-                [fixture.Java]);
+                [fixture.Java], fixture.Credentials);
 
             var stableVirtual = await File.ReadAllBytesAsync(virtualPath);
             var stableResource = await File.ReadAllBytesAsync(resourcePath);
@@ -189,12 +189,8 @@ internal static class LaunchIntegrityRegression
             versionId,
             "vanilla",
             DateTimeOffset.UtcNow);
-        var account = new LauncherAccount(
-            "offline:integrity",
-            "offline",
-            "IntegrityUser",
-            Guid.NewGuid().ToString("D"),
-            DateTimeOffset.UtcNow);
+        var identity = TestMicrosoftIdentity.Create("IntegrityUser");
+        var account = identity.Account;
 
         var gameRoot = paths.GetInstanceGameDirectory(
             instance.Id);
@@ -359,6 +355,7 @@ internal static class LaunchIntegrityRegression
             paths,
             instance,
             account,
+            identity.Credentials,
             java,
             gameRoot,
             assetId,
@@ -387,6 +384,7 @@ internal static class LaunchIntegrityRegression
         NexoPathService Paths,
         GameInstance Instance,
         LauncherAccount Account,
+        MinecraftLaunchCredentials Credentials,
         JavaInstallation Java,
         string GameRoot,
         string AssetId,
