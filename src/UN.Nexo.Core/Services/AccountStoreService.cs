@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using UN.Nexo.Core.Models;
@@ -19,30 +17,6 @@ public sealed partial class AccountStoreService
     public Task<IReadOnlyList<LauncherAccount>> GetAllAsync(CancellationToken cancellationToken = default)
         => ReadAccountsAsync(cancellationToken);
 
-    public async Task<LauncherAccount> CreateOfflineAsync(string username, CancellationToken cancellationToken = default)
-    {
-        var normalized = username.Trim();
-        if (!OfflineNameRegex().IsMatch(normalized))
-            throw new ArgumentException("Offline name must be 3-16 characters using letters, numbers or underscore.", nameof(username));
-
-        await using var lease = await PersistedStoreMutationLock.AcquireAsync(GetAccountsPath(), cancellationToken);
-        var accounts = (await ReadAccountsAsync(cancellationToken)).ToList();
-        var existing = accounts.FirstOrDefault(x => x.IsOffline && x.DisplayName.Equals(normalized, StringComparison.OrdinalIgnoreCase));
-        if (existing is not null)
-            return existing;
-
-        var account = new LauncherAccount(
-            $"offline:{normalized.ToLowerInvariant()}",
-            "offline",
-            normalized,
-            CreateOfflineUuid(normalized),
-            DateTimeOffset.UtcNow);
-
-        accounts.Add(account);
-        await SaveAtomicAsync(accounts, cancellationToken);
-        return account;
-    }
-
     public async Task<LauncherAccount> UpsertMicrosoftAsync(
         string displayName,
         string minecraftUuid,
@@ -50,7 +24,7 @@ public sealed partial class AccountStoreService
         CancellationToken cancellationToken = default)
     {
         var normalizedName = displayName?.Trim() ?? string.Empty;
-        if (!OfflineNameRegex().IsMatch(normalizedName))
+        if (!MinecraftNameRegex().IsMatch(normalizedName))
             throw new InvalidDataException("Minecraft returned an invalid profile name.");
         if (!Guid.TryParse(minecraftUuid, out var parsedUuid))
             throw new InvalidDataException("Minecraft returned an invalid profile UUID.");
@@ -150,7 +124,7 @@ public sealed partial class AccountStoreService
                 throw new InvalidDataException(
                     $"Account store contains duplicate id '{account.Id}'.");
 
-            if (!OfflineNameRegex().IsMatch(account.DisplayName ?? string.Empty))
+            if (!MinecraftNameRegex().IsMatch(account.DisplayName ?? string.Empty))
                 throw new InvalidDataException(
                     $"Account store entry '{account.Id}' has an invalid Minecraft profile name.");
             if (!Guid.TryParse(account.Uuid, out var parsedUuid))
@@ -159,35 +133,14 @@ public sealed partial class AccountStoreService
 
             var normalizedUuid = parsedUuid.ToString("D");
             var type = account.Type?.Trim();
-            if (string.Equals(type, "offline", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!account.Id.StartsWith("offline:", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException(
-                        $"Offline account '{account.Id}' has an invalid id kind.");
-                account = account with
-                {
-                    Type = "offline",
-                    Uuid = normalizedUuid,
-                    AuthenticationId = null,
-                    EntitlementVerifiedAt = null
-                };
-            }
-            else if (string.Equals(type, "microsoft", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!account.Id.StartsWith("microsoft:", StringComparison.OrdinalIgnoreCase)
-                    || string.IsNullOrWhiteSpace(account.AuthenticationId)
-                    || account.AuthenticationId.Length > 512)
-                    throw new InvalidDataException(
-                        $"Microsoft account '{account.Id}' has invalid authentication metadata.");
-                account = account with { Type = "microsoft", Uuid = normalizedUuid };
-            }
-            else
-            {
+            if (!string.Equals(type, "microsoft", StringComparison.OrdinalIgnoreCase)
+                || !account.Id.StartsWith("microsoft:", StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(account.AuthenticationId)
+                || account.AuthenticationId.Length > 512)
                 throw new InvalidDataException(
-                    $"Account store entry '{account.Id}' has unsupported type '{account.Type}'.");
-            }
+                    $"Account store entry '{account.Id}' is not a valid Microsoft profile.");
 
-            result.Add(account);
+            result.Add(account with { Type = "microsoft", Uuid = normalizedUuid });
         }
 
         return result;
@@ -207,28 +160,6 @@ public sealed partial class AccountStoreService
 
     private string GetAccountsPath() => Path.Combine(_paths.GetDataRoot(), "accounts.json");
 
-    private static string CreateOfflineUuid(string username)
-    {
-        var digest = MD5.HashData(Encoding.UTF8.GetBytes($"OfflinePlayer:{username}"));
-        digest[6] = (byte)((digest[6] & 0x0F) | 0x30);
-        digest[8] = (byte)((digest[8] & 0x3F) | 0x80);
-        var hex = Convert.ToHexString(digest).ToLowerInvariant();
-        return $"{hex[..8]}-{hex[8..12]}-{hex[12..16]}-{hex[16..20]}-{hex[20..32]}";
-    }
-
-    private static void TryDeleteFile(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-        catch
-        {
-            // Best-effort cleanup only.
-        }
-    }
-
     [GeneratedRegex("^[A-Za-z0-9_]{3,16}$", RegexOptions.CultureInvariant)]
-    private static partial Regex OfflineNameRegex();
+    private static partial Regex MinecraftNameRegex();
 }
