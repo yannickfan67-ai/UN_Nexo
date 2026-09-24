@@ -102,7 +102,7 @@ static async Task RunFabricPrepareValidationRegressionAsync()
                 "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
-                new string('0', 40),
+                handler.MetadataSha1,
                 0);
 
             try
