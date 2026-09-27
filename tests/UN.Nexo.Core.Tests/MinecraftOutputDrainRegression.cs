@@ -190,24 +190,11 @@ internal static class MinecraftOutputDrainRegression
         string helperMode,
         params string[] helperArguments)
     {
-        var executable =
-            Environment.ProcessPath
-            ?? throw new InvalidOperationException(
-                "Current test executable path is unavailable.");
-        var arguments = new List<string>();
-
-        if (Path.GetFileNameWithoutExtension(executable)
-            .Equals(
-                "dotnet",
-                StringComparison.OrdinalIgnoreCase))
+        var executable = GetTestAppHostPath();
+        var arguments = new List<string>
         {
-            arguments.Add(
-                typeof(MinecraftOutputDrainRegression)
-                    .Assembly
-                    .Location);
-        }
-
-        arguments.Add(helperMode);
+            helperMode
+        };
         arguments.AddRange(helperArguments);
 
         return new MinecraftLaunchPlan(
@@ -223,32 +210,44 @@ internal static class MinecraftOutputDrainRegression
     private static ProcessStartInfo BuildSelfStartInfo(
         string helperMode)
     {
-        var executable =
-            Environment.ProcessPath
-            ?? throw new InvalidOperationException(
-                "Current test executable path is unavailable.");
         var startInfo = new ProcessStartInfo
         {
-            FileName = executable,
+            FileName = GetTestAppHostPath(),
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = false,
             RedirectStandardError = false
         };
 
-        if (Path.GetFileNameWithoutExtension(executable)
-            .Equals(
-                "dotnet",
-                StringComparison.OrdinalIgnoreCase))
-        {
-            startInfo.ArgumentList.Add(
-                typeof(MinecraftOutputDrainRegression)
-                    .Assembly
-                    .Location);
-        }
-
         startInfo.ArgumentList.Add(helperMode);
         return startInfo;
+    }
+
+    private static string GetTestAppHostPath()
+    {
+        var assemblyPath =
+            typeof(MinecraftOutputDrainRegression)
+                .Assembly
+                .Location;
+        var directory =
+            Path.GetDirectoryName(assemblyPath)
+            ?? throw new InvalidOperationException(
+                "Test assembly directory is unavailable.");
+        var baseName =
+            Path.GetFileNameWithoutExtension(assemblyPath);
+        var appHost = Path.Combine(
+            directory,
+            OperatingSystem.IsWindows()
+                ? baseName + ".exe"
+                : baseName);
+
+        if (!File.Exists(appHost))
+        {
+            throw new InvalidOperationException(
+                $"Test apphost is unavailable at '{appHost}'.");
+        }
+
+        return appHost;
     }
 
     private static async Task<int> ReadPidWithRetryAsync(
