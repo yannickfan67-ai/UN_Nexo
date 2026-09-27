@@ -322,7 +322,10 @@ public sealed class MinecraftProcessService
                 catch (TimeoutException)
                 {
                     _ = workers.ContinueWith(
-                        static task => _ = task.Exception,
+                        static task =>
+                        {
+                            _ = task.Exception;
+                        },
                         CancellationToken.None,
                         TaskContinuationOptions.OnlyOnFaulted
                         | TaskContinuationOptions.ExecuteSynchronously,
