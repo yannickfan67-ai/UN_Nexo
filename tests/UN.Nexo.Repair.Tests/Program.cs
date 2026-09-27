@@ -336,6 +336,9 @@ internal static class Program
                 "net/fabricmc/fabric-loader/0.16.9/fabric-loader-0.16.9.jar";
             var assetBytes = Encoding.UTF8.GetBytes("fabric-parent-asset");
             var assetSha = Sha1(assetBytes);
+            var loggingBytes = Encoding.UTF8.GetBytes("<Configuration status=\"WARN\"/>");
+            var loggingSha = Sha1(loggingBytes);
+            const string loggingId = "client-1.21.4.xml";
 
             var assetIndex = new JsonObject
             {
@@ -370,6 +373,20 @@ internal static class Program
                     ["id"] = "fabric-assets",
                     ["url"] = "https://piston-data.mojang.com/assets.json",
                     ["sha1"] = assetIndexSha
+                },
+                ["logging"] = new JsonObject
+                {
+                    ["client"] = new JsonObject
+                    {
+                        ["argument"] = "-Dlog4j.configurationFile=${path}",
+                        ["file"] = new JsonObject
+                        {
+                            ["id"] = loggingId,
+                            ["url"] = "https://piston-data.mojang.com/client-1.21.4.xml",
+                            ["sha1"] = loggingSha,
+                            ["size"] = loggingBytes.Length
+                        }
+                    }
                 },
                 ["libraries"] = new JsonArray
                 {
@@ -434,6 +451,12 @@ internal static class Program
                 assetSha);
             Directory.CreateDirectory(Path.GetDirectoryName(assetObjectPath)!);
             await File.WriteAllBytesAsync(assetObjectPath, assetBytes);
+            var loggingPath = Path.Combine(
+                assetsRoot,
+                "log_configs",
+                loggingId);
+            Directory.CreateDirectory(Path.GetDirectoryName(loggingPath)!);
+            await File.WriteAllBytesAsync(loggingPath, loggingBytes);
 
             var handler = new FabricRepairHandler(
                 baseVersionId,
@@ -441,7 +464,8 @@ internal static class Program
                 clientBytes,
                 baseLibraryBytes,
                 fabricLibraryBytes,
-                assetBytes);
+                assetBytes,
+                loggingBytes);
             using var client = new HttpClient(handler);
             var sources = new DownloadSourceService();
             var vanillaInstaller = new MinecraftVanillaInstallService(client, paths, sources);
@@ -492,6 +516,15 @@ internal static class Program
             Directory.CreateDirectory(Path.GetDirectoryName(assetObjectPath)!);
             await File.WriteAllBytesAsync(assetObjectPath, assetBytes);
 
+            File.Delete(loggingPath);
+            var missingLogging = await service.CheckAsync(instance);
+            Require(
+                missingLogging.Issues.Any(item =>
+                    item.Code == "logging-config-missing"),
+                "Fabric health check should detect a missing inherited logging configuration.");
+            Directory.CreateDirectory(Path.GetDirectoryName(loggingPath)!);
+            await File.WriteAllBytesAsync(loggingPath, loggingBytes);
+
             File.Delete(baseMetadataPath);
             var missingParent = await service.CheckAsync(instance);
             Require(
@@ -503,6 +536,7 @@ internal static class Program
             File.Delete(baseLibraryPath);
             File.Delete(fabricLibraryPath);
             File.Delete(assetObjectPath);
+            File.Delete(loggingPath);
             File.Delete(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json"));
 
             var repaired = await service.RepairAsync(instance);
@@ -516,6 +550,8 @@ internal static class Program
                 "Fabric Repair should restore Fabric loader libraries.");
             Require(File.Exists(assetObjectPath),
                 "Fabric Repair should restore inherited assets.");
+            Require(File.Exists(loggingPath),
+                "Fabric Repair should restore the inherited logging configuration.");
             Require(File.Exists(Path.Combine(paths.GetInstanceDirectory(instance.Id), "install-state.json")),
                 "Fabric Repair should publish prepared install state.");
             Require(handler.ManifestRequests > 0,
@@ -564,7 +600,8 @@ internal static class Program
         byte[] clientBytes,
         byte[] baseLibraryBytes,
         byte[] fabricLibraryBytes,
-        byte[] assetBytes) : HttpMessageHandler
+        byte[] assetBytes,
+        byte[] loggingBytes) : HttpMessageHandler
     {
         public int ManifestRequests { get; private set; }
         public int FabricLibraryRequests { get; private set; }
@@ -595,6 +632,7 @@ internal static class Program
                     "/client.jar" => Task.FromResult(Bytes(clientBytes)),
                     "/base-library.jar" => Task.FromResult(Bytes(baseLibraryBytes)),
                     "/fabric-loader.jar" => Task.FromResult(FabricBytes()),
+                    "/client-1.21.4.xml" => Task.FromResult(Bytes(loggingBytes)),
                     "/assets.json" => Task.FromResult(Json(
                         AssetIndex())),
                     _ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))
@@ -620,6 +658,9 @@ internal static class Program
             var indexSha = Convert.ToHexString(
                     SHA1.HashData(indexBytes))
                 .ToLowerInvariant();
+            var loggingSha = Convert.ToHexString(
+                    SHA1.HashData(loggingBytes))
+                .ToLowerInvariant();
 
             return "{\"id\":\"" + baseVersionId + "\","
                    + "\"type\":\"release\","
@@ -631,6 +672,13 @@ internal static class Program
                    + "\"id\":\"fabric-assets\","
                    + "\"url\":\"https://piston-data.mojang.com/assets.json\","
                    + "\"sha1\":\"" + indexSha + "\"},"
+                   + "\"logging\":{\"client\":{"
+                   + "\"argument\":\"-Dlog4j.configurationFile=${path}\","
+                   + "\"file\":{"
+                   + "\"id\":\"client-1.21.4.xml\","
+                   + "\"url\":\"https://piston-data.mojang.com/client-1.21.4.xml\","
+                   + "\"sha1\":\"" + loggingSha + "\","
+                   + "\"size\":" + loggingBytes.LongLength + "}}},"
                    + "\"libraries\":[{"
                    + "\"name\":\"example:base:1.0\","
                    + "\"downloads\":{\"artifact\":{"
