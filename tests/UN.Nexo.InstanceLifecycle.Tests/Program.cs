@@ -41,6 +41,9 @@ internal static class Program
                 store,
                 paths,
                 source);
+            await TestOversizedInstallStateCloneAsync(
+                lifecycle,
+                paths);
             await TestInvalidInstallStateCloneAsync(lifecycle, paths);
             await TestFabricCloneMetadataAsync(lifecycle, paths);
             source = await TestRenameAsync(lifecycle, store, paths, source);
@@ -223,6 +226,61 @@ internal static class Program
         {
             return (null, ex);
         }
+    }
+
+    private static async Task TestOversizedInstallStateCloneAsync(
+        InstanceLifecycleService lifecycle,
+        NexoPathService paths)
+    {
+        var source = new GameInstance(
+            Guid.NewGuid().ToString("N"),
+            "Oversized state source",
+            "1.21.4",
+            "vanilla",
+            DateTimeOffset.UtcNow.AddMinutes(-1));
+        var sourceRoot =
+            paths.GetInstanceDirectory(source.Id);
+        var gameRoot =
+            paths.GetInstanceGameDirectory(source.Id);
+        Directory.CreateDirectory(gameRoot);
+        await File.WriteAllTextAsync(
+            Path.Combine(sourceRoot, "instance.json"),
+            JsonSerializer.Serialize(
+                source,
+                new JsonSerializerOptions(
+                    JsonSerializerDefaults.Web)
+                {
+                    WriteIndented = true
+                }));
+        var statePath =
+            Path.Combine(sourceRoot, "install-state.json");
+        await using (var stream = new FileStream(
+            statePath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None))
+        {
+            stream.SetLength(1024L * 1024L + 1);
+        }
+        var sourceLength =
+            new FileInfo(statePath).Length;
+
+        var clone = await lifecycle.CloneAsync(
+            source,
+            "Oversized state clone",
+            includeWorlds: false);
+        var cloneRoot =
+            paths.GetInstanceDirectory(clone.Id);
+
+        Require(
+            !File.Exists(
+                Path.Combine(
+                    cloneRoot,
+                    "install-state.json")),
+            "Oversized install state must be omitted from the clone.");
+        Require(
+            new FileInfo(statePath).Length == sourceLength,
+            "Clone must preserve the oversized source install state unchanged.");
     }
 
     private static async Task TestInvalidInstallStateCloneAsync(

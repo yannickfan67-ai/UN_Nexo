@@ -8,6 +8,7 @@ internal static class InstanceNameUniquenessRegression
     {
         await TestSequentialDuplicateAsync();
         await TestConcurrentDuplicateAsync();
+        await TestOversizedDiscoveryMetadataAsync();
     }
 
     private static async Task TestSequentialDuplicateAsync()
@@ -85,6 +86,68 @@ internal static class InstanceNameUniquenessRegression
                     StringComparison.OrdinalIgnoreCase),
                 "Published concurrent winner should retain the requested logical name.");
             AssertPublishedDirectoryCount(paths, 1);
+        }
+        finally
+        {
+            TryDelete(root);
+        }
+    }
+
+    private static async Task TestOversizedDiscoveryMetadataAsync()
+    {
+        var root = NewRoot("oversized-discovery");
+        try
+        {
+            var paths = new NexoPathService(root);
+            var store = new InstanceStoreService(paths);
+            var healthy = await store.CreateAsync(
+                "Healthy",
+                "1.21.4");
+
+            var badId = Guid.NewGuid().ToString("N");
+            var badRoot = Path.Combine(
+                paths.GetInstancesRoot(),
+                badId);
+            Directory.CreateDirectory(badRoot);
+            var badMetadata = Path.Combine(
+                badRoot,
+                "instance.json");
+            await using (var stream = new FileStream(
+                badMetadata,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None))
+            {
+                stream.SetLength(
+                    InstanceStoreService.MaxInstanceMetadataBytes
+                    + 1);
+            }
+
+            var beforeLength =
+                new FileInfo(badMetadata).Length;
+            var loaded = await store.GetAllAsync();
+
+            Assert(
+                loaded.Count == 1
+                && loaded[0].Id == healthy.Id,
+                "Oversized instance metadata must be skipped without hiding healthy instances.");
+            Assert(
+                new FileInfo(badMetadata).Length == beforeLength,
+                "Discovery must preserve oversized instance metadata bytes.");
+
+            using var cancelled =
+                new CancellationTokenSource();
+            cancelled.Cancel();
+            try
+            {
+                _ = await store.GetAllAsync(
+                    cancelled.Token);
+                throw new Exception(
+                    "Cancelled instance discovery unexpectedly completed.");
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
         finally
         {
