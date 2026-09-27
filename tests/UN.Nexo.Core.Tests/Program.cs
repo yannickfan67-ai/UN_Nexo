@@ -21,6 +21,12 @@ internal static class Program
                 return await PersistedStoreRegression.RunStoreLockHolderHelperAsync(args);
             if (args[0] == "--installer-output-helper")
                 return await InstallerProcessOutputRegression.RunHelperAsync(args);
+            if (args[0] == "--minecraft-output-holder-parent")
+                return await MinecraftOutputDrainRegression.RunParentHelperAsync(args);
+            if (args[0] == "--minecraft-output-holder-child")
+                return await MinecraftOutputDrainRegression.RunChildHelperAsync();
+            if (args[0] == "--minecraft-output-quick-exit")
+                return await MinecraftOutputDrainRegression.RunQuickExitHelperAsync();
 
             Console.Error.WriteLine("Unknown test helper mode: " + args[0]);
             return 2;
@@ -31,6 +37,7 @@ internal static class Program
             ("Process failure cleanup (Unix)", TestProcessFailureCleanupAsync),
             ("Bounded loader installer process output", InstallerProcessOutputRegression.RunAsync),
             ("Instance-scoped process concurrency (Unix)", ProcessConcurrencyRegression.RunAsync),
+            ("Bounded Minecraft post-exit output drain", MinecraftOutputDrainRegression.RunAsync),
             ("Launch log bounds and retention", LaunchLogPolicyRegression.RunAsync),
             ("Java major parsing", TestJavaMajorAsync),
             ("Java discovery process cleanup", JavaDiscoveryRegression.RunAsync),
