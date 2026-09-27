@@ -21,12 +21,21 @@ internal static class Program
                 return await PersistedStoreRegression.RunStoreLockHolderHelperAsync(args);
             if (args[0] == "--installer-output-helper")
                 return await InstallerProcessOutputRegression.RunHelperAsync(args);
-            if (args[0] == "--minecraft-output-holder-parent")
-                return await MinecraftOutputDrainRegression.RunParentHelperAsync(args);
-            if (args[0] == "--minecraft-output-holder-child")
-                return await MinecraftOutputDrainRegression.RunChildHelperAsync();
-            if (args[0] == "--minecraft-output-quick-exit")
-                return await MinecraftOutputDrainRegression.RunQuickExitHelperAsync();
+            var minecraftOutputHelperIndex = Array.FindIndex(
+                args,
+                value => value.StartsWith(
+                    "--minecraft-output-",
+                    StringComparison.Ordinal));
+            if (minecraftOutputHelperIndex >= 0)
+            {
+                var helperArgs = args[minecraftOutputHelperIndex..];
+                if (helperArgs[0] == "--minecraft-output-holder-parent")
+                    return await MinecraftOutputDrainRegression.RunParentHelperAsync(helperArgs);
+                if (helperArgs[0] == "--minecraft-output-holder-child")
+                    return await MinecraftOutputDrainRegression.RunChildHelperAsync();
+                if (helperArgs[0] == "--minecraft-output-quick-exit")
+                    return await MinecraftOutputDrainRegression.RunQuickExitHelperAsync();
+            }
 
             Console.Error.WriteLine("Unknown test helper mode: " + args[0]);
             return 2;
