@@ -13,6 +13,7 @@ public static class LaunchDiagnostics
 {
     public static bool Enabled { get; set; } = true;
     public static TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(10);
+    public static TimeSpan OutputDrainGracePeriod { get; set; } = TimeSpan.FromSeconds(1);
 }
 
 public sealed class MinecraftProcessService
@@ -157,6 +158,8 @@ public sealed class MinecraftProcessService
             var lastOutputTimestamp = Stopwatch.GetTimestamp();
             var firstOutputSeen = 0;
             using var heartbeatCancellation = new CancellationTokenSource();
+            using var outputCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
             async Task HeartbeatAsync()
             {
@@ -189,21 +192,36 @@ public sealed class MinecraftProcessService
                 }
             }
 
-            async Task DrainAsync(StreamReader reader, string channel)
+            async Task DrainAsync(
+                StreamReader reader,
+                string channel,
+                CancellationToken outputToken)
             {
-                while (await reader.ReadLineAsync() is { } line)
+                try
                 {
-                    Volatile.Write(ref lastOutputTimestamp, Stopwatch.GetTimestamp());
-                    if (LaunchDiagnostics.Enabled && Interlocked.CompareExchange(ref firstOutputSeen, 1, 0) == 0)
+                    while (await reader.ReadLineAsync(outputToken) is { } line)
                     {
-                        var firstOutput = $"[debug] First Minecraft output after {startTimer.ElapsedMilliseconds} ms";
-                        await WriteLogAsync(firstOutput);
-                        Report(firstOutput);
-                    }
+                        Volatile.Write(ref lastOutputTimestamp, Stopwatch.GetTimestamp());
+                        if (LaunchDiagnostics.Enabled && Interlocked.CompareExchange(ref firstOutputSeen, 1, 0) == 0)
+                        {
+                            var firstOutput = $"[debug] First Minecraft output after {startTimer.ElapsedMilliseconds} ms";
+                            await WriteLogAsync(firstOutput);
+                            Report(firstOutput);
+                        }
 
-                    var message = $"[{channel}] {line}";
-                    await WriteLogAsync(message);
-                    Report(message.Length > 4096 ? message[..4096] + "…" : message);
+                        var message = $"[{channel}] {line}";
+                        await WriteLogAsync(message);
+                        Report(message.Length > 4096 ? message[..4096] + "…" : message);
+                    }
+                }
+                catch (OperationCanceledException) when (outputToken.IsCancellationRequested)
+                {
+                }
+                catch (ObjectDisposedException) when (outputToken.IsCancellationRequested)
+                {
+                }
+                catch (IOException) when (outputToken.IsCancellationRequested)
+                {
                 }
             }
 
@@ -230,6 +248,94 @@ public sealed class MinecraftProcessService
                 }
             }
 
+            var standardOutput = process.StandardOutput;
+            var standardError = process.StandardError;
+
+            void StopOutputDrain()
+            {
+                try { outputCancellation.Cancel(); }
+                catch (ObjectDisposedException) { }
+
+                try { standardOutput.Dispose(); }
+                catch (IOException) { }
+                catch (ObjectDisposedException) { }
+
+                try { standardError.Dispose(); }
+                catch (IOException) { }
+                catch (ObjectDisposedException) { }
+            }
+
+            static TimeSpan EffectiveDrainGracePeriod()
+            {
+                var configured = LaunchDiagnostics.OutputDrainGracePeriod;
+                return configured > TimeSpan.Zero
+                       && configured != Timeout.InfiniteTimeSpan
+                    ? configured
+                    : TimeSpan.FromSeconds(1);
+            }
+
+            async Task AwaitOutputDrainAfterExitAsync(
+                Task drainTask,
+                CancellationToken callerToken)
+            {
+                try
+                {
+                    await drainTask.WaitAsync(
+                        EffectiveDrainGracePeriod(),
+                        callerToken);
+                }
+                catch (TimeoutException)
+                {
+                    const string warning =
+                        "[launcher] Output drain grace period expired; closing redirected streams retained by descendant processes.";
+                    await WriteLogAsync(warning);
+                    Report(warning);
+                    StopOutputDrain();
+
+                    try
+                    {
+                        await drainTask.WaitAsync(
+                            TimeSpan.FromSeconds(1),
+                            CancellationToken.None);
+                    }
+                    catch (TimeoutException)
+                    {
+                    }
+                }
+            }
+
+            async Task ObserveWorkersBoundedAsync(
+                Task stdoutTask,
+                Task stderrTask,
+                Task heartbeatWorker)
+            {
+                var workers = Task.WhenAll(
+                    stdoutTask,
+                    stderrTask,
+                    heartbeatWorker);
+                try
+                {
+                    await workers.WaitAsync(
+                        TimeSpan.FromSeconds(1),
+                        CancellationToken.None);
+                }
+                catch (TimeoutException)
+                {
+                    _ = workers.ContinueWith(
+                        static task =>
+                        {
+                            _ = task.Exception;
+                        },
+                        CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted
+                        | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+                catch
+                {
+                }
+            }
+
             Task stdout = Task.CompletedTask;
             Task stderr = Task.CompletedTask;
             Task heartbeatTask = Task.CompletedTask;
@@ -239,11 +345,21 @@ public sealed class MinecraftProcessService
                 Report(startedMessage);
                 await WriteLogAsync($"[launcher] {startedMessage} after {startTimer.ElapsedMilliseconds} ms");
 
-                stdout = SuperviseAsync(DrainAsync(process.StandardOutput, "stdout"));
-                stderr = SuperviseAsync(DrainAsync(process.StandardError, "stderr"));
+                stdout = SuperviseAsync(
+                    DrainAsync(
+                        standardOutput,
+                        "stdout",
+                        outputCancellation.Token));
+                stderr = SuperviseAsync(
+                    DrainAsync(
+                        standardError,
+                        "stderr",
+                        outputCancellation.Token));
                 heartbeatTask = SuperviseAsync(HeartbeatAsync());
                 await process.WaitForExitAsync(CancellationToken.None);
-                await Task.WhenAll(stdout, stderr);
+                await AwaitOutputDrainAfterExitAsync(
+                    Task.WhenAll(stdout, stderr),
+                    cancellationToken);
                 heartbeatCancellation.Cancel();
                 await heartbeatTask;
                 await WriteLogAsync($"[launcher] Exit code: {process.ExitCode} · lifetime {startTimer.Elapsed.TotalSeconds:0.000}s");
@@ -256,10 +372,14 @@ public sealed class MinecraftProcessService
                 heartbeatCancellation.Cancel();
                 StopProcess();
                 await process.WaitForExitAsync(CancellationToken.None);
-                // Observe every worker before disposing the log, lock and process. Preserve
-                // the original failure already propagated by the try block.
-                try { await Task.WhenAll(stdout, stderr, heartbeatTask); }
-                catch { }
+                StopOutputDrain();
+
+                // Worker shutdown is explicitly bounded so a descendant retaining an
+                // inherited stdout/stderr handle cannot strand cleanup after Java exits.
+                await ObserveWorkersBoundedAsync(
+                    stdout,
+                    stderr,
+                    heartbeatTask);
             }
         }
         finally
