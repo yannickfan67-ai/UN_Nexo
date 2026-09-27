@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using UN.Nexo.Core.Launching;
 using UN.Nexo.Core.Models;
@@ -142,7 +143,8 @@ internal static class NetworkTargetRegression
             var instance = new GameInstance(id, "Private artifact", "artifact-test", "vanilla", DateTimeOffset.UtcNow);
             var version = Version(
                 "artifact-test",
-                "https://piston-meta.mojang.com/artifact-test.json");
+                "https://piston-meta.mojang.com/artifact-test.json",
+                handler.MetadataSha1);
 
             try
             {
@@ -181,7 +183,8 @@ internal static class NetworkTargetRegression
             var instance = new GameInstance(id, "Trusted redirect", "trusted-redirect", "vanilla", DateTimeOffset.UtcNow);
             var version = Version(
                 "trusted-redirect",
-                "https://piston-meta.mojang.com/trusted-redirect.json");
+                "https://piston-meta.mojang.com/trusted-redirect.json",
+                handler.MetadataSha1);
 
             await installer.InstallAsync(instance, version);
 
@@ -196,14 +199,17 @@ internal static class NetworkTargetRegression
         }
     }
 
-    private static MinecraftVersionInfo Version(string id, string url)
+    private static MinecraftVersionInfo Version(
+        string id,
+        string url,
+        string sha1 = "0000000000000000000000000000000000000000")
         => new(
             id,
             "release",
             url,
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            sha1,
             0);
 
     private static string NewRoot()
@@ -243,8 +249,29 @@ internal static class NetworkTargetRegression
 
     private sealed class TargetPolicyHandler(TargetScenario scenario) : HttpMessageHandler
     {
+        private const string TrustedRedirectMetadata =
+            "{\"id\":\"trusted-redirect\","
+            + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+            + "\"assetIndex\":{\"id\":\"trusted-assets\",\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
+            + "\"libraries\":[]}";
+        private const string PrivateArtifactMetadata =
+            "{\"id\":\"artifact-test\","
+            + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+            + "\"assetIndex\":{\"id\":\"artifact-assets\",\"url\":\"https://launchermeta.mojang.com/artifact-assets.json\"},"
+            + "\"libraries\":[{\"name\":\"example:private:1.0\",\"downloads\":{\"artifact\":{"
+            + "\"path\":\"example/private/1.0/private-1.0.jar\","
+            + "\"url\":\"https://127.0.0.1/private.jar\"}}}]}";
+
         public int PrivateRequests { get; private set; }
         public int TrustedRedirectRequests { get; private set; }
+        public string MetadataSha1
+            => Convert.ToHexString(
+                    SHA1.HashData(
+                        Encoding.UTF8.GetBytes(
+                            scenario == TargetScenario.TrustedRedirect
+                                ? TrustedRedirectMetadata
+                                : PrivateArtifactMetadata)))
+                .ToLowerInvariant();
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -288,10 +315,7 @@ internal static class NetworkTargetRegression
                 {
                     TrustedRedirectRequests++;
                     return Task.FromResult(Json(
-                        "{\"id\":\"trusted-redirect\","
-                        + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                        + "\"assetIndex\":{\"id\":\"trusted-assets\",\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
-                        + "\"libraries\":[]}"));
+                        TrustedRedirectMetadata));
                 }
 
                 if (uri.AbsolutePath.Equals(
@@ -311,14 +335,8 @@ internal static class NetworkTargetRegression
             if (scenario == TargetScenario.PrivateArtifact
                 && uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
-                const string metadata =
-                    "{\"id\":\"artifact-test\","
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                    + "\"assetIndex\":{\"id\":\"artifact-assets\",\"url\":\"https://launchermeta.mojang.com/artifact-assets.json\"},"
-                    + "\"libraries\":[{\"name\":\"example:private:1.0\",\"downloads\":{\"artifact\":{" +
-                    "\"path\":\"example/private/1.0/private-1.0.jar\"," +
-                    "\"url\":\"https://127.0.0.1/private.jar\"}}}]}";
-                return Task.FromResult(Json(metadata));
+                return Task.FromResult(Json(
+                    PrivateArtifactMetadata));
             }
 
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));

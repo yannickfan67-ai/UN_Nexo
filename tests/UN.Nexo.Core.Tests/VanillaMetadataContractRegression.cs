@@ -52,7 +52,7 @@ internal static class VanillaMetadataContractRegression
 
                 try
                 {
-                    await installer.InstallAsync(instance, Version());
+                    await installer.InstallAsync(instance, Version(handler.MetadataSha1));
                     throw new Exception(
                         $"Invalid metadata fixture '{fixture.Label}' unexpectedly prepared.");
                 }
@@ -98,8 +98,9 @@ internal static class VanillaMetadataContractRegression
                 "{\"id\":\"previous\",\"state\":\"prepared\"}");
             await File.WriteAllBytesAsync(statePath, previous);
 
-            using var client = new HttpClient(
-                new ContractHandler(ValidMetadata("wrong-version")));
+            var handler = new ContractHandler(
+                ValidMetadata("wrong-version"));
+            using var client = new HttpClient(handler);
             var installer = new MinecraftVanillaInstallService(
                 client,
                 paths,
@@ -108,7 +109,7 @@ internal static class VanillaMetadataContractRegression
 
             try
             {
-                await installer.InstallAsync(instance, Version());
+                await installer.InstallAsync(instance, Version(handler.MetadataSha1));
                 throw new Exception(
                     "Mismatched refresh unexpectedly succeeded.");
             }
@@ -141,7 +142,7 @@ internal static class VanillaMetadataContractRegression
                 TimeSpan.FromSeconds(2));
             var instance = Instance();
 
-            await installer.InstallAsync(instance, Version());
+            await installer.InstallAsync(instance, Version(handler.MetadataSha1));
 
             Assert(handler.MetadataRequests == 1,
                 "Valid metadata should be fetched once.");
@@ -185,14 +186,14 @@ internal static class VanillaMetadataContractRegression
             "vanilla",
             DateTimeOffset.UtcNow);
 
-    private static MinecraftVersionInfo Version()
+    private static MinecraftVersionInfo Version(string sha1)
         => new(
             "1.21.4",
             "release",
             "https://piston-meta.mojang.com/version-contract.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            sha1,
             0);
 
     private static string NewRoot(string suffix)
@@ -235,6 +236,11 @@ internal static class VanillaMetadataContractRegression
         public int AssetIndexRequests { get; private set; }
         public int DownstreamRequests
             => ClientRequests + AssetIndexRequests;
+        public string MetadataSha1
+            => Convert.ToHexString(
+                    System.Security.Cryptography.SHA1.HashData(
+                        Encoding.UTF8.GetBytes(metadataJson)))
+                .ToLowerInvariant();
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
