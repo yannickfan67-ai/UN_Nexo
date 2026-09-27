@@ -161,6 +161,13 @@ public sealed class MinecraftInstanceRepairService
 
             progress?.Report("Checking assets…");
             await CheckAssetsAsync(root, gameRoot, issues, cancellationToken);
+
+            progress?.Report("Checking logging configuration…");
+            await CheckLoggingConfigurationAsync(
+                root,
+                gameRoot,
+                issues,
+                cancellationToken);
         }
 
         var requiredJava = await CheckJavaAndSystemAsync(instance, issues, progress, cancellationToken);
@@ -737,15 +744,124 @@ public sealed class MinecraftInstanceRepairService
         return new InstanceHealthReport(instance.Id, instance.VersionId, requiredJava, ordered, DateTimeOffset.UtcNow);
     }
 
-    private static async Task<FileHealth> InspectFileAsync(
+    private static async Task CheckLoggingConfigurationAsync(
+        JsonElement root,
+        string gameRoot,
+        ICollection<InstanceHealthIssue> issues,
+        CancellationToken cancellationToken)
+    {
+        if (!root.TryGetProperty("logging", out var logging)
+            || !logging.TryGetProperty("client", out var clientLogging)
+            || !clientLogging.TryGetProperty("file", out var file))
+            return;
+
+        try
+        {
+            if (file.ValueKind != JsonValueKind.Object
+                || !file.TryGetProperty("id", out var idElement)
+                || idElement.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(idElement.GetString()))
+            {
+                throw new InvalidDataException(
+                    "logging.client.file.id must be a non-empty string.");
+            }
+
+            var id = MetadataPath.RequireSingleComponent(
+                idElement.GetString(),
+                "logging.client.file.id");
+            var expectedSha1 = file.TryGetProperty("sha1", out var shaElement)
+                ? shaElement.ValueKind == JsonValueKind.String
+                    ? shaElement.GetString()
+                    : throw new InvalidDataException(
+                        "logging.client.file.sha1 must be a string.")
+                : null;
+            if (expectedSha1 is not null && !IsSha1(expectedSha1))
+            {
+                throw new InvalidDataException(
+                    "logging.client.file.sha1 must be a 40-character hexadecimal SHA-1.");
+            }
+
+            long? expectedSize = null;
+            if (file.TryGetProperty("size", out var sizeElement))
+            {
+                if (sizeElement.ValueKind != JsonValueKind.Number
+                    || !sizeElement.TryGetInt64(out var parsedSize)
+                    || parsedSize <= 0)
+                {
+                    throw new InvalidDataException(
+                        "logging.client.file.size must be a positive integer.");
+                }
+                expectedSize = parsedSize;
+            }
+
+            if (expectedSha1 is null && expectedSize is null)
+            {
+                throw new InvalidDataException(
+                    "logging.client.file must provide SHA-1 or a positive size.");
+            }
+
+            var path = MetadataPath.ResolveSingleComponent(
+                Path.Combine(gameRoot, "assets", "log_configs"),
+                id,
+                string.Empty,
+                "logging.client.file.id");
+            var result = await InspectFileAsync(
+                path,
+                expectedSha1,
+                expectedSize,
+                cancellationToken);
+            if (result == FileHealth.Healthy)
+                return;
+
+            issues.Add(new InstanceHealthIssue(
+                result == FileHealth.Missing
+                    ? "logging-config-missing"
+                    : "logging-config-corrupt",
+                "Logging configuration",
+                InstanceHealthLevel.Error,
+                result == FileHealth.Missing
+                    ? "The Minecraft logging configuration is missing."
+                    : "The Minecraft logging configuration failed integrity verification.",
+                path,
+                "Run Repair to download a verified logging configuration."));
+        }
+        catch (InvalidDataException ex)
+        {
+            issues.Add(new InstanceHealthIssue(
+                "logging-config-invalid-metadata",
+                "Logging configuration",
+                InstanceHealthLevel.Error,
+                $"Logging configuration metadata is invalid: {ex.Message}",
+                null,
+                "Run Repair to restore valid Minecraft version metadata."));
+        }
+    }
+
+    private static Task<FileHealth> InspectFileAsync(
         string path,
         string? expectedSha1,
         CancellationToken cancellationToken)
+        => InspectFileAsync(
+            path,
+            expectedSha1,
+            null,
+            cancellationToken);
+
+    private static async Task<FileHealth> InspectFileAsync(
+        string path,
+        string? expectedSha1,
+        long? expectedSize,
+        CancellationToken cancellationToken)
     {
-        if (!File.Exists(path))
+        var info = new FileInfo(path);
+        if (!info.Exists)
             return FileHealth.Missing;
+        if (info.Length == 0
+            || (expectedSize.HasValue
+                && info.Length != expectedSize.Value))
+            return FileHealth.Corrupt;
         if (string.IsNullOrWhiteSpace(expectedSha1))
-            return new FileInfo(path).Length > 0 ? FileHealth.Healthy : FileHealth.Corrupt;
+            return FileHealth.Healthy;
 
         try
         {
@@ -847,6 +963,28 @@ public sealed class MinecraftInstanceRepairService
                 return Fail("'assetIndex.id' must be a string", out error);
             if (!OptionalString(assetIndex, "sha1"))
                 return Fail("'assetIndex.sha1' must be a string", out error);
+        }
+
+        if (root.TryGetProperty("logging", out var logging))
+        {
+            if (logging.ValueKind != JsonValueKind.Object)
+                return Fail("'logging' must be an object", out error);
+            if (logging.TryGetProperty("client", out var clientLogging))
+            {
+                if (clientLogging.ValueKind != JsonValueKind.Object)
+                    return Fail("'logging.client' must be an object", out error);
+                if (!OptionalString(clientLogging, "argument"))
+                    return Fail("'logging.client.argument' must be a string", out error);
+                if (clientLogging.TryGetProperty("file", out var loggingFile))
+                {
+                    if (loggingFile.ValueKind != JsonValueKind.Object)
+                        return Fail("'logging.client.file' must be an object", out error);
+                    if (!OptionalString(loggingFile, "id"))
+                        return Fail("'logging.client.file.id' must be a string", out error);
+                    if (!OptionalString(loggingFile, "sha1"))
+                        return Fail("'logging.client.file.sha1' must be a string", out error);
+                }
+            }
         }
 
         if (root.TryGetProperty("libraries", out var libraries))

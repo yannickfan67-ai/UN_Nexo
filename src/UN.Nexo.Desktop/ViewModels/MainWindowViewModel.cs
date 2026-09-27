@@ -700,6 +700,58 @@ public partial class MainWindowViewModel : ObservableObject
         LauncherStatus = GameStatus;
     }
 
+    private async Task RepairManagedLaunchArtifactsAsync(
+        GameInstance instance,
+        CancellationToken cancellationToken)
+    {
+        IsInstallBusy = true;
+        InstallProgressValue = 0;
+        InstallProgressText = $"Repairing managed files for {instance.VersionId}…";
+        GameStatus = $"Repairing managed files for {instance.Name}…";
+        LauncherStatus = GameStatus;
+
+        try
+        {
+            var progress = new Progress<InstallProgress>(value =>
+            {
+                if (IsSelectedInstance(instance))
+                {
+                    InstallProgressValue = value.Percent;
+                    InstallProgressText = value.Total > 0
+                        ? $"{value.Stage} · {value.Completed}/{value.Total}"
+                        : value.Stage;
+                }
+
+                GameStatus = value.Total > 0
+                    ? $"Repairing {instance.Name} · {value.Stage} · {value.Completed}/{value.Total}"
+                    : $"Repairing {instance.Name} · {value.Stage}";
+                LauncherStatus = GameStatus;
+            });
+
+            await PrepareInstanceFilesAsync(
+                instance,
+                progress,
+                cancellationToken);
+
+            if (IsSelectedInstance(instance))
+            {
+                InstallProgressValue = 100;
+                InstallProgressText = instance.Loader.ToLowerInvariant() switch
+                {
+                    "fabric" => $"Fabric files repaired · {_downloadSources.DisplayName}",
+                    "quilt" => $"Quilt files repaired · {_downloadSources.DisplayName}",
+                    "forge" => $"Forge files repaired · {_downloadSources.DisplayName}",
+                    "neoforge" => $"NeoForge files repaired · {_downloadSources.DisplayName}",
+                    _ => $"Vanilla files repaired · {_downloadSources.DisplayName}"
+                };
+            }
+        }
+        finally
+        {
+            IsInstallBusy = false;
+        }
+    }
+
     private async Task PrepareInstanceFilesAsync(
         GameInstance instance,
         IProgress<InstallProgress>? progress,
@@ -866,13 +918,6 @@ public partial class MainWindowViewModel : ObservableObject
 
             await EnsureLaunchReadyAsync(instance, cancellation.Token);
 
-            GameStatus = $"Waiting for exclusive access to {instance.Name}…";
-            LauncherStatus = GameStatus;
-            await using var operationLease = await _operations.AcquireAsync(
-                instance.Id,
-                "play",
-                cancellation.Token);
-
             GameStatus = $"Refreshing Microsoft session for {account.DisplayName}…";
             LauncherStatus = GameStatus;
             var session = await _microsoftAuth.AcquireSessionAsync(
@@ -881,20 +926,60 @@ public partial class MainWindowViewModel : ObservableObject
             credentials = session.Credentials;
             ReplaceAccountInList(account, session.Account);
 
-            var plan = await _launchBuilder.BuildAsync(
-                instance,
-                session.Account,
-                JavaInstallations.ToArray(),
-                credentials,
-                cancellation.Token);
-            GameStatus = $"Running {instance.Name} · Microsoft profile {session.Account.DisplayName}";
-            LauncherStatus = GameStatus;
-            var result = await _gameProcess.RunAsync(
-                plan, new Progress<string>(AppendGameLog), cancellation.Token);
-            GameStatus = result.ExitCode == 0
-                ? $"{instance.Name} exited normally."
-                : $"{instance.Name} exited with code {result.ExitCode}.";
-            AppendGameLog($"Full log: {result.LogPath}");
+            var repairAttempted = false;
+            while (true)
+            {
+                FileNotFoundException? managedArtifactFailure = null;
+                MinecraftLaunchPlan? plan = null;
+
+                GameStatus = $"Waiting for exclusive access to {instance.Name}…";
+                LauncherStatus = GameStatus;
+                await using (var operationLease = await _operations.AcquireAsync(
+                                 instance.Id,
+                                 "play",
+                                 cancellation.Token))
+                {
+                    try
+                    {
+                        plan = await _launchBuilder.BuildAsync(
+                            instance,
+                            session.Account,
+                            JavaInstallations.ToArray(),
+                            credentials,
+                            cancellation.Token);
+                    }
+                    catch (FileNotFoundException ex) when (!repairAttempted)
+                    {
+                        managedArtifactFailure = ex;
+                    }
+
+                    if (managedArtifactFailure is null)
+                    {
+                        GameStatus =
+                            $"Running {instance.Name} · Microsoft profile {session.Account.DisplayName}";
+                        LauncherStatus = GameStatus;
+                        var result = await _gameProcess.RunAsync(
+                            plan!,
+                            new Progress<string>(AppendGameLog),
+                            cancellation.Token);
+                        GameStatus = result.ExitCode == 0
+                            ? $"{instance.Name} exited normally."
+                            : $"{instance.Name} exited with code {result.ExitCode}.";
+                        AppendGameLog($"Full log: {result.LogPath}");
+                        break;
+                    }
+                }
+
+                repairAttempted = true;
+                AppendGameLog(
+                    $"Managed launch artifact failed integrity validation: "
+                    + $"{managedArtifactFailure.FileName ?? managedArtifactFailure.Message}");
+                await RepairManagedLaunchArtifactsAsync(
+                    instance,
+                    cancellation.Token);
+                GameStatus = $"Retrying {instance.Name} after verified file preparation…";
+                LauncherStatus = GameStatus;
+            }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
