@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>UN.Nexo.Downloads</AssemblyName>
+    <RootNamespace>UN.Nexo.Core</RootNamespace>
+  </PropertyGroup>
+  <!-- Shipping allowlist: no authentication, account store, launch planner or game runner. -->
+  <ItemGroup>
+    <Compile Include="../UN.Nexo.Core/Models/GameInstance.cs" Link="Models/GameInstance.cs" />
+    <Compile Include="../UN.Nexo.Core/Models/InstallProgress.cs" Link="Models/InstallProgress.cs" />
+    <Compile Include="../UN.Nexo.Core/Models/MinecraftVersion*.cs" Link="Models/%(Filename)%(Extension)" />
+    <Compile Include="../UN.Nexo.Core/Models/MinecraftReleaseInfo.cs" Link="Models/MinecraftReleaseInfo.cs" />
+    <Compile Include="../UN.Nexo.Core/Models/LauncherSettings.cs" Link="Models/LauncherSettings.cs" />
+    <Compile Include="../UN.Nexo.Core/Models/WorldBackupInfo.cs" Link="Models/WorldBackupInfo.cs" />
+    <Compile Include="../UN.Nexo.Core/Launching/MinecraftRules.cs" Link="Metadata/MinecraftRules.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/AtomicJsonFile.cs" Link="Services/AtomicJsonFile.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/BoundedJsonResponse.cs" Link="Services/BoundedJsonResponse.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/BoundedPersistedJson.cs" Link="Services/BoundedPersistedJson.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/CrossProcessFileLock.cs" Link="Services/CrossProcessFileLock.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/DownloadSourceService.cs" Link="Services/DownloadSourceService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/InstanceStoreService.cs" Link="Services/InstanceStoreService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/InstanceLifecycleService.cs" Link="Services/InstanceLifecycleService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/InstanceOperationCoordinator.cs" Link="Services/InstanceOperationCoordinator.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/InstallStateSnapshot.cs" Link="Services/InstallStateSnapshot.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/InstallerGameTreeGuard.cs" Link="Services/InstallerGameTreeGuard.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/LauncherSettingsService.cs" Link="Services/LauncherSettingsService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/MavenArtifactPath.cs" Link="Services/MavenArtifactPath.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/MetadataPath.cs" Link="Services/MetadataPath.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/MinecraftVanillaInstallService.cs" Link="Services/MinecraftVanillaInstallService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/MinecraftVersionManifestService.cs" Link="Services/MinecraftVersionManifestService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/NexoPathService.cs" Link="Services/NexoPathService.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/PathKeyedLock.cs" Link="Services/PathKeyedLock.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/PersistedStoreMutationLock.cs" Link="Services/PersistedStoreMutationLock.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/PhysicalPathGuard.cs" Link="Services/PhysicalPathGuard.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/TrustedDownloadPolicy.cs" Link="Services/TrustedDownloadPolicy.cs" />
+    <Compile Include="../UN.Nexo.Core/Services/TrustedHttpDownload.cs" Link="Services/TrustedHttpDownload.cs" />
+  </ItemGroup>
+</Project>
