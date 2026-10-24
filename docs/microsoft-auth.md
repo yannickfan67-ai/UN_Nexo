@@ -1,3 +1,5 @@
+> **Historical development documentation.** The current download-only release excludes authentication and game execution. Refer to the root README for shipped functionality.
+
 # Microsoft account authentication
 
 UN_Nexo is a public desktop client. It uses its own Microsoft application registration and does not embed a client secret or reuse another launcher's identity.

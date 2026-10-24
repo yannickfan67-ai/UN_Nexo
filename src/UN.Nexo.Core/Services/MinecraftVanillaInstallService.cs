@@ -802,7 +802,14 @@ public sealed class MinecraftVanillaInstallService
                 }
             }
 
-            if (!artifactAdded
+            // In Mojang's legacy metadata, native-only libraries declare classifiers
+            // without a main artifact. Their unclassified Maven JAR does not exist.
+            // Only derive Maven artifacts when no classifier-only download is declared.
+            JsonElement declaredClassifiers = default;
+            var classifierOnly = hasDownloads && downloads.TryGetProperty("classifiers", out declaredClassifiers);
+            if (classifierOnly && declaredClassifiers.ValueKind != JsonValueKind.Object)
+                throw InvalidMetadata($"libraries[{index}].downloads.classifiers", "an object");
+            if (!artifactAdded && !classifierOnly
                 && library.TryGetProperty(
                     "name",
                     out var nameElement))

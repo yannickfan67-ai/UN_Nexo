@@ -1,326 +1,84 @@
-<Window xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        x:Class="UN.Nexo.Desktop.Views.MainWindow"
-        Title="UN_Nexo"
-        Width="1180" Height="720"
-        MinWidth="920" MinHeight="620"
-        WindowStartupLocation="CenterScreen"
-        Background="#0B0F14">
-  <Window.Styles>
-    <Style Selector="Button.nav">
-      <Setter Property="HorizontalContentAlignment" Value="Left" />
-      <Setter Property="Padding" Value="14,11" />
-      <Setter Property="Margin" Value="0,3" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderThickness" Value="0" />
-      <Setter Property="CornerRadius" Value="9" />
-    </Style>
-    <Style Selector="Button.primary">
-      <Setter Property="Background" Value="#6D5DFB" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="Padding" Value="18,11" />
-      <Setter Property="CornerRadius" Value="9" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-    <Style Selector="Border.card">
-      <Setter Property="Background" Value="#121923" />
-      <Setter Property="BorderBrush" Value="#202B38" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="14" />
-      <Setter Property="Padding" Value="18" />
-    </Style>
-    <Style Selector="TextBlock.muted">
-      <Setter Property="Foreground" Value="#8E9AAA" />
-    </Style>
-  </Window.Styles>
-
-  <Grid ColumnDefinitions="238,*">
-    <Border Grid.Column="0" Background="#0E141C" BorderBrush="#1D2732" BorderThickness="0,0,1,0" Padding="18">
-      <Grid RowDefinitions="Auto,28,*,Auto">
-        <StackPanel>
-          <TextBlock Text="UN_Nexo" FontSize="26" FontWeight="SemiBold" />
-          <TextBlock Text="Minecraft Launcher" Classes="muted" Margin="0,2,0,0" />
-        </StackPanel>
-
-        <StackPanel Grid.Row="2">
-          <Button Classes="nav" Content="Home" Command="{Binding ShowHomeCommand}" />
-          <Button Classes="nav" Content="Instances" Command="{Binding ShowInstancesCommand}" />
-          <Button Classes="nav" Content="Accounts" Command="{Binding ShowAccountsCommand}" />
-          <Button Classes="nav" Content="Downloads" IsHitTestVisible="False" Opacity="0.35" />
-          <Button Classes="nav" Content="Settings" Command="{Binding ShowSettingsCommand}" />
-        </StackPanel>
-
-        <Border Grid.Row="3" Background="#111923" CornerRadius="10" Padding="12">
-          <StackPanel>
-            <TextBlock Text="v0.4.0-dev" FontWeight="SemiBold" />
-            <TextBlock Text="{Binding LauncherStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0" />
-          </StackPanel>
-        </Border>
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ x:Class="UN.Nexo.Desktop.Views.MainWindow" Title="UN_Nexo Downloads" Width="1160" Height="760"
+ MinWidth="900" MinHeight="640" WindowStartupLocation="CenterScreen" Background="#0B1018">
+ <Window.Styles>
+  <Style Selector="Button"><Setter Property="Padding" Value="16,10"/><Setter Property="CornerRadius" Value="2"/></Style>
+  <Style Selector="Button.primary"><Setter Property="Background" Value="#52D4E8"/><Setter Property="Foreground" Value="#08232B"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+  <Style Selector="Border.card"><Setter Property="Background" Value="#141E2B"/><Setter Property="Padding" Value="20"/><Setter Property="CornerRadius" Value="3"/></Style>
+  <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#9AAFC5"/></Style>
+  <Style Selector="TextBlock.title"><Setter Property="FontSize" Value="25"/><Setter Property="FontWeight" Value="SemiBold"/></Style>
+ </Window.Styles>
+ <Grid RowDefinitions="Auto,*,Auto">
+  <Border Padding="30,22" Background="#101A27">
+   <Grid ColumnDefinitions="*,Auto">
+    <StackPanel Spacing="3"><TextBlock Text="UN_Nexo" FontSize="28" FontWeight="Bold"/><TextBlock Text="下載限定版 · 你的遊戲檔案工作區" Classes="muted"/></StackPanel>
+    <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="5"><TextBlock Text="{Binding VersionLabel}" HorizontalAlignment="Right"/><TextBlock Text="無登入 · 無遊戲啟動" Foreground="#52D4E8"/></StackPanel>
+   </Grid>
+  </Border>
+  <TabControl Grid.Row="1" SelectedIndex="{Binding SelectedTab}" Margin="24,16">
+   <TabItem Header="探索版本">
+    <Grid RowDefinitions="Auto,*" RowSpacing="16" Margin="0,16,0,0">
+     <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+      <Border Classes="card" Background="#153D4B"><StackPanel Spacing="6"><TextBlock Text="最新正式版"/><TextBlock Text="{Binding LatestRelease}" Classes="title"/></StackPanel></Border>
+      <Border Grid.Column="1" Classes="card" Background="#25314F"><StackPanel Spacing="6"><TextBlock Text="最新快照"/><TextBlock Text="{Binding LatestSnapshot}" Classes="title"/></StackPanel></Border>
+     </Grid>
+     <Grid Grid.Row="1" ColumnDefinitions="*,310" ColumnSpacing="18">
+      <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+       <Grid ColumnDefinitions="*,150,Auto" ColumnSpacing="10">
+        <TextBox PlaceholderText="搜尋版本，例如 1.21.4、1.8.9" Text="{Binding Query}"/>
+        <ComboBox Grid.Column="1" ItemsSource="{Binding Channels}" SelectedItem="{Binding Channel}" HorizontalAlignment="Stretch"/>
+        <Button Grid.Column="2" Content="更新" Command="{Binding RefreshCatalogCommand}"/>
+       </Grid>
+       <TextBlock Grid.Row="1" Text="{Binding CatalogStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap"/>
+       <ListBox Grid.Row="2" ItemsSource="{Binding Versions}" SelectedItem="{Binding SelectedVersion}" Background="#101925">
+        <ListBox.ItemTemplate><DataTemplate><Grid ColumnDefinitions="*,Auto" Margin="8,7"><TextBlock Text="{Binding Id}" FontSize="16"/><TextBlock Grid.Column="1" Text="{Binding Type}" Classes="muted"/></Grid></DataTemplate></ListBox.ItemTemplate>
+       </ListBox>
       </Grid>
-    </Border>
-
-    <Grid Grid.Column="1">
-      <ScrollViewer IsVisible="{Binding IsHomeVisible}">
-        <StackPanel Margin="34" Spacing="18" MaxWidth="980" HorizontalAlignment="Stretch">
-          <Grid ColumnDefinitions="*,Auto">
-            <StackPanel>
-              <TextBlock Text="Ready when you are." FontSize="32" FontWeight="SemiBold" />
-              <TextBlock Text="Pick an instance and account, then let Nexo handle the environment." Classes="muted" Margin="0,6,0,0" />
-            </StackPanel>
-            <Button Grid.Column="1" Content="Refresh" Command="{Binding RefreshEnvironmentCommand}" Padding="16,10" VerticalAlignment="Center" />
-          </Grid>
-
-          <Border Classes="card" Background="#151D2A">
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="24">
-              <StackPanel Spacing="6">
-                <TextBlock Text="CURRENT INSTANCE" Classes="muted" FontSize="11" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=No instance selected}" FontSize="25" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Create an instance to get started}" Classes="muted" />
-                <TextBlock Text="{Binding AccountSummary}" Classes="muted" Margin="0,4,0,0" />
-              </StackPanel>
-              <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
-                <Button Classes="primary" Content="Play" Command="{Binding PlayCommand}" MinWidth="150" />
-                <Button Content="Stop game" Command="{Binding StopGameCommand}" IsVisible="{Binding IsGameRunning}" HorizontalAlignment="Stretch" />
-              </StackPanel>
-            </Grid>
-          </Border>
-
-          <Border Classes="card">
-            <StackPanel Spacing="10">
-              <TextBlock Text="{Binding GameStatus}" TextWrapping="Wrap" />
-              <TextBlock Text="Minecraft launch requires a signed-in Microsoft account with a valid Java Edition entitlement. Java is selected automatically for the instance version." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-              <TextBox Text="{Binding GameLog, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
-                       Height="180" FontSize="11"
-                       ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
-            </StackPanel>
-          </Border>
-
-          <Grid ColumnDefinitions="1.25*,*"
-                ColumnSpacing="18">
-            <Border Classes="card">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel>
-                  <TextBlock Text="Minecraft catalog" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="Version metadata and downloads" Classes="muted" Margin="0,4,0,0" />
-                  <TextBlock Text="{Binding CatalogStatus}" Classes="muted" FontSize="11" Margin="0,8,0,0" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" HorizontalAlignment="Right">
-                  <TextBlock Text="Latest release" Classes="muted" FontSize="11" />
-                  <TextBlock Text="{Binding LatestRelease}" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Right" />
-                  <TextBlock Text="Snapshot" Classes="muted" FontSize="11" HorizontalAlignment="Right" Margin="0,7,0,0" />
-                  <TextBlock Text="{Binding LatestSnapshot}" FontWeight="SemiBold" HorizontalAlignment="Right" />
-                </StackPanel>
-              </Grid>
-            </Border>
-
-            <Border Grid.Column="1" Classes="card">
-              <StackPanel>
-                <TextBlock Text="Environment" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding JavaSummary}" Margin="0,9,0,0" />
-                <TextBlock Text="{Binding JavaDetail}" Classes="muted" TextWrapping="Wrap" FontSize="12" Margin="0,5,0,0" />
-              </StackPanel>
-            </Border>
-          </Grid>
-
-          <Grid ColumnDefinitions="*,*" ColumnSpacing="18">
-            <Border Classes="card">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel>
-                  <TextBlock Text="Accounts" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding AccountSummary}" Margin="0,6,0,0" />
-                  <TextBlock Text="Authenticated Microsoft profile required for launch." Classes="muted" FontSize="11" Margin="0,4,0,0" />
-                </StackPanel>
-                <Button Grid.Column="1" Content="Manage" Command="{Binding ShowAccountsCommand}" Padding="14,9" VerticalAlignment="Center" />
-              </Grid>
-            </Border>
-            <Border Grid.Column="1" Classes="card">
-              <Grid ColumnDefinitions="*,Auto">
-                <StackPanel>
-                  <TextBlock Text="Download source" FontSize="18" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding SelectedDownloadSource}" Margin="0,6,0,0" />
-                  <TextBlock Text="{Binding DownloadSourceStatus}" Classes="muted" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
-                </StackPanel>
-                <Button Grid.Column="1" Content="Settings" Command="{Binding ShowSettingsCommand}" Padding="14,9" VerticalAlignment="Center" />
-              </Grid>
-            </Border>
-          </Grid>
-
-          <Border Classes="card">
-            <Grid ColumnDefinitions="*,Auto">
-              <StackPanel>
-                <TextBlock Text="Instances" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding InstanceSummary}" Margin="0,6,0,0" />
-                <TextBlock Text="{Binding InstanceRoot}" Classes="muted" TextTrimming="CharacterEllipsis" FontSize="12" Margin="0,4,0,0" />
-              </StackPanel>
-              <Button Grid.Column="1" Content="Manage instances" Command="{Binding ShowInstancesCommand}" Padding="15,9" VerticalAlignment="Center" />
-            </Grid>
-          </Border>
-        </StackPanel>
-      </ScrollViewer>
-
-      <Grid IsVisible="{Binding IsInstancesVisible}" Margin="30" RowDefinitions="Auto,*" RowSpacing="18">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel>
-            <TextBlock Text="Instances" FontSize="32" FontWeight="SemiBold" />
-            <TextBlock Text="Each instance keeps its own game files and version metadata." Classes="muted" Margin="0,5,0,0" />
-          </StackPanel>
-          <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
-        </Grid>
-
-        <Grid Grid.Row="1" ColumnDefinitions="230,*" ColumnSpacing="18">
-          <Border Classes="card" Padding="14">
-            <Grid RowDefinitions="Auto,12,*,12,Auto">
-              <TextBlock Text="Your instances" FontSize="17" FontWeight="SemiBold" />
-              <ListBox Grid.Row="2" ItemsSource="{Binding Instances}" SelectedItem="{Binding SelectedInstance}" Background="Transparent" BorderThickness="0">
-                <ListBox.ItemTemplate>
-                  <DataTemplate>
-                    <StackPanel Margin="7,6">
-                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding VersionId}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
-                    </StackPanel>
-                  </DataTemplate>
-                </ListBox.ItemTemplate>
-              </ListBox>
-              <TextBlock Grid.Row="4" Text="Select an instance to prepare or inspect it." Classes="muted" FontSize="11" TextWrapping="Wrap" />
-            </Grid>
-          </Border>
-
-          <ScrollViewer Grid.Column="1">
-            <StackPanel Spacing="18">
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <StackPanel>
-                    <TextBlock Text="Create instance" FontSize="19" FontWeight="SemiBold" />
-                    <TextBlock Text="Start with Vanilla. Mod loaders will be added on top of the same instance model." Classes="muted" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap" />
-                  </StackPanel>
-                  <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" RowSpacing="10" ColumnSpacing="10">
-                    <TextBox Grid.ColumnSpan="2" PlaceholderText="Instance name" Text="{Binding NewInstanceName}" />
-                    <ComboBox Grid.Row="1" ItemsSource="{Binding AvailableVersions}" SelectedItem="{Binding SelectedVersion}" MaxDropDownHeight="360" MinWidth="120">
-                      <ComboBox.ItemTemplate>
-                        <DataTemplate>
-                          <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Text="{Binding Id}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1" Text="{Binding Type}" Classes="muted" FontSize="11" Margin="10,0,0,0" />
-                          </Grid>
-                        </DataTemplate>
-                      </ComboBox.ItemTemplate>
-                    </ComboBox>
-                    <Button Grid.Row="1" Grid.Column="1" Classes="primary" Content="Create" Command="{Binding CreateInstanceCommand}" IsEnabled="{Binding HasSelectedVersion}" />
-                  </Grid>
-                  <TextBlock Text="{Binding CatalogStatus}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
-                </StackPanel>
-              </Border>
-
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <StackPanel Spacing="10">
-                    <StackPanel>
-                      <TextBlock Text="Selected instance" Classes="muted" FontSize="11" />
-                      <TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=Nothing selected}" FontSize="22" FontWeight="SemiBold" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding SelectedInstance.VersionId, FallbackValue=Choose an instance on the left}" Classes="muted" TextTrimming="CharacterEllipsis" />
-                    </StackPanel>
-                    <Button Content="Prepare Vanilla files" Command="{Binding PrepareSelectedInstanceCommand}" IsEnabled="{Binding HasSelectedInstance}" Padding="16,10" HorizontalAlignment="Left" />
-                  </StackPanel>
-
-                  <Border Background="#0E141C" CornerRadius="9" Padding="12">
-                    <StackPanel Spacing="9">
-                      <TextBlock Text="Instance management" FontWeight="SemiBold" />
-                      <TextBox Text="{Binding InstanceRenameName}" PlaceholderText="Instance name" IsEnabled="{Binding CanManageSelectedInstance}" />
-                      <StackPanel Orientation="Horizontal" Spacing="9">
-                        <Button Content="Rename" Command="{Binding RenameSelectedInstanceCommand}" IsEnabled="{Binding CanManageSelectedInstance}" Padding="14,9" />
-                        <Button Content="{Binding DeleteInstanceButtonText}" Command="{Binding DeleteSelectedInstanceCommand}" IsEnabled="{Binding CanManageSelectedInstance}" Padding="14,9" />
-                      </StackPanel>
-                      <CheckBox Content="Also delete backups" IsChecked="{Binding DeleteInstanceBackups}" IsEnabled="{Binding CanManageSelectedInstance}" />
-                      <TextBlock Text="Delete uses a two-step confirmation. Backups are preserved unless you explicitly select the option above." Classes="muted" FontSize="11" TextWrapping="Wrap" />
-                    </StackPanel>
-                  </Border>
-
-                  <ProgressBar Minimum="0" Maximum="100" Value="{Binding InstallProgressValue}" Height="7" />
-                  <TextBlock Text="{Binding InstallProgressText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  <Border Background="#0E141C" CornerRadius="9" Padding="12">
-                    <TextBlock Text="The selected download source is used first. BMCLAPI automatically falls back to official URLs if a mirrored file is missing or unavailable." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  </Border>
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
-      </Grid>
-
-      <Grid IsVisible="{Binding IsAccountsVisible}" Margin="30" RowDefinitions="Auto,*" RowSpacing="18">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel>
-            <TextBlock Text="Accounts" FontSize="32" FontWeight="SemiBold" />
-            <TextBlock Text="Manage authenticated Microsoft accounts used for Minecraft: Java Edition." Classes="muted" Margin="0,5,0,0" />
-          </StackPanel>
-          <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
-        </Grid>
-
-        <Grid Grid.Row="1" ColumnDefinitions="230,*" ColumnSpacing="18">
-          <Border Classes="card" Padding="14">
-            <Grid RowDefinitions="Auto,12,*,12,Auto">
-              <TextBlock Text="Profiles" FontSize="17" FontWeight="SemiBold" />
-              <ListBox Grid.Row="2" ItemsSource="{Binding Accounts}" SelectedItem="{Binding SelectedAccount}" Background="Transparent" BorderThickness="0">
-                <ListBox.ItemTemplate>
-                  <DataTemplate>
-                    <StackPanel Margin="7,6">
-                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                      <TextBlock Text="{Binding TypeLabel}" Classes="muted" FontSize="11" />
-                    </StackPanel>
-                  </DataTemplate>
-                </ListBox.ItemTemplate>
-              </ListBox>
-              <TextBlock Grid.Row="4" Text="Only authenticated Microsoft profiles are available." Classes="muted" FontSize="11" TextWrapping="Wrap" />
-            </Grid>
-          </Border>
-
-          <ScrollViewer Grid.Column="1">
-            <StackPanel Spacing="18">
-              <Border Classes="card">
-                <StackPanel Spacing="12">
-                  <TextBlock Text="Microsoft account" FontSize="19" FontWeight="SemiBold" />
-                  <TextBlock Text="{Binding MicrosoftAuthStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  <StackPanel Orientation="Horizontal" Spacing="10">
-                    <Button Classes="primary" Content="Sign in with Microsoft" Command="{Binding SignInMicrosoftCommand}" Padding="15,9" />
-                    <Button Content="Sign out selected" Command="{Binding SignOutSelectedMicrosoftCommand}" Padding="15,9" />
-                    <Button Content="How it works" Command="{Binding ExplainMicrosoftSignInCommand}" Padding="15,9" />
-                  </StackPanel>
-                  <Border Background="#0E141C" CornerRadius="9" Padding="12">
-                    <TextBlock Text="Nexo uses its own public Microsoft Client ID with the system browser, then exchanges the Microsoft session through Xbox Live/XSTS and Minecraft Services. Refresh credentials are kept in the operating system credential store; accounts.json contains profile metadata only." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                  </Border>
-                </StackPanel>
-              </Border>
-            </StackPanel>
-          </ScrollViewer>
-        </Grid>
-      </Grid>
-
-      <ScrollViewer IsVisible="{Binding IsSettingsVisible}">
-        <StackPanel Margin="34" Spacing="18" MaxWidth="900" HorizontalAlignment="Stretch">
-          <Grid ColumnDefinitions="*,Auto">
-            <StackPanel>
-              <TextBlock Text="Settings" FontSize="32" FontWeight="SemiBold" />
-              <TextBlock Text="Prefer safe defaults; expose the knobs that actually matter." Classes="muted" Margin="0,5,0,0" />
-            </StackPanel>
-            <Button Grid.Column="1" Content="Back to home" Command="{Binding ShowHomeCommand}" Padding="14,9" VerticalAlignment="Center" />
-          </Grid>
-
-          <Border Classes="card">
-            <StackPanel Spacing="12">
-              <TextBlock Text="Download source" FontSize="19" FontWeight="SemiBold" />
-              <TextBlock Text="Choose where Minecraft metadata, client files, libraries and assets are fetched first." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-              <Grid ColumnDefinitions="280,Auto" ColumnSpacing="10">
-                <ComboBox ItemsSource="{Binding DownloadSources}" SelectedItem="{Binding SelectedDownloadSource}" />
-                <Button Grid.Column="1" Classes="primary" Content="Save and refresh" Command="{Binding SaveDownloadSourceCommand}" />
-              </Grid>
-              <TextBlock Text="{Binding DownloadSourceStatus}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-              <Border Background="#0E141C" CornerRadius="9" Padding="12">
-                <TextBlock Text="BMCLAPI mode uses the mirror for Mojang version metadata, client files, libraries and assets. Every rewritten request retains the official URL as fallback, and SHA-1 checks still apply." Classes="muted" FontSize="12" TextWrapping="Wrap" />
-              </Border>
-            </StackPanel>
-          </Border>
-        </StackPanel>
-      </ScrollViewer>
+      <Border Grid.Column="1" Classes="card"><ScrollViewer><StackPanel Spacing="16">
+       <TextBlock Text="開始下載" Classes="title"/>
+       <TextBlock Text="{Binding SelectedVersion.Id, FallbackValue=請選擇版本}" FontSize="30" Foreground="#52D4E8"/>
+       <TextBlock Text="下載客戶端、程式庫、原生檔案及資源，完成後校驗官方 SHA-1。" TextWrapping="Wrap" Classes="muted"/>
+       <TextBox PlaceholderText="自訂名稱（選填）" Text="{Binding InstanceName}"/>
+       <Button Classes="primary" Content="加入下載佇列" Command="{Binding QueueVersionCommand}" HorizontalAlignment="Stretch"/>
+       <Separator/>
+       <TextBlock Text="遊戲所有權" FontWeight="SemiBold"/>
+       <TextBlock Text="下載不代表取得遊戲授權。遊玩仍需合法持有 Java Edition，請使用具備官方登入與所有權驗證的啟動器。" Classes="muted" TextWrapping="Wrap" FontSize="12"/>
+      </StackPanel></ScrollViewer></Border>
+     </Grid>
     </Grid>
-  </Grid>
+   </TabItem>
+   <TabItem Header="本機版本">
+    <Grid ColumnDefinitions="*,330" ColumnSpacing="18" Margin="0,16,0,0">
+     <ListBox ItemsSource="{Binding Instances}" SelectedItem="{Binding SelectedInstance}"><ListBox.ItemTemplate><DataTemplate><StackPanel Margin="10" Spacing="4"><TextBlock Text="{Binding Name}" FontSize="19"/><TextBlock Text="{Binding VersionId}" Classes="muted"/><TextBlock Text="{Binding Loader}" Classes="muted" FontSize="11"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+     <Border Grid.Column="1" Classes="card"><StackPanel Spacing="16">
+      <TextBlock Text="檔案管理" Classes="title"/><TextBlock Text="{Binding SelectedInstance.Name, FallbackValue=選擇本機版本}" TextWrapping="Wrap"/>
+      <Button Classes="primary" Content="校驗並修復檔案" Command="{Binding RepairInstanceCommand}" HorizontalAlignment="Stretch"/>
+      <Button Content="開啟遊戲檔案資料夾" Command="{Binding OpenInstanceFolderCommand}" HorizontalAlignment="Stretch"/>
+      <TextBlock Text="校驗與修復會重新檢查官方檔案，只補下載缺失或損壞內容。存檔、模組和個人設定會保留。" TextWrapping="Wrap" Classes="muted" FontSize="12"/>
+      <Separator/><TextBox PlaceholderText="重新命名" Text="{Binding RenameName}"/><Button Content="儲存名稱" Command="{Binding RenameInstanceCommand}"/>
+     </StackPanel></Border>
+    </Grid>
+   </TabItem>
+   <TabItem Header="下載佇列">
+    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="16" Margin="0,16,0,0">
+     <Border Classes="card"><StackPanel Spacing="12"><TextBlock Text="{Binding ActiveName}" FontSize="23"/><ProgressBar Value="{Binding Progress}" Maximum="100" Height="8" Foreground="#52D4E8"/><TextBlock Text="{Binding Transfer}" TextWrapping="Wrap" Classes="muted"/></StackPanel></Border>
+     <WrapPanel Grid.Row="1" Orientation="Horizontal">
+      <Button Content="暫停佇列" Command="{Binding PauseQueueCommand}" Margin="0,0,10,0"/>
+      <Button Classes="primary" Content="繼續佇列" Command="{Binding ResumeQueueCommand}" Margin="0,0,10,0"/>
+      <Button Content="重試選中任務" Command="{Binding RetryJobCommand}" Margin="0,0,10,0"/>
+      <Button Content="匯出下載報告" Command="{Binding ExportReportCommand}"/>
+     </WrapPanel>
+     <ListBox Grid.Row="2" ItemsSource="{Binding Jobs}" SelectedItem="{Binding SelectedJob}"><ListBox.ItemTemplate><DataTemplate><Grid ColumnDefinitions="*,100" Margin="8"><StackPanel Spacing="5"><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding VersionId}" Classes="muted"/><TextBlock Text="{Binding Message}" TextWrapping="Wrap" Classes="muted" FontSize="12"/></StackPanel><TextBlock Grid.Column="1" Text="{Binding StateLabel}" Foreground="#52D4E8" HorizontalAlignment="Right"/></Grid></DataTemplate></ListBox.ItemTemplate></ListBox>
+    </Grid>
+   </TabItem>
+   <TabItem Header="設定與關於">
+    <ScrollViewer Margin="0,16,0,0"><StackPanel Spacing="18">
+     <Border Classes="card"><StackPanel Spacing="12"><TextBlock Text="下載來源" Classes="title"/><ComboBox ItemsSource="{Binding Sources}" SelectedItem="{Binding Source}" MinWidth="280"/><Button Content="儲存下載設定" Command="{Binding SaveSettingsCommand}"/><TextBlock Text="預設使用官方來源；BMCLAPI 模式保留官方備援和檔案雜湊驗證。" Classes="muted" TextWrapping="Wrap"/></StackPanel></Border>
+     <Border Classes="card"><StackPanel Spacing="12"><TextBlock Text="本機資料" Classes="title"/><TextBlock Text="{Binding DataRoot}" TextWrapping="Wrap" Classes="muted"/><Button Content="開啟資料資料夾" Command="{Binding OpenDataFolderCommand}"/><TextBlock Text="下載佇列及目錄會保存在本機。重新開啟後，未完成任務會暫停，等待你選擇繼續。PC 端保留已校驗的完整檔案；單一中斷檔案會重新下載。" TextWrapping="Wrap" Classes="muted"/></StackPanel></Border>
+     <Border Classes="card"><StackPanel Spacing="10"><TextBlock Text="UN_Nexo · 獨立開源專案" Classes="title"/><TextBlock Text="維護者：Yannick Fan / yannickfan67-ai&#10;聯絡：GitHub Issues&#10;原始碼：github.com/yannickfan67-ai/UN_Nexo&#10;授權：MIT（僅限本專案程式碼）" TextWrapping="Wrap"/><TextBlock Text="NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT." TextWrapping="Wrap" FontSize="12" Classes="muted"/><TextBlock Text="此發行版只提供檔案下載管理。登入、帳號資料讀取、遊戲啟動及伺服器連線不包含於發行組件。未來遊玩功能需要經批准的應用程式登入與正版所有權驗證。" TextWrapping="Wrap" Classes="muted"/></StackPanel></Border>
+    </StackPanel></ScrollViewer>
+   </TabItem>
+  </TabControl>
+  <Border Grid.Row="2" Background="#101A27" Padding="28,13"><TextBlock Text="{Binding Status}" TextWrapping="Wrap" Foreground="#BDD0E1" FontSize="12"/></Border>
+ </Grid>
 </Window>
