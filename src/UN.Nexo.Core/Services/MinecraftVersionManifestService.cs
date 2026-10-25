@@ -122,10 +122,10 @@ public sealed class MinecraftVersionManifestService
                 "time",
                 $"versions[{index}].time");
 
-            var sha1 = OptionalString(
+            var sha1 = RequireSha1(
                 item,
                 "sha1",
-                $"versions[{index}].sha1") ?? string.Empty;
+                $"versions[{index}].sha1");
             var compliance = OptionalInt32(
                 item,
                 "complianceLevel",
@@ -162,6 +162,27 @@ public sealed class MinecraftVersionManifestService
             throw InvalidCatalog(displayName, "a non-empty string");
 
         return value.GetString()!;
+    }
+
+    private static string RequireSha1(
+        JsonElement element,
+        string propertyName,
+        string displayName)
+    {
+        var value = RequireString(
+            element,
+            propertyName,
+            displayName);
+        if (value.Length != 40
+            || value.Any(character =>
+                !Uri.IsHexDigit(character)))
+        {
+            throw InvalidCatalog(
+                displayName,
+                "a 40-character hexadecimal SHA-1");
+        }
+
+        return value.ToLowerInvariant();
     }
 
     private static string? OptionalString(

@@ -181,6 +181,12 @@ public sealed class MinecraftVanillaInstallService
         if (string.IsNullOrWhiteSpace(version.Url))
             throw new InvalidOperationException("The selected Minecraft version has no metadata URL.");
 
+        var versionMetadataSha1 = NormalizeSha1(
+            version.Sha1,
+            "version manifest sha1")
+            ?? throw new InvalidDataException(
+                "Selected Minecraft version metadata is missing its required SHA-1.");
+
         var versionId = MetadataPath.RequireSingleComponent(
             version.Id,
             "version.id");
@@ -216,11 +222,9 @@ public sealed class MinecraftVanillaInstallService
         await DownloadFileAsync(
             version.Url,
             versionJsonPath,
-            NormalizeSha1(
-                version.Sha1,
-                "version manifest sha1"),
+            versionMetadataSha1,
             null,
-            false,
+            true,
             "Version metadata",
             0,
             1,

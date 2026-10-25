@@ -304,7 +304,7 @@ internal static class FabricLibraryIntegrityRegression
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    new string('0', 40),
                     0);
 
             try
@@ -584,7 +584,7 @@ internal static class FabricLibraryIntegrityRegression
             "https://piston-meta.mojang.com/version.json",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            string.Empty,
+            handler.MetadataSha1,
             0);
 
         return new Fixture(paths, instance, version, service, client);
@@ -701,10 +701,21 @@ internal static class FabricLibraryIntegrityRegression
         byte[] expectedJar,
         LibraryMode mode) : HttpMessageHandler
     {
+        private const string Metadata =
+            "{\"id\":\"1.21.4\",\"libraries\":[],"
+            + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+            + "\"assetIndex\":{\"id\":\"fabric-library-assets\","
+            + "\"url\":\"https://launchermeta.mojang.com/fabric-library-assets.json\"}}";
+
         private readonly string _sha1 =
             Convert.ToHexString(SHA1.HashData(expectedJar)).ToLowerInvariant();
 
         public int TestLibraryJarRequests { get; private set; }
+        public string MetadataSha1
+            => Convert.ToHexString(
+                    SHA1.HashData(
+                        Encoding.UTF8.GetBytes(Metadata)))
+                .ToLowerInvariant();
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -717,15 +728,10 @@ internal static class FabricLibraryIntegrityRegression
                     "/version.json",
                     StringComparison.OrdinalIgnoreCase))
             {
-                const string metadata =
-                    "{\"id\":\"1.21.4\",\"libraries\":[],"
-                    + "\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                    + "\"assetIndex\":{\"id\":\"fabric-library-assets\","
-                    + "\"url\":\"https://launchermeta.mojang.com/fabric-library-assets.json\"}}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(
-                        metadata,
+                        Metadata,
                         Encoding.UTF8,
                         "application/json")
                 });

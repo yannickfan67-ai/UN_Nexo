@@ -520,7 +520,7 @@ internal static class Program
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    handler.MetadataSha1,
                     0);
 
                 try
@@ -573,7 +573,7 @@ internal static class Program
                 "https://piston-meta.mojang.com/version.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
-                string.Empty,
+                handler.MetadataSha1,
                 0);
 
             await installer.InstallAsync(instance, version);
@@ -622,7 +622,7 @@ internal static class Program
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    handler.MetadataSha1,
                     0);
 
                 try
@@ -708,7 +708,7 @@ internal static class Program
                     "https://piston-meta.mojang.com/version.json",
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
-                    string.Empty,
+                    handler.MetadataSha1,
                     0);
 
                 await installer.InstallAsync(instance, version);
@@ -1121,6 +1121,11 @@ internal static class Program
         }
     }
 
+    private static string Sha1Text(string value)
+        => Convert.ToHexString(
+                SHA1.HashData(Encoding.UTF8.GetBytes(value)))
+            .ToLowerInvariant();
+
     private static void Equal<T>(T expected, T actual, string message)
     {
         if (!EqualityComparer<T>.Default.Equals(expected, actual))
@@ -1174,7 +1179,11 @@ internal static class Program
 
     private sealed class AssetIndexContentHandler(string indexBody, byte[] assetBytes) : HttpMessageHandler
     {
+        private const string Metadata =
+            "{\"id\":\"asset-index-validation\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
+
         public int ResourceRequests { get; private set; }
+        public string MetadataSha1 => Sha1Text(Metadata);
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -1183,11 +1192,9 @@ internal static class Program
             var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
             if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
-                const string metadata =
-                    "{\"id\":\"asset-index-validation\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},\"assetIndex\":{\"id\":\"test-assets\",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+                    Content = new StringContent(Metadata, Encoding.UTF8, "application/json")
                 });
             }
 
@@ -1223,6 +1230,17 @@ internal static class Program
     private sealed class AssetIndexIdHandler(string assetId) : HttpMessageHandler
     {
         public int AssetIndexRequests { get; private set; }
+        public string MetadataSha1 => Sha1Text(BuildMetadata());
+
+        private string BuildMetadata()
+        {
+            var encodedId =
+                System.Text.Json.JsonSerializer.Serialize(assetId);
+            return
+                "{\"id\":\"asset-id-test\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},\"assetIndex\":{\"id\":"
+                + encodedId
+                + ",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
+        }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -1231,14 +1249,9 @@ internal static class Program
             var uri = request.RequestUri ?? throw new InvalidOperationException("Missing request URI.");
             if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
             {
-                var encodedId = System.Text.Json.JsonSerializer.Serialize(assetId);
-                var metadata =
-                    "{\"id\":\"asset-id-test\",\"downloads\":{\"client\":{\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},\"assetIndex\":{\"id\":"
-                    + encodedId
-                    + ",\"url\":\"https://launchermeta.mojang.com/index.json\"},\"libraries\":[]}";
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(metadata, Encoding.UTF8, "application/json")
+                    Content = new StringContent(BuildMetadata(), Encoding.UTF8, "application/json")
                 });
             }
 

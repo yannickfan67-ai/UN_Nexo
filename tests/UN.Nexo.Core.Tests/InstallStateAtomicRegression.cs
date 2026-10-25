@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using UN.Nexo.Core.Models;
@@ -205,7 +206,8 @@ internal static class InstallStateAtomicRegression
                 statePath,
                 "{\"id\":\"old-instance\",\"state\":\"prepared\"}");
 
-            using var client = new HttpClient(new VanillaStateHandler());
+            var handler = new VanillaStateHandler();
+            using var client = new HttpClient(handler);
             var installer = new MinecraftVanillaInstallService(
                 client,
                 paths,
@@ -217,7 +219,7 @@ internal static class InstallStateAtomicRegression
                 "https://piston-meta.mojang.com/state-test.json",
                 DateTimeOffset.UtcNow,
                 DateTimeOffset.UtcNow,
-                string.Empty,
+                handler.MetadataSha1,
                 0);
 
             await installer.InstallAsync(instance, version);
@@ -280,6 +282,18 @@ internal static class InstallStateAtomicRegression
 
     private sealed class VanillaStateHandler : HttpMessageHandler
     {
+        private const string Metadata =
+            "{\"id\":\"1.21.4\",\"downloads\":{\"client\":{"
+            + "\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
+            + "\"assetIndex\":{\"id\":\"state-test-assets\","
+            + "\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
+            + "\"libraries\":[]}";
+
+        public string MetadataSha1
+            => Convert.ToHexString(
+                    SHA1.HashData(Encoding.UTF8.GetBytes(Metadata)))
+                .ToLowerInvariant();
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
@@ -288,15 +302,7 @@ internal static class InstallStateAtomicRegression
                 ?? throw new InvalidOperationException("Missing request URI.");
 
             if (uri.Host.Equals("piston-meta.mojang.com", StringComparison.OrdinalIgnoreCase))
-            {
-                const string metadata =
-                    "{\"id\":\"1.21.4\",\"downloads\":{\"client\":{"
-                    + "\"url\":\"https://piston-data.mojang.com/client.jar\",\"size\":6}},"
-                    + "\"assetIndex\":{\"id\":\"state-test-assets\","
-                    + "\"url\":\"https://launchermeta.mojang.com/assets.json\"},"
-                    + "\"libraries\":[]}";
-                return Task.FromResult(Text(metadata, "application/json"));
-            }
+                return Task.FromResult(Text(Metadata, "application/json"));
 
             if (uri.Host.Equals("piston-data.mojang.com", StringComparison.OrdinalIgnoreCase))
                 return Task.FromResult(Bytes(Encoding.UTF8.GetBytes("client")));
