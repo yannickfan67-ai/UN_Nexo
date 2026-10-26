@@ -12,6 +12,7 @@ namespace UN.Nexo.Core.Launching;
 
 public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
 {
+    internal const long MaxLocalAssetIndexBytes = 64L * 1024 * 1024;
     public Task<MinecraftLaunchPlan> BuildAsync(
         GameInstance instance,
         LauncherAccount account,
@@ -918,12 +919,18 @@ public sealed partial class MinecraftLaunchPlanBuilder(NexoPathService paths)
     {
         try
         {
-            await using var stream = File.OpenRead(file);
-            return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            var bytes = await BoundedLocalFile.ReadAllBytesAsync(
+                file,
+                MaxLocalAssetIndexBytes,
+                "Local Minecraft asset index",
+                cancellationToken);
+            return JsonDocument.Parse(bytes);
         }
         catch (JsonException ex)
         {
-            throw new InvalidDataException($"Minecraft metadata JSON is malformed: {file}", ex);
+            throw new InvalidDataException(
+                $"Minecraft metadata JSON is malformed: {file}",
+                ex);
         }
     }
 

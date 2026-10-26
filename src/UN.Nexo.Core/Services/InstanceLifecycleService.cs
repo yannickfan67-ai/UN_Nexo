@@ -1169,19 +1169,31 @@ public sealed class InstanceLifecycleService
         JsonObject node;
         try
         {
-            var json = await File.ReadAllTextAsync(path, cancellationToken);
-            var parsed = JsonNode.Parse(json);
+            var bytes = await InstallStateSnapshot.ReadAsync(
+                instanceRoot,
+                cancellationToken);
+            if (bytes is null)
+                return;
+
+            var parsed = JsonNode.Parse(bytes);
             if (parsed is not JsonObject objectNode)
             {
-                TryDeleteFile(path);
+                InstallStateSnapshot.Delete(instanceRoot);
                 return;
             }
 
             node = objectNode;
         }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        catch (Exception ex) when (
+            ex is JsonException
+            or InvalidOperationException
+            or InvalidDataException)
         {
-            TryDeleteFile(path);
+            // Clone-time install-state rewriting follows the same 1 MiB
+            // snapshot/provenance policy as rollback. A malformed or oversized
+            // regular state is deliberately omitted from the clone rather than
+            // materialized without bounds.
+            InstallStateSnapshot.Delete(instanceRoot);
             return;
         }
 

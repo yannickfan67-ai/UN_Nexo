@@ -74,30 +74,22 @@ public sealed class MinecraftInstanceRepairService
             return BuildReport(instance, issues, null);
         }
 
-        JsonDocument versionDocument;
+        // Preserve the existing raw-child structural diagnosis, but route
+        // the read through exactly the same bounded + physical provenance
+        // primitive used by inheritance resolution.
         try
         {
-            await using var stream = File.OpenRead(versionJsonPath);
-            versionDocument = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        }
-        catch (Exception ex) when (ex is JsonException or IOException)
-        {
-            issues.Add(new InstanceHealthIssue(
-                "version-metadata-corrupt",
-                "Version metadata",
-                InstanceHealthLevel.Error,
-                $"Version metadata cannot be read: {ex.Message}",
-                versionJsonPath,
-                "Run Repair to replace the damaged metadata."));
-
-            await CheckJavaAndSystemAsync(instance, issues, progress, cancellationToken);
-            return BuildReport(instance, issues, null);
-        }
-
-        using (versionDocument)
-        {
-            var rawRoot = versionDocument.RootElement;
-            if (!TryValidateVersionMetadata(rawRoot, out var metadataError))
+            var rawBytes =
+                await MinecraftVersionMetadataResolver
+                    .ReadInstalledMetadataBytesAsync(
+                        gameRoot,
+                        instance.VersionId,
+                        cancellationToken);
+            using var rawDocument =
+                JsonDocument.Parse(rawBytes);
+            if (!TryValidateVersionMetadata(
+                    rawDocument.RootElement,
+                    out var metadataError))
             {
                 issues.Add(new InstanceHealthIssue(
                     "version-metadata-invalid",
@@ -109,26 +101,55 @@ public sealed class MinecraftInstanceRepairService
                 return BuildReport(instance, issues, null);
             }
         }
+        catch (Exception ex) when (
+            ex is InvalidDataException
+            or JsonException
+            or IOException
+            or UnauthorizedAccessException)
+        {
+            issues.Add(new InstanceHealthIssue(
+                "version-metadata-corrupt",
+                "Version metadata",
+                InstanceHealthLevel.Error,
+                $"Version metadata cannot be read safely: {ex.Message}",
+                versionJsonPath,
+                "Run Repair to replace the damaged or untrusted metadata."));
+            await CheckJavaAndSystemAsync(
+                instance,
+                issues,
+                progress,
+                cancellationToken);
+            return BuildReport(instance, issues, null);
+        }
 
         ResolvedMinecraftVersion resolved;
         try
         {
             resolved = await new MinecraftVersionMetadataResolver()
-                .ResolveAsync(gameRoot, instance.VersionId, cancellationToken);
+                .ResolveAsync(
+                    gameRoot,
+                    instance.VersionId,
+                    cancellationToken);
         }
         catch (Exception ex) when (
             ex is InvalidDataException
             or JsonException
             or IOException
-            or InvalidOperationException)
+            or InvalidOperationException
+            or UnauthorizedAccessException)
         {
             issues.Add(new InstanceHealthIssue(
                 "version-metadata-inheritance-invalid",
                 "Version metadata",
                 InstanceHealthLevel.Error,
-                $"Version inheritance cannot be resolved: {ex.Message}",
+                $"Version inheritance cannot be resolved safely: {ex.Message}",
                 versionJsonPath,
                 "Run Repair to restore the loader/base version metadata."));
+            await CheckJavaAndSystemAsync(
+                instance,
+                issues,
+                progress,
+                cancellationToken);
             return BuildReport(instance, issues, null);
         }
 
